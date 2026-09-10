@@ -1,0 +1,115 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [126.8500, 35.1500]
+      },
+      "properties": {
+        "index": 0,
+        "pointIndex": 0,
+        "name": "출발지",
+        "description": "금남로를 따라 120m 직진하세요",
+        "direction": "",
+        "nearPoiName": "",
+        "nearPoiX": "0.0",
+        "nearPoiY": "0.0",
+        "intersectionName": "",
+        "facilityType": "11",
+        "facilityName": "일반보도",
+        "turnType": 200,
+        "pointType": "SP",
+        "totalDistance": 650,
+        "totalTime": 540
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [126.8500, 35.1500],
+          [126.8510, 35.1500]
+        ]
+      },
+      "properties": {
+        "index": 1,
+        "lineIndex": 0,
+        "name": "금남로",
+        "description": "금남로",
+        "distance": 120,
+        "time": 96,
+        "roadType": 0,
+        "facilityType": "11",
+        "facilityName": "일반보도"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [126.8510, 35.1500]
+      },
+      "properties": {
+        "index": 2,
+        "pointIndex": 1,
+        "name": "금남로4가 교차로",
+        "description": "횡단보도를 이용하여 횡단하세요",
+        "direction": "",
+        "nearPoiName": "",
+        "nearPoiX": "0.0",
+        "nearPoiY": "0.0",
+        "intersectionName": "금남로4가 교차로",
+        "facilityType": "12",
+        "facilityName": "횡단보도",
+        "turnType": 211,
+        "pointType": "GP"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [126.8510, 35.1500],
+          [126.8510, 35.1510]
+        ]
+      },
+      "properties": {
+        "index": 3,
+        "lineIndex": 1,
+        "name": "중앙로",
+        "description": "중앙로",
+        "distance": 130,
+        "time": 104,
+        "roadType": 0,
+        "facilityType": "12",
+        "facilityName": "횡단보도"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [126.8510, 35.1510]
+      },
+      "properties": {
+        "index": 4,
+        "pointIndex": 2,
+        "name": "목적지",
+        "description": "목적지에 도착했습니다",
+        "direction": "",
+        "nearPoiName": "",
+        "nearPoiX": "0.0",
+        "nearPoiY": "0.0",
+        "intersectionName": "",
+        "facilityType": "11",
+        "facilityName": "일반보도",
+        "turnType": 201,
+        "pointType": "EP"
+      }
+    }
+  ]
+}

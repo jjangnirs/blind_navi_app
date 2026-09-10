@@ -1,0 +1,110 @@
+CROSSWALK_COLUMN_MAP: dict[str, str] = {
+    # 식별 키
+    "횡단보도관리번호": "source_record_key",
+    "횡단보도번호": "source_record_key",
+    "관리번호": "source_record_key",
+    # 시설 종류
+    "횡단보도종류": "crossing_type",
+    "횡단보도구분": "crossing_type",
+    "종류": "crossing_type",
+    # 주소 및 위치
+    "소재지도로명주소": "road_name",
+    "도로명주소": "road_name",
+    "소재지 도로명주소": "road_name",
+    "설치위치": "road_name",
+    "소재지지번주소": "lot_address",
+    "지번주소": "lot_address",
+    "소재지 지번주소": "lot_address",
+    # 좌표
+    "위도": "latitude",
+    "LATITUDE": "latitude",
+    "Y좌표": "latitude",
+    "경도": "longitude",
+    "LONGITUDE": "longitude",
+    "X좌표": "longitude",
+    # 차로수
+    "차로수": "lane_count",
+    "차선수": "lane_count",
+    # 보행신호기
+    "보행자신호등유무": "pedestrian_signal",
+    "보행자신호등설치여부": "pedestrian_signal",
+    "보행신호등유무": "pedestrian_signal",
+    "보행신호기설치여부": "pedestrian_signal",
+    "보행자작동신호기유무": "button_signal",
+    "보행자작동신호기설치여부": "button_signal",
+    "작동신호기유무": "button_signal",
+    # 음향신호기
+    "음향신호기설치여부": "acoustic_signal",
+    "음향신호기유무": "acoustic_signal",
+    "시각장애인용음향신호기유무": "acoustic_signal",
+    "시각장애인용음향신호기설치여부": "acoustic_signal",
+    "음향신호기": "acoustic_signal",
+    # 신호 시간
+    "녹색신호시간": "green_seconds",
+    "녹색등시간": "green_seconds",
+    "적색신호시간": "red_seconds",
+    "적색등시간": "red_seconds",
+    # 안전 및 접근성 시설
+    "교통섬유무": "traffic_island",
+    "교통섬설치여부": "traffic_island",
+    "교통섬": "traffic_island",
+    "보도턱낮춤여부": "curb_cut",
+    "턱낮춤여부": "curb_cut",
+    "연석단차턱낮춤여부": "curb_cut",
+    "턱낮춤설치여부": "curb_cut",
+    "점자블록유무": "tactile_paving",
+    "점자블록설치여부": "tactile_paving",
+    "점자블록설치유무": "tactile_paving",
+    "점자블록": "tactile_paving",
+    # 메타데이터
+    "데이터기준일자": "data_reference_date",
+    "기준일자": "data_reference_date",
+    "데이터기준일": "data_reference_date",
+    "관리기관명": "provider",
+    "제공기관명": "provider",
+    "관리기관": "provider",
+}
+
+TRAFFIC_LIGHT_COLUMN_MAP: dict[str, str] = {
+    # 식별 키
+    "신호등관리번호": "source_record_key",
+    "신호등번호": "source_record_key",
+    "관리번호": "source_record_key",
+    # 시설 구분
+    "신호등구분": "signal_type",
+    "신호등종류": "signal_type",
+    "구분": "signal_type",
+    # 주소 및 위치
+    "소재지도로명주소": "road_name",
+    "도로명주소": "road_name",
+    "소재지 도로명주소": "road_name",
+    "설치위치": "road_name",
+    "소재지지번주소": "lot_address",
+    "지번주소": "lot_address",
+    "소재지 지번주소": "lot_address",
+    # 좌표
+    "위도": "latitude",
+    "LATITUDE": "latitude",
+    "Y좌표": "latitude",
+    "경도": "longitude",
+    "LONGITUDE": "longitude",
+    "X좌표": "longitude",
+    # 장치
+    "보행자작동신호기유무": "button_signal",
+    "보행자작동신호기설치여부": "button_signal",
+    "작동신호기유무": "button_signal",
+    "잔여시간표시기유무": "countdown_timer",
+    "잔여시간표시기설치여부": "countdown_timer",
+    "잔여시간표시기": "countdown_timer",
+    "시각장애인용음향신호기유무": "acoustic_signal",
+    "음향신호기설치여부": "acoustic_signal",
+    "음향신호기유무": "acoustic_signal",
+    "시각장애인용음향신호기설치여부": "acoustic_signal",
+    # 메타데이터
+    "데이터기준일자": "data_reference_date",
+    "기준일자": "data_reference_date",
+    "데이터기준일": "data_reference_date",
+    "관리기관명": "provider",
+    "제공기관명": "provider",
+    "관리기관": "provider",
+}

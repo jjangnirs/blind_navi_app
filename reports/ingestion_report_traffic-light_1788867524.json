@@ -1,0 +1,47 @@
+{
+  "source_type": "traffic-light",
+  "file_path": "D:\\blind_navi_app\\data-pipeline\\tests\\fixtures\\traffic_light_sample_cp949.csv",
+  "file_sha256": "c95e3b2e62b9d091f8699fb78f597f5c45ba07c5e6f654c435dce5e88f586a88",
+  "encoding": "cp949",
+  "total_rows": 5,
+  "valid_count": 3,
+  "quarantined_count": 2,
+  "duplicate_count": 0,
+  "missing_fields_count": 0,
+  "quarantine_details": [
+    {
+      "row_index": 4,
+      "record_key": "TL-GJ-104",
+      "reason": "COORDINATES_OUT_OF_BOUNDS",
+      "details": "좌표가 대한민국 허용 범위를 벗어났습니다: lat=30.5, lon=126.85 (허용: 위도 32~39, 경도 124~132)",
+      "raw_row": {
+        "신호등관리번호": "TL-GJ-104",
+        "신호등구분": "보행등",
+        "소재지도로명주소": "광주광역시 서구 상무로 50",
+        "위도": "30.5000",
+        "경도": "126.8500",
+        "보행자작동신호기유무": "N",
+        "잔여시간표시기유무": "N",
+        "시각장애인용음향신호기유무": "Y",
+        "데이터기준일자": "2026-06-30"
+      }
+    },
+    {
+      "row_index": 5,
+      "record_key": "TL-GJ-105",
+      "reason": "INVALID_DATE_FORMAT",
+      "details": "지원하지 않는 날짜 포맷입니다: NOT-A-DATE",
+      "raw_row": {
+        "신호등관리번호": "TL-GJ-105",
+        "신호등구분": "차량등",
+        "소재지도로명주소": "광주광역시 서구 화정로 60",
+        "위도": "35.1540",
+        "경도": "126.8540",
+        "보행자작동신호기유무": "N",
+        "잔여시간표시기유무": "N",
+        "시각장애인용음향신호기유무": "N",
+        "데이터기준일자": "NOT-A-DATE"
+      }
+    }
+  ]
+}

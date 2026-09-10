@@ -1,0 +1,67 @@
+{
+  "bomFormat": "CycloneDX-SafeCross",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:safecross-kr-sbom-v1",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-09-09T01:29:22.360376+00:00",
+    "component": {
+      "name": "safe-cross-kr",
+      "version": "0.2.0",
+      "type": "application"
+    }
+  },
+  "components": [
+    {
+      "name": "fastapi",
+      "spec": "fastapi>=0.115.0",
+      "ecosystem": "PyPI"
+    },
+    {
+      "name": "uvicorn[standard]",
+      "spec": "uvicorn[standard]>=0.30.0",
+      "ecosystem": "PyPI"
+    },
+    {
+      "name": "pydantic",
+      "spec": "pydantic>=2.8.0",
+      "ecosystem": "PyPI"
+    },
+    {
+      "name": "pydantic-settings",
+      "spec": "pydantic-settings>=2.4.0",
+      "ecosystem": "PyPI"
+    },
+    {
+      "name": "sqlalchemy",
+      "spec": "sqlalchemy>=2.0.30",
+      "ecosystem": "PyPI"
+    },
+    {
+      "name": "alembic",
+      "spec": "alembic>=1.13.0",
+      "ecosystem": "PyPI"
+    },
+    {
+      "name": "geoalchemy2",
+      "spec": "geoalchemy2>=0.15.0",
+      "ecosystem": "PyPI"
+    },
+    {
+      "name": "psycopg[binary]",
+      "spec": "psycopg[binary]>=3.2.0",
+      "ecosystem": "PyPI"
+    },
+    {
+      "name": "shapely",
+      "spec": "shapely>=2.0.0",
+      "ecosystem": "PyPI"
+    },
+    {
+      "name": "pydantic",
+      "spec": "pydantic>=2.8.0",
+      "ecosystem": "PyPI"
+    }
+  ],
+  "totalComponents": 10
+}

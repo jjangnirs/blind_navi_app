@@ -1,0 +1,24 @@
+[
+  {
+    "lat": 35.159820,
+    "lon": 126.852920,
+    "accuracyMeters": 5.0,
+    "bearingDegrees": 225.0,
+    "speedMps": 1.2,
+    "timestampEpochMs": 1700000000000,
+    "elapsedRealtimeNanos": 1000000000,
+    "isMock": true,
+    "description": "반대편 차선 보행 시작 (방위각 225°)"
+  },
+  {
+    "lat": 35.159750,
+    "lon": 126.852850,
+    "accuracyMeters": 4.5,
+    "bearingDegrees": 225.0,
+    "speedMps": 1.2,
+    "timestampEpochMs": 1700000005000,
+    "elapsedRealtimeNanos": 6000000000,
+    "isMock": true,
+    "description": "횡단보도 근처를 역방향으로 통과 (방위각 차이 180°)"
+  }
+]

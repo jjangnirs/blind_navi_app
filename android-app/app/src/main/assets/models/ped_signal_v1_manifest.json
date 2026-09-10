@@ -1,0 +1,56 @@
+{
+  "modelName": "ped_signal",
+  "modelVersion": "1.0.0",
+  "sha256": "9d0ea9e6e4b736528d21b37fbba64f84013c0f6388fb8c4d5e9853a1a3e94047",
+  "minAppVersion": "0.1.0",
+  "disabled": false,
+  "inputTensor": {
+    "name": "input_image",
+    "shape": [
+      1,
+      320,
+      320,
+      3
+    ],
+    "dataType": "FLOAT32"
+  },
+  "outputTensors": [
+    {
+      "name": "detection_boxes",
+      "shape": [
+        1,
+        10,
+        4
+      ],
+      "dataType": "FLOAT32"
+    },
+    {
+      "name": "detection_classes",
+      "shape": [
+        1,
+        10
+      ],
+      "dataType": "FLOAT32"
+    },
+    {
+      "name": "detection_scores",
+      "shape": [
+        1,
+        10
+      ],
+      "dataType": "FLOAT32"
+    },
+    {
+      "name": "num_detections",
+      "shape": [
+        1
+      ],
+      "dataType": "FLOAT32"
+    }
+  ],
+  "labelsOrder": [
+    "PEDESTRIAN_SIGNAL_RED",
+    "PEDESTRIAN_SIGNAL_GREEN",
+    "UNKNOWN"
+  ]
+}

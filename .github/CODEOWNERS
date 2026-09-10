@@ -1,0 +1,58 @@
+# Safe Cross KR — Code Owners & Safety Responsibility Mapping
+# Reference: PRD 12장 출시 게이트, SRD SR-NF-020~026, SR-NF-040~043
+
+# Global fallback safety lead
+* @safecross-kr/safety-leads
+
+# 1. CI Safety Gate & Security Workflows
+# Required branch protection jobs:
+#   - 'safety-gate / secret-and-safety-scan'
+#   - 'safety-gate / android-safety-critical-tests'
+#   - 'safety-gate / python-safety-and-integrity-tests'
+#   - 'safety-gate / etl-schema-drift-check'
+.github/workflows/safety-gate.yml @safecross-kr/security-leads @safecross-kr/safety-leads
+.github/workflows/secret-scan.yml @safecross-kr/security-leads
+.github/workflows/ @safecross-kr/devops-leads @safecross-kr/security-leads
+.github/CODEOWNERS @safecross-kr/safety-leads
+
+# 2. Security & Safety Scanners
+scripts/security/ @safecross-kr/security-leads
+scripts/database/ @safecross-kr/data-leads
+
+# 3. Android Safety Decision Engine & ST-001~ST-015 Safety Tests
+# Job: android-safety-critical-tests
+android-app/app/src/main/java/kr/safecross/mobile/decision/ @safecross-kr/decision-leads @safecross-kr/safety-leads
+android-app/app/src/main/java/kr/safecross/mobile/ml/ @safecross-kr/ml-leads @safecross-kr/safety-leads
+android-app/app/src/main/java/kr/safecross/mobile/camera/ @safecross-kr/mobile-leads @safecross-kr/security-leads
+android-app/app/src/main/java/kr/safecross/mobile/network/ @safecross-kr/security-leads
+android-app/app/src/main/java/kr/safecross/mobile/signal/ @safecross-kr/decision-leads @safecross-kr/safety-leads
+android-app/app/src/test/java/kr/safecross/mobile/decision/ @safecross-kr/decision-leads @safecross-kr/safety-leads
+android-app/app/src/test/java/kr/safecross/mobile/signal/ @safecross-kr/decision-leads @safecross-kr/safety-leads
+android-app/app/src/test/java/kr/safecross/mobile/SafetyScenariosStTest.kt @safecross-kr/safety-leads
+android-app/app/src/test/java/kr/safecross/mobile/ZeroFrameLeakageTest.kt @safecross-kr/security-leads
+android-app/app/src/test/java/kr/safecross/mobile/camera/CameraStorageZeroLeakageTest.kt @safecross-kr/security-leads
+android-app/app/src/test/java/kr/safecross/mobile/network/NetworkRedactionTest.kt @safecross-kr/security-leads
+docs/adr/0006_realtime_pedestrian_signal_adapter.md @safecross-kr/safety-leads
+
+# 4. ML Pipelines, Contracts & LiteRT Export
+# Job: python-safety-and-integrity-tests
+ml/ @safecross-kr/ml-leads @safecross-kr/safety-leads
+ml/datasets/ @safecross-kr/ml-leads
+ml/training/ @safecross-kr/ml-leads
+ml/evaluation/ @safecross-kr/ml-leads @safecross-kr/safety-leads
+ml/export/ @safecross-kr/ml-leads
+ml/model_cards/ @safecross-kr/safety-leads
+ml/tests/test_model_tampering_ci.py @safecross-kr/security-leads @safecross-kr/ml-leads
+
+# 5. Data Pipeline & Schema Drift Alerts
+# Job: etl-schema-drift-check
+data-pipeline/safecross_pipeline/quality/schema_drift_detector.py @safecross-kr/data-leads
+data-pipeline/safecross_pipeline/quality/ @safecross-kr/data-leads
+data-pipeline/safecross_pipeline/parsers/ @safecross-kr/data-leads
+data-pipeline/tests/test_schema_drift.py @safecross-kr/data-leads
+data-pipeline/tests/test_security_scanners.py @safecross-kr/security-leads
+
+# 6. Database Migrations & Rollback
+backend/migrations/ @safecross-kr/data-leads
+backend/tests/test_migrations.py @safecross-kr/data-leads
+backend/app/core/middleware.py @safecross-kr/security-leads

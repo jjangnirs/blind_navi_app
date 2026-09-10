@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Safe Cross KR</string>
+    <string name="greeting_title">Safe Cross KR</string>
+    <string name="greeting_description">시각장애인·저시력자 보행 보조 내비게이션</string>
+</resources>

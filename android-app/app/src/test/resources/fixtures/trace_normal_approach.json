@@ -1,0 +1,46 @@
+[
+  {
+    "lat": 35.159500,
+    "lon": 126.852600,
+    "accuracyMeters": 5.0,
+    "bearingDegrees": 45.0,
+    "speedMps": 1.2,
+    "timestampEpochMs": 1700000000000,
+    "elapsedRealtimeNanos": 1000000000,
+    "isMock": true,
+    "description": "출발 지점 (횡단보도 50m 전방)"
+  },
+  {
+    "lat": 35.159570,
+    "lon": 126.852670,
+    "accuracyMeters": 6.0,
+    "bearingDegrees": 45.0,
+    "speedMps": 1.2,
+    "timestampEpochMs": 1700000005000,
+    "elapsedRealtimeNanos": 6000000000,
+    "isMock": true,
+    "description": "사전 알림 구간 (횡단보도 약 38m 전방)"
+  },
+  {
+    "lat": 35.159720,
+    "lon": 126.852820,
+    "accuracyMeters": 4.5,
+    "bearingDegrees": 45.0,
+    "speedMps": 1.1,
+    "timestampEpochMs": 1700000015000,
+    "elapsedRealtimeNanos": 16000000000,
+    "isMock": true,
+    "description": "정지 준비 구간 (횡단보도 약 14m 전방)"
+  },
+  {
+    "lat": 35.159790,
+    "lon": 126.852890,
+    "accuracyMeters": 3.5,
+    "bearingDegrees": 45.0,
+    "speedMps": 0.9,
+    "timestampEpochMs": 1700000022000,
+    "elapsedRealtimeNanos": 23000000000,
+    "isMock": true,
+    "description": "횡단보도 진입 중 (횡단보도 4m 이내)"
+  }
+]

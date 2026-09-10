@@ -1,0 +1,145 @@
+name: Safety & Security Gate (Mandatory Branch Protection)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+# Ensure secrets and coordinates are never leaked to logs
+env:
+  CI: true
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  # 1. Secret, Prohibited Phrases, and SBOM Inspection
+  secret-and-safety-scan:
+    name: Secret & Safety Phrase & SBOM Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "data-pipeline[dev]" -e "backend[dev]"
+
+      - name: Run Secret Scanner
+        run: |
+          python -m scripts.security.secret_scanner --path .
+
+      - name: Run Safety Phrase Scanner
+        run: |
+          python -m scripts.security.safety_phrase_scanner --root .
+
+      - name: Generate and Validate SBOM
+        run: |
+          python -m scripts.security.sbom_generator --root . --output reports/sbom/sbom.json
+
+      - name: Run Security Scanners Unit Tests
+        run: |
+          pytest data-pipeline/tests/test_security_scanners.py -v
+
+  # 2. Android Safety-Critical & Privacy Tests (ST-001 ~ ST-015)
+  android-safety-critical-tests:
+    name: Android ST-001~015 & Storage Leakage Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Run Safety Scenarios ST-001~015 & Privacy Tests
+        working-directory: android-app
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest --tests "*.SafetyScenariosStTest" \
+                                      --tests "*.CrossingDecisionEnginePropertyAndFuzzTest" \
+                                      --tests "*.NetworkRedactionTest" \
+                                      --tests "*.CameraStorageZeroLeakageTest" \
+                                      --tests "*.ZeroFrameLeakageTest" \
+                                      --stacktrace
+
+  # 3. Model Integrity & Python Safety Suites
+  python-safety-and-integrity-tests:
+    name: Model Tampering & Integrity Regression Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "data-pipeline[dev]" -e "backend[dev]"
+
+      - name: Run Model Tampering CI Regression Tests
+        run: |
+          pytest ml/tests/test_model_tampering_ci.py -v
+
+      - name: Run 4-Stage Ablation Monotonic Risk Reduction Tests
+        run: |
+          pytest data-pipeline/test_ablation.py -v
+
+  # 4. ETL Schema Drift & Volume Anomaly Gate
+  etl-schema-drift-check:
+    name: ETL Schema Drift & Volume Anomaly Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "data-pipeline[dev]"
+
+      - name: Run Schema Drift and Volume Anomaly Tests
+        run: |
+          pytest data-pipeline/tests/test_schema_drift.py -v
+
+  # 5. Master Safety Gate for Branch Protection
+  safety-critical-gate:
+    name: Mandatory Safety Gate (Branch Protection Required)
+    needs:
+      - secret-and-safety-scan
+      - android-safety-critical-tests
+      - python-safety-and-integrity-tests
+      - etl-schema-drift-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Safety Gate Verification Succeeded
+        run: |
+          echo "================================================================="
+          echo "ALL SAFETY-CRITICAL CI GATES PASSED (100%):"
+          echo "  [PASS] Secret & Prohibited Safety Phrases & SBOM Scan"
+          echo "  [PASS] Android ST-001~015 Safety Decision & Zero Storage Leakage"
+          echo "  [PASS] Model Tampering & Integrity Regression"
+          echo "  [PASS] ETL Schema Drift & Volume Anomaly Protection"
+          echo "Branch is safe to merge under Safe Cross KR safety governance."
+          echo "================================================================="

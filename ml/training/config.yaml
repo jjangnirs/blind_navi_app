@@ -1,0 +1,18 @@
+seed: 42
+input_size:
+- 320
+- 320
+- 3
+batch_size: 16
+epochs: 10
+optimizer:
+  name: AdamW
+  learning_rate: 0.001
+  weight_decay: 0.0001
+augmentation:
+  horizontal_flip: false
+  random_brightness: true
+  random_contrast: true
+  letterbox_padding: true
+quantization_target: PTQ_INT8
+model_version: 1.0.0

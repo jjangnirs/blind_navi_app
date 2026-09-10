@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "releaseId": "safe-cross-kr-v0.1.0-beta.1-staging",
+  "targetEnvironment": "staging-rehearsal",
+  "createdAtUtc": "2026-09-09T01:30:00Z",
+  "buildMetadata": {
+    "gitCommit": "rehearsal-staging-v0.1.0-beta.1",
+    "ciRunId": "ci-staging-20260909-001",
+    "builder": "GitHub Actions / AntiGravity Rehearsal Pipeline"
+  },
+  "components": {
+    "mobileApp": {
+      "name": "kr.safecross.mobile",
+      "versionName": "0.1.0-beta.1",
+      "versionCode": 1,
+      "minSdk": 26,
+      "targetSdk": 35,
+      "permissions": [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.CAMERA",
+        "android.permission.VIBRATE"
+      ],
+      "buildArtifact": "app-staging-debug.apk",
+      "packageHashSha256": "4b360f7a2d64f0b6e9a6df241d7f6c382910ba7918a36c5dc07f918e9d5628bc"
+    },
+    "backendApi": {
+      "service": "safecross-backend",
+      "apiVersion": "v1",
+      "alembicRevision": "0001_initial_postgis_schema",
+      "databaseEngine": "PostgreSQL 16 / PostGIS 3.4",
+      "schemaHashSha256": "f5831dcab9135a964bf9a22f5c15ee988cf8e03efb1c7dc41c2a13829e061805",
+      "endpoints": [
+        "/api/v1/crossings/nearby",
+        "/api/v1/routes/pedestrian",
+        "/api/v1/reports",
+        "/api/v1/health"
+      ]
+    },
+    "dataPipeline": {
+      "pipelineVersion": "1.0.0",
+      "inputDatasets": [
+        {
+          "datasetName": "gwangju_crosswalk_standard_utf8sig",
+          "filename": "crosswalk_sample_utf8sig.csv",
+          "sha256": "510e0d608e61dd26687b18f18e64d625e6cf366c9eec13e11ab307af16823ad5",
+          "encoding": "UTF-8-SIG",
+          "status": "CANONICAL_INGESTED"
+        },
+        {
+          "datasetName": "gwangju_traffic_light_standard_cp949",
+          "filename": "traffic_light_sample_cp949.csv",
+          "sha256": "c95e3b2e62b9d091f8699fb78f597f5c45ba07c5e6f654c435dce5e88f586a88",
+          "encoding": "CP949",
+          "status": "CANONICAL_INGESTED"
+        }
+      ],
+      "canonicalTables": [
+        "source",
+        "raw_record",
+        "crossing",
+        "signal_device",
+        "crossing_signal_link",
+        "field_verification",
+        "user_report",
+        "audit_event"
+      ]
+    },
+    "onDeviceModels": [
+      {
+        "modelName": "ped_signal",
+        "filename": "ped_signal_v1.tflite",
+        "modelVersion": "1.0.0",
+        "sha256": "9d0ea9e6e4b736528d21b37fbba64f84013c0f6388fb8c4d5e9853a1a3e94047",
+        "runtimeFramework": "Google LiteRT (CompiledModel preferred, Interpreter fallback)",
+        "quantization": "INT8 / FP32 baseline",
+        "inputShape": [1, 320, 320, 3],
+        "outputTensors": ["detection_boxes", "detection_classes", "detection_scores", "num_detections"],
+        "labels": ["PEDESTRIAN_SIGNAL_RED", "PEDESTRIAN_SIGNAL_GREEN", "UNKNOWN"]
+      },
+      {
+        "modelName": "crosswalk_scene",
+        "filename": "crosswalk_scene_v1.tflite",
+        "modelVersion": "1.0.0",
+        "sha256": "fc2456376739861e0fb4ff35f72330a863307a718d28e8929b722bfdfc1cbdfd",
+        "runtimeFramework": "Google LiteRT (CompiledModel preferred, Interpreter fallback)",
+        "quantization": "INT8 / FP32 baseline",
+        "inputShape": [1, 320, 320, 3],
+        "outputTensors": ["crosswalk_polygon", "crosswalk_entrance", "crosswalk_direction", "crosswalk_quality"],
+        "labels": ["CROSSWALK_MASK", "CROSSWALK_ENTRANCE", "CROSSWALK_DIRECTION"]
+      }
+    ],
+    "crossingDecisionEngine": {
+      "version": "1.2.0-st015",
+      "architecture": "Pure Kotlin Deterministic Safety State Machine (SR-F-056~069, ST-001~015)",
+      "configuration": {
+        "slidingWindowFrames": 10,
+        "minConsecutiveGreenFrames": 8,
+        "minGreenAgreementRatio": 0.90,
+        "minCalibratedScore": 0.90,
+        "maxLocationAgeNanos": 2000000000,
+        "maxSignalAgeNanos": 1500000000,
+        "maxOfficialSignalAgeNanos": 5000000000,
+        "maxAllowedClockSkewNanos": 1000000000
+      },
+      "greenCandidateVisibility": "INTERNAL_SUPPRESSED"
+    },
+    "officialSignalAdapter": {
+      "portInterface": "kr.safecross.mobile.signal.SignalStatusProvider",
+      "implementation": "kr.safecross.mobile.signal.FakeSignalStatusProvider",
+      "implementationVersion": "1.0.0-staging-fake",
+      "circuitBreaker": {
+        "failureThreshold": 3,
+        "cooldownNanos": 30000000000,
+        "maxRetries": 2
+      },
+      "featureFlags": {
+        "allowOfficialOnlyGreen": false
+      },
+      "liveApiContractConfirmed": false,
+      "realEndpointCreated": false
+    }
+  },
+  "operationalDesignDomain": {
+    "environmentalLimits": {
+      "minimumIlluminanceLux": 30.0,
+      "maximumBlurScore": 0.35,
+      "allowedWeather": ["CLEAR", "OVERCAST"],
+      "excludedWeather": ["HEAVY_RAIN", "SNOW_ACCUMULATION", "DENSE_FOG", "NIGHT_PITCH_DARK"]
+    },
+    "sensorPoseLimits": {
+      "pitchAngleDegrees": [-25.0, 25.0],
+      "rollAngleDegrees": [-20.0, 20.0],
+      "headingCorridorDegrees": 30.0
+    },
+    "locationLimits": {
+      "maximumAccuracyMeters": 15.0,
+      "mockLocationAllowed": false
+    }
+  },
+  "pilotAllowlist": {
+    "regionCode": "KR-29",
+    "regionName": "광주광역시 (동구 / 서구 / 북구)",
+    "candidateIntersectionsEvaluated": 30,
+    "verifiedPilotIntersections": [
+      {
+        "intersectionId": "GWANGJU-PILOT-001",
+        "name": "금남로4가 교차로 (1번~4번 출구 횡단보도)",
+        "verifiedLinksCount": 4,
+        "hasPhysicalAuditorySignal": true,
+        "fieldVerifiedAt": "2026-09-04T14:00:00Z",
+        "speechEstimateAllowed": true
+      },
+      {
+        "intersectionId": "GWANGJU-PILOT-002",
+        "name": "국립아시아문화전당 앞 교차로",
+        "verifiedLinksCount": 3,
+        "hasPhysicalAuditorySignal": true,
+        "fieldVerifiedAt": "2026-09-04T15:30:00Z",
+        "speechEstimateAllowed": true
+      },
+      {
+        "intersectionId": "GWANGJU-PILOT-003",
+        "name": "상무역 사거리 (상무중앙로 횡단보도)",
+        "verifiedLinksCount": 4,
+        "hasPhysicalAuditorySignal": true,
+        "fieldVerifiedAt": "2026-09-05T10:00:00Z",
+        "speechEstimateAllowed": true
+      }
+    ],
+    "unverifiedFallbackPolicy": "SPEECH_ESTIMATE_DISABLED_APPROACH_INFO_ONLY"
+  },
+  "killSwitchRegistry": {
+    "modelKillSwitch": {
+      "type": "MODEL_LEVEL",
+      "mechanism": "Remote signed manifest revocation / hash bitflip detection",
+      "failoverState": "UNKNOWN",
+      "targetResponseMs": 500
+    },
+    "regionKillSwitch": {
+      "type": "REGION_LEVEL",
+      "mechanism": "Dynamic allowlist exclusion via remote config",
+      "failoverState": "APPROACH_INFO_ONLY",
+      "targetResponseMs": 500
+    },
+    "adapterGlobalKillSwitch": {
+      "type": "ADAPTER_AND_GLOBAL_LEVEL",
+      "mechanism": "Provider disabling + Circuit breaker Fast-Fail",
+      "failoverState": "CAMERA_ONLY_OR_UNKNOWN",
+      "targetResponseMs": 500
+    }
+  },
+  "signOffAuthorities": {
+    "productOwner": "Pending Staging Review",
+    "accessibilityLead": "Pending User Advocate Sign-Off",
+    "aiSafetyEngineer": "Verified in Staging Rehearsal",
+    "legalAndPrivacyCounsel": "Pending Production Review"
+  }
+}

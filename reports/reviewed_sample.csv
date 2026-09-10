@@ -1,0 +1,2 @@
+﻿link_id,crossing_key,crossing_lat,crossing_lon,crossing_road,signal_key,signal_lat,signal_lon,signal_type,approach_bearing_deg,distance_m,association_status,ai_allowed,match_features_json,comment
+7db85aaa-1848-4c7a-b0b2-83a9a7d54a22,CW-GJ-003,35.152,126.852,광주광역시 서구 치평로 30,TL-GJ-103,35.1521,126.8521,보행등,0,14.36,MANUAL_VERIFIED,False,"{""distance_m"": 14.36, ""road_match"": ""UNKNOWN"", ""distance_tier"": ""20m"", ""id_similarity"": 0.5, ""bearing_diff_deg"": 39.3, ""approach_bearing_deg"": 0.0, ""relative_signal_bearing_deg"": 39.3}",현장 조사 및 방향 일치 승인

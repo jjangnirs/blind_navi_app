@@ -1,0 +1,62 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.keystore
+*.jks
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+.venv/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Android & Gradle
+.gradle/
+android-app/**/build/
+android-app/.gradle/
+local.properties
+*.apk
+*.aab
+.idea/
+*.iml
+.navigation/
+captures/
+
+# PostGIS / DB Data
+postgis_data/
+postgres_data/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/

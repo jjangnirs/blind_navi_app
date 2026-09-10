@@ -1,0 +1,40 @@
+{
+  "type": "FeatureCollection",
+  "generator": "Safe Cross KR Synthetic OSM Fixture",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "way/osm-cw-diagonal-45",
+      "properties": {
+        "highway": "footway",
+        "footway": "crossing",
+        "crossing": "zebra",
+        "crossing_ref": "DIAGONAL_45_DEG"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [126.849900, 35.149900],
+          [126.850100, 35.150100]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "way/osm-cw-diagonal-135",
+      "properties": {
+        "highway": "footway",
+        "footway": "crossing",
+        "crossing": "zebra",
+        "crossing_ref": "DIAGONAL_135_DEG"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [126.849900, 35.150100],
+          [126.850100, 35.149900]
+        ]
+      }
+    }
+  ]
+}

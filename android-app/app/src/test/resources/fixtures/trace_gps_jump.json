@@ -1,0 +1,35 @@
+[
+  {
+    "lat": 35.159500,
+    "lon": 126.852600,
+    "accuracyMeters": 5.0,
+    "bearingDegrees": 45.0,
+    "speedMps": 1.2,
+    "timestampEpochMs": 1700000000000,
+    "elapsedRealtimeNanos": 1000000000,
+    "isMock": true,
+    "description": "정상 신호"
+  },
+  {
+    "lat": 35.159700,
+    "lon": 126.852800,
+    "accuracyMeters": 55.0,
+    "bearingDegrees": 45.0,
+    "speedMps": 1.2,
+    "timestampEpochMs": 1700000005000,
+    "elapsedRealtimeNanos": 6000000000,
+    "isMock": true,
+    "description": "정확도 급격히 불량 (accuracy > 20m)"
+  },
+  {
+    "lat": 35.165000,
+    "lon": 126.860000,
+    "accuracyMeters": 75.0,
+    "bearingDegrees": null,
+    "speedMps": 30.0,
+    "timestampEpochMs": 1700000010000,
+    "elapsedRealtimeNanos": 11000000000,
+    "isMock": true,
+    "description": "좌표 순간 점프 및 정확도 불량"
+  }
+]

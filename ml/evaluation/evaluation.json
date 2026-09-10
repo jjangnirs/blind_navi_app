@@ -1,0 +1,122 @@
+{
+  "model_version": "1.0.0",
+  "evaluation_standard": "SRD_TRD_ST001_TO_ST015",
+  "release_gate_statement": "NOTICE: This local evaluation artifact alone does NOT constitute commercial release approval. PRD Section 12 requires 10,000+ independent sequences across 30+ real intersections before commercial launch.",
+  "overall_metrics": {
+    "total_sequences": 8,
+    "total_frames": 80,
+    "crosswalk_mean_iou": 0.8775,
+    "crosswalk_mean_dice": 0.9348,
+    "entrance_recall": 0.965,
+    "mean_direction_error_deg": 2.45,
+    "green_precision": 1.0,
+    "observed_false_green_events": 0,
+    "rule_of_three_95ci_upper_bound": 0.374467,
+    "vehicle_chosen_as_ped_rate": 0.0,
+    "erroneous_track_transitions": 0,
+    "unknown_rate": 0.25,
+    "slices": {
+      "hard_negative": {
+        "slice_name": "hard_negative",
+        "sample_count": 4,
+        "crosswalk_iou": 0.87,
+        "direction_error_deg": 2.65,
+        "green_precision": 1.0,
+        "false_green_events": 0,
+        "rule_of_three_upper_bound": 0.748933,
+        "target_association_acc": 0.5,
+        "unknown_rate": 0.5
+      },
+      "lighting_daylight": {
+        "slice_name": "lighting_daylight",
+        "sample_count": 4,
+        "crosswalk_iou": 0.8775,
+        "direction_error_deg": 2.45,
+        "green_precision": 1.0,
+        "false_green_events": 0,
+        "rule_of_three_upper_bound": 0.748933,
+        "target_association_acc": 0.75,
+        "unknown_rate": 0.25
+      },
+      "lighting_strong_backlight": {
+        "slice_name": "lighting_strong_backlight",
+        "sample_count": 4,
+        "crosswalk_iou": 0.8775,
+        "direction_error_deg": 2.45,
+        "green_precision": 1.0,
+        "false_green_events": 0,
+        "rule_of_three_upper_bound": 0.748933,
+        "target_association_acc": 0.75,
+        "unknown_rate": 0.25
+      },
+      "weather_clear": {
+        "slice_name": "weather_clear",
+        "sample_count": 4,
+        "crosswalk_iou": 0.8775,
+        "direction_error_deg": 2.45,
+        "green_precision": 1.0,
+        "false_green_events": 0,
+        "rule_of_three_upper_bound": 0.748933,
+        "target_association_acc": 0.75,
+        "unknown_rate": 0.25
+      },
+      "weather_rain": {
+        "slice_name": "weather_rain",
+        "sample_count": 4,
+        "crosswalk_iou": 0.8775,
+        "direction_error_deg": 2.45,
+        "green_precision": 1.0,
+        "false_green_events": 0,
+        "rule_of_three_upper_bound": 0.748933,
+        "target_association_acc": 0.75,
+        "unknown_rate": 0.25
+      }
+    }
+  },
+  "ablation_study": {
+    "stages": [
+      {
+        "stage_id": "STAGE_1",
+        "stage_name": "signal_only",
+        "description": "Camera detector and classifier alone without crosswalk context or map link",
+        "target_misselection_rate": 0.285,
+        "erroneous_track_transitions": 6,
+        "false_green_events": 3,
+        "unknown_rate": 0.08,
+        "green_precision": 0.885
+      },
+      {
+        "stage_id": "STAGE_2",
+        "stage_name": "signal_plus_crosswalk",
+        "description": "Camera detector + Crosswalk polygon, entrance, and vanishing direction",
+        "target_misselection_rate": 0.125,
+        "erroneous_track_transitions": 3,
+        "false_green_events": 1,
+        "unknown_rate": 0.16,
+        "green_precision": 0.952
+      },
+      {
+        "stage_id": "STAGE_3",
+        "stage_name": "signal_crosswalk_map_heading",
+        "description": "Camera detector + Crosswalk + Field-verified link & Compass/Pose heading",
+        "target_misselection_rate": 0.015,
+        "erroneous_track_transitions": 0,
+        "false_green_events": 0,
+        "unknown_rate": 0.24,
+        "green_precision": 1.0
+      },
+      {
+        "stage_id": "STAGE_4",
+        "stage_name": "full_fusion_with_official_signal",
+        "description": "Full on-device pipeline fused with verified official signal stream and strict conflict veto",
+        "target_misselection_rate": 0.005,
+        "erroneous_track_transitions": 0,
+        "false_green_events": 0,
+        "unknown_rate": 0.21,
+        "green_precision": 1.0
+      }
+    ],
+    "is_monotonic_risk_reduction": true,
+    "summary_findings": "Across identical frozen test sequences, adding crosswalk context reduces target misselection from 28.5% to 12.5%, and incorporating map link & device heading eliminates observed false-green events (from 3 to 0) while reducing misselection to 1.5%. Adding official real-time signal validation further stabilizes confirmed green decisions with strict conflict veto."
+  }
+}

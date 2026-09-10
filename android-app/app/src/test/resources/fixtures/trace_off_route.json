@@ -1,0 +1,35 @@
+[
+  {
+    "lat": 35.159500,
+    "lon": 126.852600,
+    "accuracyMeters": 5.0,
+    "bearingDegrees": 45.0,
+    "speedMps": 1.2,
+    "timestampEpochMs": 1700000000000,
+    "elapsedRealtimeNanos": 1000000000,
+    "isMock": true,
+    "description": "경로 위 정상 출발"
+  },
+  {
+    "lat": 35.159300,
+    "lon": 126.853300,
+    "accuracyMeters": 5.0,
+    "bearingDegrees": 135.0,
+    "speedMps": 1.3,
+    "timestampEpochMs": 1700000010000,
+    "elapsedRealtimeNanos": 11000000000,
+    "isMock": true,
+    "description": "우측 골목으로 이탈 시작 (이탈 거리 약 45m)"
+  },
+  {
+    "lat": 35.159100,
+    "lon": 126.853700,
+    "accuracyMeters": 4.5,
+    "bearingDegrees": 135.0,
+    "speedMps": 1.3,
+    "timestampEpochMs": 1700000020000,
+    "elapsedRealtimeNanos": 21000000000,
+    "isMock": true,
+    "description": "경로 완전 이탈 (이탈 거리 약 85m)"
+  }
+]

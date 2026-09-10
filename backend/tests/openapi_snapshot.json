@@ -1,0 +1,1274 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Safe Cross KR API",
+    "description": "시각장애인·저시력자 보행 보조 내비게이션 백엔드 API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/v1/crossings/nearby": {
+      "get": {
+        "tags": [
+          "crossings"
+        ],
+        "summary": "반경 기반 주변 횡단보도 조회",
+        "description": "주어진 중심 좌표(lat, lon)로부터 radiusM 반경 내의 횡단보도 시설 목록을 거리순으로 반환합니다.",
+        "operationId": "get_nearby_crossings_v1_crossings_nearby_get",
+        "parameters": [
+          {
+            "name": "lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 39.0,
+              "minimum": 32.0,
+              "description": "위도 (WGS84, 32.0~39.0)",
+              "title": "Lat"
+            },
+            "description": "위도 (WGS84, 32.0~39.0)"
+          },
+          {
+            "name": "lon",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 132.0,
+              "minimum": 124.0,
+              "description": "경도 (WGS84, 124.0~132.0)",
+              "title": "Lon"
+            },
+            "description": "경도 (WGS84, 124.0~132.0)"
+          },
+          {
+            "name": "radiusM",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 500.0,
+              "minimum": 10.0,
+              "description": "검색 반경(미터) (10.0~500.0)",
+              "default": 100.0,
+              "title": "Radiusm"
+            },
+            "description": "검색 반경(미터) (10.0~500.0)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "최대 반환 개수 (1~100)",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "최대 반환 개수 (1~100)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrossingsListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "잘못된 요청 또는 유효성 검증 실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "요청한 리소스를 찾을 수 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "요청 허용량 초과 (Rate Limit)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "서버 내부 처리 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "요청 처리 제한시간 초과 (Timeout)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/crossings/corridor": {
+      "get": {
+        "tags": [
+          "crossings"
+        ],
+        "summary": "경로 회랑(Corridor) 기반 횡단보도 조회 (GET)",
+        "description": "LineString 보행 경로와 bufferM 폭 내에 포함되는 횡단보도 목록을 경로 접근 순으로 반환합니다.",
+        "operationId": "get_corridor_crossings_get_v1_crossings_corridor_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "경로 좌표. GeoJSON LineString 또는 'lon1,lat1;lon2,lat2' 형식",
+              "title": "Path"
+            },
+            "description": "경로 좌표. GeoJSON LineString 또는 'lon1,lat1;lon2,lat2' 형식"
+          },
+          {
+            "name": "bufferM",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 100.0,
+              "minimum": 5.0,
+              "description": "경로 회랑 버퍼 폭 (5.0~100.0m)",
+              "default": 30.0,
+              "title": "Bufferm"
+            },
+            "description": "경로 회랑 버퍼 폭 (5.0~100.0m)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "최대 반환 개수 (1~100)",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "최대 반환 개수 (1~100)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrossingsListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "잘못된 요청 또는 유효성 검증 실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "요청한 리소스를 찾을 수 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "요청 허용량 초과 (Rate Limit)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "서버 내부 처리 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "요청 처리 제한시간 초과 (Timeout)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crossings"
+        ],
+        "summary": "경로 회랑(Corridor) 기반 횡단보도 조회 (POST)",
+        "description": "GeoJSON LineString 본문과 bufferM 폭 내에 포함되는 횡단보도 목록을 경로 접근 순으로 반환합니다.",
+        "operationId": "get_corridor_crossings_post_v1_crossings_corridor_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorridorRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrossingsListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "잘못된 요청 또는 유효성 검증 실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "요청한 리소스를 찾을 수 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "요청 허용량 초과 (Rate Limit)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "서버 내부 처리 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "요청 처리 제한시간 초과 (Timeout)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/routes/pedestrian": {
+      "post": {
+        "tags": [
+          "routes"
+        ],
+        "summary": "보행자 경로 탐색 (계단 제외 옵션 지원)",
+        "description": "출발지와 목적지 좌표를 기반으로 TMAP 보행자 경로 안내 API를 연계하여 정규화된 경로를 반환합니다. 기본적으로 계단 제외(searchOption=30)가 적용되며, 휠체어 단차 및 편의시설 완전성을 보장하는 '안전 경로'가 아님을 유의해야 합니다.",
+        "operationId": "get_pedestrian_route_v1_routes_pedestrian_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PedestrianRouteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PedestrianRouteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "잘못된 요청 또는 유효성 검증 실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "요청한 리소스를 찾을 수 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "요청 허용량 초과 (Rate Limit)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "서버 내부 처리 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "외부 공급자 연계 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "외부 공급자 서킷 브레이커 동작 중",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "요청 처리 제한시간 초과 (Timeout)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Health Check",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CommonErrorEnvelope": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "CommonErrorEnvelope"
+      },
+      "ConflictDetails": {
+        "properties": {
+          "acousticSignal": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acousticsignal",
+            "description": "음향신호기 원천 vs 현장 불일치 여부"
+          },
+          "tactilePaving": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tactilepaving",
+            "description": "점자블록 원천 vs 현장 불일치 여부"
+          },
+          "curbCut": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curbcut",
+            "description": "보도턱낮춤 원천 vs 현장 불일치 여부"
+          }
+        },
+        "type": "object",
+        "title": "ConflictDetails"
+      },
+      "CorridorRequest": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "LineString",
+            "title": "Type",
+            "description": "GeoJSON 형상 타입 (LineString)",
+            "default": "LineString"
+          },
+          "coordinates": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Coordinates",
+            "description": "경로 좌표열 [[lon1, lat1], ..., [lonN, latN]] (최소 2개, 최대 500개)"
+          },
+          "bufferM": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 5.0,
+            "title": "Bufferm",
+            "description": "경로 회랑 버퍼 폭 (5.0m ~ 100.0m)",
+            "default": 30.0
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "description": "최대 반환 개수 (1 ~ 100)",
+            "default": 50
+          }
+        },
+        "type": "object",
+        "required": [
+          "coordinates"
+        ],
+        "title": "CorridorRequest"
+      },
+      "CrossingItemResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "횡단보도 고유 식별자 (UUID)"
+          },
+          "location": {
+            "$ref": "#/components/schemas/LocationPoint",
+            "description": "횡단보도 대표 위치 좌표"
+          },
+          "roadName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roadname",
+            "description": "도로명 또는 지번 주소"
+          },
+          "pedestrianSignal": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pedestriansignal",
+            "description": "보행자 신호등 설치 여부 (null/false/true)"
+          },
+          "acousticSignal": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acousticsignal",
+            "description": "시각장애인용 음향신호기 설치 여부 (null/false/true)"
+          },
+          "tactilePaving": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tactilepaving",
+            "description": "점자블록 설치 여부 (null/false/true)"
+          },
+          "curbCut": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curbcut",
+            "description": "연석 단차/보도 턱낮춤 여부 (null/false/true)"
+          },
+          "directionBearingDeg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directionbearingdeg",
+            "description": "횡단 진행 방위각 (0~360°)"
+          },
+          "laneCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lanecount",
+            "description": "횡단 차로 수"
+          },
+          "greenSeconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Greenseconds",
+            "description": "보행 신호 녹색 시간 (초)"
+          },
+          "redSeconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redseconds",
+            "description": "보행 신호 적색 시간 (초)"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceMetadata",
+            "description": "원천 데이터 출처 및 메타데이터"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/VerificationMetadata",
+            "description": "현장 검증 메타데이터 및 원천 충돌 플래그"
+          },
+          "rawFacility": {
+            "$ref": "#/components/schemas/RawFacility",
+            "description": "투영 전 원본 공공데이터 시설값"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "location",
+          "source",
+          "verification",
+          "rawFacility"
+        ],
+        "title": "CrossingItemResponse"
+      },
+      "CrossingsListResponse": {
+        "properties": {
+          "dataVersion": {
+            "type": "string",
+            "title": "Dataversion",
+            "description": "데이터셋 배포 버전 (예: kr-crossing-20260908.1)"
+          },
+          "generatedAt": {
+            "type": "string",
+            "title": "Generatedat",
+            "description": "응답 생성 시각 (ISO 8601)"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CrossingItemResponse"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "조회된 횡단보도 목록"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataVersion",
+          "generatedAt",
+          "items"
+        ],
+        "title": "CrossingsListResponse"
+      },
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "messageKey": {
+            "type": "string",
+            "title": "Messagekey"
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlationid"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "messageKey"
+        ],
+        "title": "ErrorDetail"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LocationPoint": {
+        "properties": {
+          "lat": {
+            "type": "number",
+            "maximum": 39.0,
+            "minimum": 32.0,
+            "title": "Lat",
+            "description": "위도 (WGS84, 32.0~39.0)"
+          },
+          "lon": {
+            "type": "number",
+            "maximum": 132.0,
+            "minimum": 124.0,
+            "title": "Lon",
+            "description": "경도 (WGS84, 124.0~132.0)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lat",
+          "lon"
+        ],
+        "title": "LocationPoint"
+      },
+      "PedestrianRouteRequest": {
+        "properties": {
+          "origin": {
+            "$ref": "#/components/schemas/LocationPoint",
+            "description": "출발지 좌표 (WGS84)"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/LocationPoint",
+            "description": "목적지 좌표 (WGS84)"
+          },
+          "originName": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Originname",
+            "description": "출발지 명칭",
+            "default": "출발지"
+          },
+          "destinationName": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Destinationname",
+            "description": "목적지 명칭",
+            "default": "목적지"
+          },
+          "excludeStairs": {
+            "type": "boolean",
+            "title": "Excludestairs",
+            "description": "계단 제외 여부 (기본값: True)",
+            "default": true
+          },
+          "passPoints": {
+            "items": {
+              "$ref": "#/components/schemas/LocationPoint"
+            },
+            "type": "array",
+            "maxItems": 5,
+            "title": "Passpoints",
+            "description": "경유지 좌표 목록 (최대 5개)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "origin",
+          "destination"
+        ],
+        "title": "PedestrianRouteRequest"
+      },
+      "PedestrianRouteResponse": {
+        "properties": {
+          "dataVersion": {
+            "type": "string",
+            "title": "Dataversion",
+            "description": "데이터 버전",
+            "default": "kr-crossing-20260908.1"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "경로 안내 공급자 (TMAP 등)"
+          },
+          "totalDistanceMeters": {
+            "type": "integer",
+            "title": "Totaldistancemeters",
+            "description": "총 경로 거리 (미터)"
+          },
+          "totalDurationSeconds": {
+            "type": "integer",
+            "title": "Totaldurationseconds",
+            "description": "총 소요 시간 (초)"
+          },
+          "excludeStairs": {
+            "type": "boolean",
+            "title": "Excludestairs",
+            "description": "계단 제외 옵션 적용 여부"
+          },
+          "fullGeometry": {
+            "items": {
+              "$ref": "#/components/schemas/LocationPoint"
+            },
+            "type": "array",
+            "title": "Fullgeometry",
+            "description": "전체 경로 폴리라인 좌표열 (WGS84)"
+          },
+          "maneuvers": {
+            "items": {
+              "$ref": "#/components/schemas/RouteManeuverSchema"
+            },
+            "type": "array",
+            "title": "Maneuvers",
+            "description": "경로 회전/분기점(Maneuver) 목록"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/RouteSegmentSchema"
+            },
+            "type": "array",
+            "title": "Segments",
+            "description": "경로 세그먼트(링크) 목록"
+          },
+          "disclaimer": {
+            "type": "string",
+            "title": "Disclaimer",
+            "description": "경로 안내 및 접근성 한계 고지문 (법적/안전 필수 면책)",
+            "default": "이 경로는 TMAP 보행자 경로 안내(계단 제외 옵션)를 기반으로 제공되며, 휠체어 단차(연석 2cm 이하)나 시각장애인 편의시설(음향신호기, 점자블록)의 완전성을 보장하는 안전 경로가 아닙니다. 주변 시설 데이터와 현장 상황을 반드시 확인하며 보행하세요."
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "totalDistanceMeters",
+          "totalDurationSeconds",
+          "excludeStairs",
+          "fullGeometry",
+          "maneuvers",
+          "segments"
+        ],
+        "title": "PedestrianRouteResponse"
+      },
+      "RawFacility": {
+        "properties": {
+          "acousticSignal": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acousticsignal",
+            "description": "원천 음향신호기 (null=미기재, false=없음, true=있음)"
+          },
+          "tactilePaving": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tactilepaving",
+            "description": "원천 점자블록 (null=미기재, false=없음, true=있음)"
+          },
+          "curbCut": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curbcut",
+            "description": "원천 보도턱낮춤 (null=미기재, false=없음, true=있음)"
+          },
+          "directionBearingDeg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directionbearingdeg",
+            "description": "원천 진행 방위각 (0~360°)"
+          }
+        },
+        "type": "object",
+        "title": "RawFacility",
+        "description": "원천 공공데이터에 기재된 시설 속성 (현장 검증값으로 덮어쓰기 전 원본 보존값)\nnull: 원천 미기재, false: 명시적 없음, true: 설치됨"
+      },
+      "RouteManeuverSchema": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index",
+            "description": "안내 지점 순번"
+          },
+          "pointIndex": {
+            "type": "integer",
+            "title": "Pointindex",
+            "description": "포인트 순번"
+          },
+          "location": {
+            "$ref": "#/components/schemas/LocationPoint",
+            "description": "안내 지점 좌표"
+          },
+          "instruction": {
+            "type": "string",
+            "title": "Instruction",
+            "description": "보행 행동/회전 안내 문구"
+          },
+          "turnType": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turntype",
+            "description": "TMAP 회전 코드"
+          },
+          "facilityType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facilitytype",
+            "description": "시설 유형 (횡단보도, 육교 등)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "pointIndex",
+          "location",
+          "instruction"
+        ],
+        "title": "RouteManeuverSchema"
+      },
+      "RouteSegmentSchema": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index",
+            "description": "세그먼트 순번"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "도로명 또는 구간 명칭"
+          },
+          "distanceMeters": {
+            "type": "integer",
+            "title": "Distancemeters",
+            "description": "구간 거리 (미터)"
+          },
+          "durationSeconds": {
+            "type": "integer",
+            "title": "Durationseconds",
+            "description": "구간 소요 시간 (초)"
+          },
+          "geometry": {
+            "items": {
+              "$ref": "#/components/schemas/LocationPoint"
+            },
+            "type": "array",
+            "title": "Geometry",
+            "description": "구간 상세 좌표열"
+          },
+          "facilityType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facilitytype",
+            "description": "시설 유형 (보도, 횡단보도 등)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "name",
+          "distanceMeters",
+          "durationSeconds",
+          "geometry"
+        ],
+        "title": "RouteSegmentSchema"
+      },
+      "SourceMetadata": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "데이터 제공 기관/지자체"
+          },
+          "sourceRecordId": {
+            "type": "string",
+            "title": "Sourcerecordid",
+            "description": "원천 관리번호/식별키"
+          },
+          "referenceDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referencedate",
+            "description": "원천 데이터 기준일자 (YYYY-MM-DD)"
+          },
+          "ingestedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ingestedat",
+            "description": "파이프라인 적재 시각 (ISO 8601)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "sourceRecordId"
+        ],
+        "title": "SourceMetadata"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VerificationMetadata": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "FIELD_VERIFIED",
+              "UNVERIFIED"
+            ],
+            "title": "Status",
+            "description": "현장 검증 상태 ('FIELD_VERIFIED' 또는 'UNVERIFIED')"
+          },
+          "verifiedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifiedat",
+            "description": "현장 검증 완료 시각 (ISO 8601)"
+          },
+          "verifiedBy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifiedby",
+            "description": "현장 검증자/조사원 식별자"
+          },
+          "hasSourceConflict": {
+            "type": "boolean",
+            "title": "Hassourceconflict",
+            "description": "원천 데이터와 현장 검증값 간 충돌/불일치 발생 여부",
+            "default": false
+          },
+          "conflictDetails": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConflictDetails"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "시설 항목별 원천 vs 현장 불일치 상세"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "VerificationMetadata"
+      }
+    }
+  }
+}

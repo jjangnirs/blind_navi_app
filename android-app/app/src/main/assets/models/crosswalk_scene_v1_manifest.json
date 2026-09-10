@@ -1,0 +1,56 @@
+{
+  "modelName": "crosswalk_scene",
+  "modelVersion": "1.0.0",
+  "sha256": "fc2456376739861e0fb4ff35f72330a863307a718d28e8929b722bfdfc1cbdfd",
+  "minAppVersion": "0.1.0",
+  "disabled": false,
+  "inputTensor": {
+    "name": "input_image",
+    "shape": [
+      1,
+      320,
+      320,
+      3
+    ],
+    "dataType": "FLOAT32"
+  },
+  "outputTensors": [
+    {
+      "name": "crosswalk_polygon",
+      "shape": [
+        1,
+        8
+      ],
+      "dataType": "FLOAT32"
+    },
+    {
+      "name": "crosswalk_entrance",
+      "shape": [
+        1,
+        2
+      ],
+      "dataType": "FLOAT32"
+    },
+    {
+      "name": "crosswalk_direction",
+      "shape": [
+        1,
+        1
+      ],
+      "dataType": "FLOAT32"
+    },
+    {
+      "name": "crosswalk_quality",
+      "shape": [
+        1,
+        1
+      ],
+      "dataType": "FLOAT32"
+    }
+  ],
+  "labelsOrder": [
+    "CROSSWALK_MASK",
+    "CROSSWALK_ENTRANCE",
+    "CROSSWALK_DIRECTION"
+  ]
+}
