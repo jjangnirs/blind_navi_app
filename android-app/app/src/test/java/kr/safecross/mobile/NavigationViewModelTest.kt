@@ -158,10 +158,102 @@ class NavigationViewModelTest {
         advanceUntilIdle()
 
         val hasApproachSpeech = effects.any {
-            it is NavigationEffect.SpeakGuidance && (it.text.contains("앞") || it.text.contains("횡단보도") || it.text.contains("미터"))
+            it is NavigationEffect.SpeakGuidance && (it.text.contains("앞") || it.text.contains("횡단보도") || it.text.contains("미터") || it.text.contains("걸음"))
         }
         assertTrue(hasApproachSpeech)
 
         job.cancel()
     }
+
+    @Test
+    fun `processDevicePose detects misalignment and alignment with haptic feedback`() = runTest(testDispatcher) {
+        val effects = mutableListOf<NavigationEffect>()
+        val job = launch {
+            viewModel.effects.collect { effects.add(it) }
+        }
+
+        val fakePoseTracker = kr.safecross.mobile.sensor.FakeDevicePoseTracker()
+        viewModel.setDevicePoseTracker(fakePoseTracker)
+
+        val route = fakeRepository.getPedestrianRoute(
+            origin = LocationPoint(35.1595, 126.8526),
+            destination = LocationPoint(35.1610, 126.8550)
+        ).getOrThrow()
+
+        viewModel.setRoute(route, poseTracker = fakePoseTracker)
+        advanceUntilIdle()
+        effects.clear()
+
+        // 1. 목표 방향과 180도 반대 방향 (헤딩 불일치)
+        val targetBearing = viewModel.calculateTargetBearing() ?: 45.0
+        val oppositeHeading = ((targetBearing + 180.0) % 360.0).toFloat()
+        fakePoseTracker.setPose(pitch = 10f, roll = 0f, heading = oppositeHeading)
+        advanceUntilIdle()
+
+        assertFalse("180도 반대 방향일 때 미정대 상태여야 함", viewModel.uiState.value.isOrientationAligned)
+        assertTrue("몸 회전 지시 안내 문구가 포함되어야 함", viewModel.uiState.value.alignmentPromptMessage.contains("돌려") || viewModel.uiState.value.alignmentPromptMessage.contains("향하세요"))
+
+        // 2. 가야 할 진행 방향으로 몸 회전 정대 완료
+        val alignedHeading = targetBearing.toFloat()
+        fakePoseTracker.setPose(pitch = 10f, roll = 0f, heading = alignedHeading)
+        advanceUntilIdle()
+
+        assertTrue("진행 방향 정대 상태여야 함", viewModel.uiState.value.isOrientationAligned)
+        assertTrue(
+            "정대 확인 햅틱 또는 음성 지침이 발행되어야 함",
+            effects.any {
+                it is NavigationEffect.SpeakGuidance &&
+                (it.hapticType == kr.safecross.mobile.guidance.HapticFeedbackType.ORIENTATION_ALIGNED ||
+                 it.text.contains("올바른 진행 방향입니다"))
+            }
+        )
+
+        job.cancel()
+    }
+
+    @Test
+    fun `crossing facility approach triggers TriggerCrossingAssist effect`() = runTest(testDispatcher) {
+        val effects = mutableListOf<NavigationEffect>()
+        val job = launch {
+            viewModel.effects.collect { effects.add(it) }
+        }
+
+        val route = fakeRepository.getPedestrianRoute(
+            origin = LocationPoint(35.1595, 126.8526),
+            destination = LocationPoint(35.1610, 126.8550)
+        ).getOrThrow()
+
+        val facilities = listOf(
+            kr.safecross.mobile.navigation.crossing.CrossingFacility(
+                id = "CW-TEST-1",
+                lat = 35.1600,
+                lon = 126.8530,
+                roadName = "테스트 횡단보도",
+                approachBearingDeg = 45.0
+            )
+        )
+
+        viewModel.setRoute(route, facilities = facilities)
+        advanceUntilIdle()
+        effects.clear()
+
+        // 횡단보도 정지선 대기 지점 (약 5m 이내)
+        val sampleAtCrossing = kr.safecross.mobile.location.LocationSample(
+            lat = 35.160001,
+            lon = 126.853001,
+            accuracyMeters = 2.0f,
+            bearingDegrees = 45.0f,
+            elapsedRealtimeNanos = System.nanoTime(),
+            signalStrengthPercent = 95
+        )
+
+        viewModel.processLocationSample(sampleAtCrossing)
+        advanceUntilIdle()
+
+        val triggered = effects.any { it is NavigationEffect.TriggerCrossingAssist }
+        assertTrue("횡단보도 접근 시 자동으로 카메라 보조 트리거가 발생해야 함", triggered)
+
+        job.cancel()
+    }
 }
+

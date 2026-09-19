@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Star
 
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import kr.safecross.mobile.domain.model.LocationPoint
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -62,7 +64,8 @@ fun DestinationScreen(
     voiceAnnouncer: VoiceAnnouncer?,
     onNavigateToRouteSummary: (DestinationItem) -> Unit,
     onNavigateToSettings: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currentGps: LocationPoint? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scrollState = rememberScrollState()
@@ -318,6 +321,15 @@ fun DestinationScreen(
                         tint = HighContrastYellow
                     )
                 },
+                trailingIcon = {
+                    if (uiState.isSearching) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = HighContrastYellow,
+                            strokeWidth = 2.5.dp
+                        )
+                    }
+                },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -328,9 +340,15 @@ fun DestinationScreen(
                 )
             )
 
-            // 추천 및 즐겨찾기 헤더
+            // 추천 및 즐겨찾기 또는 검색 결과 헤더
+            val headerText = if (uiState.searchQuery.isNotBlank()) {
+                if (uiState.isSearching) "검색 중..." else "검색 결과 (${uiState.destinations.size}건)"
+            } else {
+                "추천 및 즐겨찾기 목적지"
+            }
+
             Text(
-                text = "추천 및 즐겨찾기 목적지",
+                text = headerText,
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
@@ -338,6 +356,35 @@ fun DestinationScreen(
                 ),
                 modifier = Modifier.padding(top = 8.dp)
             )
+
+            // 검색 결과 없음 안내
+            if (uiState.destinations.isEmpty() && !uiState.isSearching && uiState.searchQuery.isNotBlank()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(CardBackground, RoundedCornerShape(12.dp))
+                        .border(1.dp, Color(0xFF444444), RoundedCornerShape(12.dp))
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "🔍 검색 결과가 없습니다",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = HighContrastYellow
+                        )
+                    )
+                    Text(
+                        text = "'${uiState.searchQuery}'에 해당하는 실제 장소를 찾을 수 없습니다.\n건물명, 역 이름, 상호 등을 더 정확히 입력해 보세요.",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = HighContrastWhite,
+                            fontSize = 14.sp
+                        ),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
 
             // 목적지 목록 (각 항목 최소 64dp 터치 타깃)
             Column(
@@ -347,6 +394,7 @@ fun DestinationScreen(
                 uiState.destinations.forEach { item ->
                     DestinationCardItem(
                         item = item,
+                        currentLocation = currentGps,
                         onClick = { viewModel.selectDestination(item) }
                     )
                 }
@@ -358,8 +406,16 @@ fun DestinationScreen(
 @Composable
 private fun DestinationCardItem(
     item: DestinationItem,
+    currentLocation: LocationPoint? = null,
     onClick: () -> Unit
 ) {
+    // 현재 위치와의 거리 산출
+    val distanceMeters = currentLocation?.let { calculateDistanceMeters(it, item.location) }
+    val distanceText = distanceMeters?.let { meters ->
+        if (meters < 1000) "${meters.toInt()}m" else "${String.format("%.1f", meters / 1000.0)}km"
+    }
+    val isWalkable = (distanceMeters ?: 0.0) <= 5000.0
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -370,7 +426,8 @@ private fun DestinationCardItem(
             .padding(16.dp)
             .semantics(mergeDescendants = true) {
                 role = Role.Button
-                contentDescription = "목적지 ${item.name}. 주소: ${item.address}. ${if (item.isFavorite) "즐겨찾기 항목." else ""} 선택하려면 두 번 탭하세요."
+                val distDesc = distanceText?.let { ", 현재 위치에서 $it" } ?: ""
+                contentDescription = "목적지 ${item.name}. 주소: ${item.address}$distDesc. ${if (item.isFavorite) "즐겨찾기 항목." else ""} 선택하려면 두 번 탭하세요."
             },
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -385,22 +442,63 @@ private fun DestinationCardItem(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.Center
         ) {
-            Text(
-                text = item.name,
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = HighContrastWhite
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = item.name,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        color = HighContrastWhite
+                    ),
+                    modifier = Modifier.weight(1f, fill = false)
                 )
-            )
+
+                // 거리 뱃지
+                if (distanceText != null) {
+                    val badgeColor = if (isWalkable) Color(0xFF00E676) else Color(0xFFFF5252)
+                    Row(
+                        modifier = Modifier
+                            .background(badgeColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                            .border(1.dp, badgeColor, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isWalkable) "🚶 $distanceText" else "⚠️ $distanceText (초과)",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = badgeColor,
+                                fontSize = 11.sp
+                            )
+                        )
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = item.address,
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     color = TextSecondary
                 )
             )
         }
     }
 }
+
+private fun calculateDistanceMeters(p1: LocationPoint, p2: LocationPoint): Double {
+    val r = 6371000.0
+    val lat1 = Math.toRadians(p1.lat)
+    val lat2 = Math.toRadians(p2.lat)
+    val dLat = Math.toRadians(p2.lat - p1.lat)
+    val dLon = Math.toRadians(p2.lon - p1.lon)
+    val a = Math.sin(dLat / 2).let { it * it } +
+            Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2).let { it * it }
+    val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return r * c
+}
+

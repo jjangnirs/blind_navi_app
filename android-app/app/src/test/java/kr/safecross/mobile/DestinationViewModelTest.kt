@@ -27,7 +27,7 @@ class DestinationViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        viewModel = DestinationViewModel()
+        viewModel = DestinationViewModel(ioDispatcher = testDispatcher)
     }
 
     @After
@@ -41,12 +41,14 @@ class DestinationViewModelTest {
 
         // "평화공원" 검색
         viewModel.onSearchQueryChanged("평화")
+        advanceUntilIdle()
         val state = viewModel.uiState.value
         assertEquals(1, state.destinations.size)
         assertEquals("평화공원", state.destinations[0].name)
 
         // 빈 검색어로 복귀
         viewModel.onSearchQueryChanged("")
+        advanceUntilIdle()
         assertEquals(4, viewModel.uiState.value.destinations.size)
     }
 

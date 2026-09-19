@@ -191,6 +191,38 @@ fun isLocationUsable(location: LocationSample): Boolean =
 - 접근성 한계 면책 고지 배너 (`DisclaimerBanner`):
   - TMAP 보행자 경로는 계단을 우회하지만 보도 턱낮춤(2cm 이하), 점자블록, 음향신호기 완벽성을 일체 보장하지 않음을 글꼴 200% 확대 상태에서도 줄임표 없이 고정 노출하고, 진입 즉시 TTS로 전문 낭독한다.
 
+### 4.3.1 SK TMAP 전국 POI 통합검색 및 Geocoder 폴백
+- **POI 검색 규약:**
+  - 엔드포인트: `https://apis.openapi.sk.com/tmap/pois?version=1`
+  - 요청 파라미터: `searchKeyword`, `count=20`, `resCoordType="WGS84GEO"`, `reqCoordType="WGS84GEO"`, `centerLat/centerLon`(현재 GPS 위치 기반 정렬)
+  - 헤더: `appKey: BuildConfig.TMAP_APP_KEY`, `Accept: application/json`
+  - 응답 정규화: `noorLat`/`noorLon`(입구점 좌표), 도로명+지번 주소 조합하여 `DestinationItem` 객체로 변환
+- **2차 안전 폴백:**
+  - 네트워크 장애 또는 TMAP API 오류 시 안드로이드 플랫폼 내장 `android.location.Geocoder.getFromLocationName`으로 자동 전환.
+- **거리 계산 및 보행 제한 검증:**
+  - 현재 스마트폰 GPS 좌표 기준 직선거리를 산출하여 5km 이내(보행 가능) 및 5km 초과(보행 제한 안내) 뱃지를 실시간 렌더링.
+
+### 4.3.2 대한민국 국토교통부 VWorld 표준 2D 정밀 전자지도 엔진
+- **타일 렌더러 아키텍처:**
+  - Leaflet 기반 독립형 하이브리드 지도 렌더러 (`RealRouteMapView.kt`).
+  - 기본 타일: `https://xdworld.vworld.kr/2d/Base/service/{z}/{x}/{y}.png` (대한민국 국가공간정보 표준 2D 지도, 1:1000 상세 건물, 골목길, 지번, 횡단보도 100% 한글 표출).
+  - 3중 안전 폴백: VWorld 타일 에러 발생 시 OpenStreetMap(`tile.openstreetmap.org`) → CartoDB Voyager 순으로 즉시 자동 전환.
+  - WebView 정책: `mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW`, `domStorageEnabled = true` 적용으로 타일 차단 방지.
+
+### 4.3.3 실시간 보행 내 위치 추적 및 NavigationScreen 지도 연동
+- **데이터 파이프라인:**
+  - `NavigationUiState`의 `currentLocation: LocationPoint?`를 실시간 업데이트.
+  - Compose `AndroidView.update`에서 전체 WebView 리로드 없이 `evaluateJavascript("updateUserLocation(...)")`로 지도 핀만 부드럽게 실시간 이동 (깜빡임 없음).
+  - 마커 시각화: 정상 진행 시 파란색 레이더 펄스 핀(🔵), 경로 이탈(`isOffRoute=true`) 시 빨간색 펄스 핀(🔴) 및 경고 뱃지 전환.
+
+### 4.3.4 TMAP 보행로(facilityType 11) 표준 교정 및 육교 오안내 원천 차단
+- TMAP 보행자 API 응답에서 `facilityType == 11`은 일반 평지 보행로를 의미하므로 이를 `"보행로"`로 표준 매핑하고, `12`를 `"지하보도"`, `14`를 `"보도육교"`, `15`를 `"교량"`으로 교정.
+- `DirectionAction.fromManeuver` 및 `BlindGuidanceFormatter`에서 육교 오탐 방지 필터를 적용하여 시각장애인에게 육교로 오안내하는 위험을 원천 제거.
+
+### 4.3.5 FastAPI 백엔드 프록시 및 외부 HTTPS 보안 터널
+- 엔드포인트: `/v1/routes/pedestrian` (계단 제외 `searchOption=30` 정규화 보행자 라우팅).
+- 3단계 라우팅 복원력: (1) 외부 백엔드 프록시(localtunnel HTTPS) → (2) TMAP 클라우드 직접 호출 → (3) 로컬 오프라인 Fallback.
+
 1. 경로 선에 현재 위치를 투영한다.
 2. 전방 route progress 구간의 횡단보도만 후보로 남긴다.
 3. 횡단보도까지의 직선거리와 경로상 거리를 모두 계산한다.
@@ -219,21 +251,29 @@ fun isLocationUsable(location: LocationSample): Boolean =
 - 프레임 객체에 `toByteArray()` 같은 무분별한 복사를 금지하고 버퍼 재사용을 측정한다.
 - 작은 보행신호가 전체 축소 영상에서 사라지지 않도록 전체 장면용 저해상도 입력과 지도·횡단 문맥이 제안한 고해상도 ROI crop을 비교한다.
 - 횡단보도 mask와 신호 box는 동일한 원본 프레임 좌표계로 복원해 기하 연결에 사용한다.
-- `CameraVisionSignalEstimator` 실시간 비전 필터링 규칙:
+- `CameraVisionSignalEstimator` 고정밀 적응형 비전 파이프라인 규칙:
   1. **ROI 높이 최적화:** 도로 위 공중에 높이 걸린 차량용 신호등을 배제하기 위해 상단 0~8%를 마스킹하고 보행자 신호등 높이(8%~65%)를 탐색한다.
-  2. **황색/주황색 차단:** 차량용 황색 신호등, 가로등, 방향지시등($R \ge 150, G \ge 120, B < 120, |R-G| < 55$)은 보행 신호에 없으므로 적색/녹색 판정에서 즉시 배제한다.
-  3. **스펙트럼 정밀화:** 보행자 적색(고휘도 Red, $R > G \times 1.55, R > B \times 1.55, G < 110$) 및 한국형 보행자 청록색 LED($G \ge 115, G > R \times 1.35, (G+B) > R \times 1.9, R < 110$)로 파장을 한정한다.
-  4. **가로형 차량 신호등 배제 (Aspect Ratio):** 차량용 3~4구 신호등은 가로로 길게 늘어서 있으므로, 검출 클러스터의 종횡비가 가로로 긴 경우($Width > Height \times 1.35$ 및 $Width \ge 16$) 보행자 신호등에서 즉시 기각한다.
+  2. **RGB→HSV 고속 공간 분리 및 조도 적응:** 단순 RGB 임계값의 한계(직사광선/역광 백화 현상 및 그늘/야간 저조도 감쇄)를 극복하기 위해 프레임을 HSV로 변환하여 조도(V)와 색조(H)/채도(S)를 완전 분리한다.
+  3. **한국 경찰청 보행신호등 규격 파장 정밀 감지:**
+     - 고채도 적색: $H \in [0^\circ, 15^\circ] \cup [345^\circ, 360^\circ], S \ge 0.40, V \ge 0.25$ (역광 시 $V \ge 0.85, S \ge 0.25$ 보정).
+     - 에메랄드/청록색 Green: 실제 한국 횡단보도 신호등 특유의 청록빛 LED($H \in [145^\circ, 195^\circ], S \ge 0.35$) 정밀 포착.
+     - 차량용 황색/주황색 불빛 및 가로등($H \in [25^\circ, 55^\circ]$) 즉시 배제.
+  4. **한국형 보행신호등 2구 세로 기하 구조 분석:**
+     - 상단 = 적색 정지 인형 픽토그램 / 하단 = 녹색 보행 인형 픽토그램의 공간적 상하 배치($Y_{green} > Y_{red}$) 검증.
+     - 가로형 차량 신호등(종횡비 $W/H > 1.35$ 및 $W \ge 16$) 자동 기각.
+     - 적색과 녹색이 동시 검출되거나 모호한 경우 Red 우선(Zero False-Green) 원칙 적용.
 
-### 4.5 LiteRT 런타임
+### 4.5 LiteRT / TFLite 온디바이스 런타임 및 비전 검증기
 
-구현 순서:
+구현 구조:
 
-1. CPU 기준 경로를 먼저 검증한다.
-2. LiteRT 2.x `CompiledModel` 지원 여부를 런타임에서 확인한다.
-3. NPU/GPU 자동 선택을 사용하되 결과 일관성과 초기화 실패를 시험한다.
-4. 미지원 기기는 Interpreter CPU fallback을 사용한다.
-5. 가속기별 수치 차이가 상태 임계 주변에서 GREEN으로 뒤집히지 않는지 골든 테스트한다.
+1. **하드웨어 가속 TFLite 러너 (`TfliteModelRunner`):**
+   - `org.tensorflow.lite.Interpreter`를 공식 래핑하여 Direct ByteBuffer 입력 및 다중 출력 텐서 매핑(`runForMultipleInputsOutputs`).
+   - 플랫폼 NPU(NNAPI) 및 4스레드 멀티스레드 CPU 실행 지원.
+   - 가속기 장애 시 Graceful Fallback 및 안전 종료 보장.
+2. **온디바이스 비전 검증기 (`LocalVlmSignalVerifier`):**
+   - 시간 일관성 롤링 버퍼(Temporal Rolling Buffer): 최근 5프레임의 상태 전이를 추적하여 단일 프레임 잡음/반사광 오탐 방지.
+   - **Zero False-Green 절대 수호:** 녹색 신호 판정 시 최근 버퍼의 60% 이상 안정적 수신을 요구하며, 미달 시 즉시 UNKNOWN으로 강등.
 
 모델 산출물:
 
@@ -329,18 +369,31 @@ official signal max age = provider contract value
 - 별도 `GuidanceArbiter`가 우선순위를 관리한다: `SAFETY > CROSSING > ROUTE > INFO`.
 - 새 안전 메시지가 나오면 오래된 ROUTE 메시지는 제거한다.
 - `DirectionAction`: TMAP `turnType` 코드 및 `instruction` 문구를 분석하여 직진(STRAIGHT), 좌회전(LEFT), 우회전(RIGHT), 완만한 좌회전(SLIGHT_LEFT), 완만한 우회전(SLIGHT_RIGHT), 횡단보도(CROSSWALK), 유턴(UTURN), 도착(DESTINATION) 등 8대 보행 행동으로 표준화한다.
+- **시각장애인 특화 음성 길안내 포맷터 (`BlindGuidanceFormatter`):**
+  - **시계 방향(Clock Face) 변환:** 단순 좌/우회전 대신 현재 헤딩각 기준 1~12시 방향(예: "12시 방향(정면)", "2시 방향", "9시 방향(좌측)")으로 변환.
+  - **보폭 기준 걸음 수 환산:** 미터(m) 거리를 성인 평균 보폭(0.65m) 기준 걸음 수로 계산하여 `"약 {걸음수}걸음 앞({미터}미터)"` 형태로 병기.
+  - **시각 단서 자동 필터링:** TMAP 원문의 상호명, 건물명, `"OO방면으로"`, `"OO출구"` 등 시각장애인에게 불필요한 시각적 랜드마크를 배제하고 보행 행동 중심으로 정제.
+  - **능동적 신체 회전각 안내:** 목표 각도와 18도 이상 차이 발생 시 `"오른쪽으로 {각도}도 몸을 돌려 {시계방향}을 향하세요"`와 같이 명확한 기준점 제시.
 - **방향 분기점 즉시 음성 발화 (Turn Transition):** 위치 추적 엔진에서 `currentManeuverIndex`가 바뀌는 순간, 기존 음성을 플러시(`QUEUE_FLUSH`)하고 새 분기점 지침을 지체 없이 즉각 발화한다.
 - **거리별 사전 접근 안내 (Approach Cue):**
-  - 다음 분기점 30m 전(18~35m 구간 진입 시): `"{남은거리}미터 앞 {방향}입니다."`
-  - 다음 분기점 15m 전(5~18m 구간 진입 시): `"잠시 후 {방향}입니다. 주변을 살피고 보행하세요."`
+  - 다음 분기점 30m 전(18~35m 구간 진입 시): `BlindGuidanceFormatter`를 적용하여 걸음 수와 시계 방향을 포함한 사전 안내 발화.
+  - 다음 분기점 15m 전(5~18m 구간 진입 시): `"잠시 후 {시계방향}{동작}입니다. 주변을 살피고 보행하세요."`
   - 동일 분기점에서 중복 발화하지 않도록 단계 플래그(`lastApproachStage`)로 관리한다.
-- **저시력자 전용 방향 안내 표시기 (`LowVisionDirectionIndicator`):**
-  - 4dp 두께의 선명한 형광 노랑(`HighContrastYellow` #FFD600) 테두리와 순수 흑색 배경(#000000)
-  - 84dp 초대형 원형 배지 내 56dp 방향 심볼 화살표
-  - 38sp ExtraBold 대형 남은 거리 및 24sp 볼드 동작 명칭
-  - 스크린리더 TalkBack `contentDescription` 연동
-- 진동은 플랫폼의 의미 기반 haptic API를 우선하고 구형 waveform은 필요한 경우만 fallback한다.
-- 이어폰 사용 시 AudioFocus를 짧게 얻고 주변음 청취를 방해하지 않도록 완전 차단 대신 ducking을 검토한다.
+- **지자기 나침반(Rotation Vector) 실시간 헤딩 및 햅틱 콤파스:**
+  - `Sensor.TYPE_ROTATION_VECTOR` 및 지자기 센서를 통해 0.0°~360.0° 실시간 나침반 방위각 추적.
+  - 목표 경로 선분의 방위각(`calculateTargetBearing`)과 단말기 헤딩 오차가 18도 이내로 정렬되면 `ORIENTATION_ALIGNED` 햅틱 및 `"올바른 진행 방향입니다. 전방을 주의하며 걸으세요."` 발화 (쿨다운 6초).
+- **횡단보도 접근 시 카메라 보행 보조 자동 연동 (`TriggerCrossingAssist`):**
+  - 횡단보도 15m/8m 이내 접근 및 대기 모드(`APPROACHING_CROSSING`, `CROSSING`) 진입 시 `TriggerCrossingAssist` 이벤트를 발행하여 지팡이 파지 상태에서 수동 터치 없이 카메라 신호 보조 모드로 자동 전환.
+- **저시력자 전용 방향 안내 표시기 및 정대 카드:**
+  - `LowVisionDirectionIndicator`: 4dp 선명한 황색 테두리(#FFD600), 84dp 원형 배지 내 56dp 심볼 화살표, 38sp 대형 거리 텍스트.
+  - 실시간 정대 카드: 🟢 "경로 방향 정대 완료" / 🧭 "몸 방향 회전 필요" 고대비 상태 및 TalkBack 시맨틱 제공.
+- **햅틱 진동 피드백 어휘 (`HapticFeedbackType`):**
+  - `RED_STOP`: 적색 정지 (400ms-150ms-400ms, 진폭 255)
+  - `GREEN_ESTIMATE`: 녹색 추정 (100ms-100ms-100ms-100ms-150ms, 진폭 180~220)
+  - `UNKNOWN_CAUTION`: 주의/모호 (200ms, 진폭 120)
+  - `SAFETY_WARNING`: 긴급 경고/이탈 (500ms-200ms-500ms-200ms-500ms, 진폭 255)
+  - `ORIENTATION_ALIGNED`: 경로 방향 정대 확인 햅틱 콤파스 (60ms-60ms-60ms, 진폭 160)
+- 이어폰 사용 시 AudioFocus를 짧게 얻고 주변음 청취를 방해하지 않도록 완전 차단 대신 ducking을 적용한다.
 
 ## 5. 백엔드 설계
 

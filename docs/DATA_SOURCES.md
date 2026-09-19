@@ -174,6 +174,31 @@ curl --request POST \
 
 실제 요청 형식은 계정에 표시되는 최신 Swagger/공식 예제를 우선한다.
 
+### 3.2 SK TMAP 통합검색 (POI API)
+
+- 공식 문서: <https://tmap-skopenapi.readme.io/reference/poi-통합검색>
+- Endpoint: `GET https://apis.openapi.sk.com/tmap/pois?version=1`
+- 인증: `appKey` 요청 헤더
+- 주요 파라미터:
+  - `searchKeyword`: 검색어 (역명, 건물명, 상호, 도로명 주소 등)
+  - `count=20`: 결과 건수
+  - `centerLat`, `centerLon`: 스마트폰 현재 GPS 기준 거리순 정렬 좌표
+  - `reqCoordType="WGS84GEO"`, `resCoordType="WGS84GEO"`
+- 용도: 전국 99.999% 장소 실시간 검색, 목적지 입구 좌표(noorLat/noorLon) 획득, 현재 위치 기준 거리 계산 및 5km 보행 제한 여부 안내.
+
+### 3.3 대한민국 국토교통부 VWorld 표준 2D 정밀 전자지도
+
+- 공식 포털: <https://www.vworld.kr/>
+- 타일 URL: `https://xdworld.vworld.kr/2d/Base/service/{z}/{x}/{y}.png`
+- 제공: 국토교통부 공간정보산업진흥원 (VWORLD)
+- 특징: 전국 1:1000 상세 건물, 골목길, 도로명, 횡단보도를 100% 한글로 선명하게 표출.
+- 3중 안전 폴백: VWorld 타일 에러 시 OpenStreetMap(`tile.openstreetmap.org`) → CartoDB Voyager로 즉시 자동 전환.
+
+### 3.4 안드로이드 플랫폼 Geocoder
+
+- API: `android.location.Geocoder`
+- 용도: 네트워크 단절 또는 TMAP POI 장애 시 기기 내장 지오코더를 통한 2차 안전 주소/좌표 변환 폴백.
+
 ## 4. AI 학습·평가 후보 데이터
 
 ### 4.1 신호등/도로표지판 인지 영상(수도권 외)

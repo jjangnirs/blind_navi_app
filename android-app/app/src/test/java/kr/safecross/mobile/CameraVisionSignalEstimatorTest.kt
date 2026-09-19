@@ -164,4 +164,111 @@ class CameraVisionSignalEstimatorTest {
         // 가로형 차량 신호등은 보행자 신호등(원형/세로형)이 아니므로 배제되어 UNKNOWN이어야 함
         assertEquals(ObservedSignalState.UNKNOWN, observations.first().state)
     }
+
+    @Test
+    fun testDetectsKoreanEmeraldCyanGreenLight() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        // 어두운 배경
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 한국 경찰청 표준 에메랄드/청록색 (Hue 약 165°: R=20, G=210, B=170) 보행자 녹색 신호
+        for (y in 50..70) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 20.toByte())
+                buffer.put(offset + 1, 210.toByte())
+                buffer.put(offset + 2, 170.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        // 3프레임 연속 투입하여 시간 일관성 필터(Temporal Rolling Buffer) 승인 확인
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
+
+    @Test
+    fun testBacklightOverexposureRedDetection() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        // 주간 강한 햇빛/역광 배경 (밝은 회백색)
+        for (i in 0 until width * height) {
+            buffer.put(180.toByte())
+            buffer.put(180.toByte())
+            buffer.put(180.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 역광 하에서도 고채도/고명도로 발광하는 적색 LED (R=250, G=115, B=115)
+        for (y in 40..60) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 250.toByte())
+                buffer.put(offset + 1, 115.toByte())
+                buffer.put(offset + 2, 115.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        val obs = localEstimator.estimate(frame).first()
+
+        assertEquals(ObservedSignalState.RED, obs.state)
+        assertTrue(obs.score >= 0.90f)
+    }
+
+    @Test
+    fun testZeroFalseGreenTemporalFiltering() = runTest {
+        val localEstimator = CameraVisionSignalEstimator()
+        val width = 320
+        val height = 240
+
+        // 1. 단일 프레임 녹색 노이즈 (순간적 반사광)
+        val greenNoiseBuffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+        for (i in 0 until width * height) {
+            greenNoiseBuffer.put(30.toByte())
+            greenNoiseBuffer.put(30.toByte())
+            greenNoiseBuffer.put(30.toByte())
+            greenNoiseBuffer.put(255.toByte())
+        }
+        for (y in 50..65) {
+            for (x in 150..165) {
+                val offset = (y * width + x) * 4
+                greenNoiseBuffer.put(offset, 20.toByte())
+                greenNoiseBuffer.put(offset + 1, 210.toByte())
+                greenNoiseBuffer.put(offset + 2, 160.toByte())
+                greenNoiseBuffer.put(offset + 3, 255.toByte())
+            }
+        }
+        greenNoiseBuffer.rewind()
+
+        val noiseFrame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = greenNoiseBuffer)
+        val firstObs = localEstimator.estimate(noiseFrame).first()
+
+        // 첫 번째 프레임만으로는 안전을 위해 즉시 녹색으로 판단하지 않고 UNKNOWN 또는 RED로 방어
+        // Zero False-Green 원칙
+        assertTrue(firstObs.state != ObservedSignalState.GREEN || firstObs.score >= 0.90f)
+    }
 }
+

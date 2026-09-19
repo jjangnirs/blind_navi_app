@@ -52,6 +52,7 @@ import kr.safecross.mobile.ui.theme.HighContrastWhite
 import kr.safecross.mobile.ui.theme.HighContrastYellow
 import kr.safecross.mobile.ui.theme.WarningBannerBackground
 import kr.safecross.mobile.ui.theme.WarningBorder
+import kr.safecross.mobile.ui.screens.route.RealRouteMapView
 
 @Composable
 fun NavigationScreen(
@@ -90,6 +91,9 @@ fun NavigationScreen(
                 }
                 is NavigationEffect.NavigationFinished -> {
                     onStopNavigation()
+                }
+                is NavigationEffect.TriggerCrossingAssist -> {
+                    onOpenCrossingAssist()
                 }
             }
         }
@@ -180,6 +184,46 @@ fun NavigationScreen(
                 action = uiState.currentDirectionAction,
                 distanceMeters = uiState.distanceToNextManeuverMeters,
                 currentManeuver = uiState.currentManeuver
+            )
+
+            // 3-1. 실시간 나침반/신체 진행 방향 정대(Orientation Alignment) 카드
+            if (uiState.alignmentPromptMessage.isNotEmpty()) {
+                val isAligned = uiState.isOrientationAligned
+                val statusColor = if (isAligned) Color(0xFF00E676) else HighContrastYellow
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(CardBackground, RoundedCornerShape(16.dp))
+                        .border(2.dp, statusColor, RoundedCornerShape(16.dp))
+                        .padding(16.dp)
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = "진행 방향 정대 상태. ${uiState.alignmentPromptMessage}"
+                        },
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = if (isAligned) "🟢 경로 방향 정대 완료" else "🧭 몸 방향 회전 필요",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = statusColor
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = uiState.alignmentPromptMessage,
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = HighContrastWhite
+                        )
+                    )
+                }
+            }
+
+            // 3-2. 맞게 가고 있는지 실시간으로 확인하는 정밀 세부 지도 카드
+            DetailedNavigationMapCard(
+                route = route,
+                currentLocation = uiState.currentLocation,
+                currentManeuverIndex = uiState.currentManeuverIndex,
+                isOffRoute = uiState.isOffRoute
             )
 
             // 4. 보행 단계 진행 번호 및 안전 지침 안내
@@ -378,6 +422,99 @@ fun WalkingModeStatusBadge(
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontSize = 14.sp,
                     color = HighContrastWhite
+                )
+            )
+        }
+    }
+}
+
+/**
+ * 실시간 보행 경로 및 내 위치를 상세 도로/건물 지도 위에 표출하는 세부 지도 카드.
+ */
+@Composable
+fun DetailedNavigationMapCard(
+    route: PedestrianRoute,
+    currentLocation: kr.safecross.mobile.domain.model.LocationPoint?,
+    currentManeuverIndex: Int,
+    isOffRoute: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val originName = route.maneuvers.firstOrNull()?.instruction ?: "출발지"
+    val destName = route.maneuvers.lastOrNull()?.instruction ?: "도착지"
+    val borderStrokeColor = if (isOffRoute) Color(0xFFFF1744) else Color(0xFF2979FF)
+    val statusChipText = if (isOffRoute) "⚠️ 경로 이탈 주의" else "🔵 경로 정상 진행 중"
+    val statusChipColor = if (isOffRoute) Color(0xFFFF1744) else Color(0xFF00E676)
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(CardBackground, RoundedCornerShape(16.dp))
+            .border(2.dp, borderStrokeColor, RoundedCornerShape(16.dp))
+            .padding(12.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "실시간 보행 세부 지도. $statusChipText. 도로, 건물, 현재 위치 및 보행 경로가 지도 위에 표시됩니다."
+            }
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "🗺️ 실시간 세부 보행 지도",
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = HighContrastWhite,
+                    fontSize = 16.sp
+                )
+            )
+
+            Row(
+                modifier = Modifier
+                    .background(statusChipColor.copy(alpha = 0.2f), RoundedCornerShape(6.dp))
+                    .border(1.dp, statusChipColor, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = statusChipText,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        color = statusChipColor,
+                        fontSize = 12.sp
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 고정밀 국토교통부 VWorld 세부 지도 뷰어
+        RealRouteMapView(
+            route = route,
+            originName = originName,
+            destinationName = destName,
+            currentLocation = currentLocation,
+            currentManeuverIndex = currentManeuverIndex,
+            isOffRoute = isOffRoute,
+            showLiveTrackingControls = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(260.dp)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "📍 파란 원: 현재 내 위치 | 🟢/🔴: 출발/도착 | 🟠: 횡단보도",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 11.sp,
+                    color = Color(0xFFB0BEC5)
                 )
             )
         }

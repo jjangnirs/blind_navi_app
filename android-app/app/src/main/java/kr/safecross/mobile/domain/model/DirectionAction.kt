@@ -30,15 +30,16 @@ enum class DirectionAction(
         fun fromManeuver(maneuver: Maneuver?): DirectionAction {
             if (maneuver == null) return DESTINATION
 
-            // 1. facilityType 우선 확인
-            if (maneuver.facilityType == "횡단보도" || maneuver.facilityType?.contains("횡단보도") == true) {
+            // 1. facilityType 우선 확인 (정확한 시설물 일치)
+            val ft = maneuver.facilityType?.trim() ?: ""
+            if (ft == "횡단보도" || ft.contains("횡단보도")) {
                 return CROSSWALK
             }
-            if (maneuver.facilityType?.contains("육교") == true) return OVERPASS
-            if (maneuver.facilityType?.contains("지하보도") == true) return UNDERPASS
-            if (maneuver.facilityType?.contains("계단") == true) return STAIRS
-            if (maneuver.facilityType?.contains("엘리베이터") == true) return ELEVATOR
-            if (maneuver.facilityType?.contains("경사로") == true) return RAMP
+            if (ft == "육교" || ft == "보도육교") return OVERPASS
+            if (ft == "지하보도") return UNDERPASS
+            if (ft == "계단") return STAIRS
+            if (ft == "엘리베이터") return ELEVATOR
+            if (ft == "경사로") return RAMP
 
             // 2. TMAP turnType 코드 확인
             when (maneuver.turnType) {
@@ -57,25 +58,32 @@ enum class DirectionAction(
                 in 211..217 -> return CROSSWALK
             }
 
-            // 3. instruction 텍스트 키워드 기반 판정
-            val text = maneuver.instruction
-            return when {
-                text.contains("횡단보도") -> CROSSWALK
-                text.contains("유턴") -> UTURN
-                text.contains("좌회전") -> {
-                    if (text.contains("약간") || text.contains("10시") || text.contains("8시")) SLIGHT_LEFT else LEFT
-                }
-                text.contains("우회전") -> {
-                    if (text.contains("약간") || text.contains("2시") || text.contains("4시")) SLIGHT_RIGHT else RIGHT
-                }
-                text.contains("직진") -> STRAIGHT
-                text.contains("육교") -> OVERPASS
-                text.contains("지하보도") -> UNDERPASS
-                text.contains("계단") -> STAIRS
-                text.contains("엘리베이터") -> ELEVATOR
-                text.contains("도착") || text.contains("목적지") -> DESTINATION
-                else -> STRAIGHT
+            // 3. instruction 텍스트 분석 (랜드마크 "OO육교 방면" 오탐 방지)
+            val text = maneuver.instruction.trim()
+
+            // 3-1. 횡단보도/목적지 우선 판정
+            if (text.contains("횡단보도")) return CROSSWALK
+            if (text.contains("목적지") || text.contains("도착")) return DESTINATION
+
+            // 3-2. 회전 동작 키워드가 있으면 지명/랜드마크("육교 방면")보다 회전 동작을 우선
+            if (text.contains("좌회전")) {
+                return if (text.contains("약간") || text.contains("10시") || text.contains("8시")) SLIGHT_LEFT else LEFT
             }
+            if (text.contains("우회전")) {
+                return if (text.contains("약간") || text.contains("2시") || text.contains("4시")) SLIGHT_RIGHT else RIGHT
+            }
+            if (text.contains("유턴")) return UTURN
+
+            // 3-3. 시설 이용 동작(진입, 이용, 건너기)이 명시된 경우만 시설 액션으로 판정
+            val isFacilityAction = text.contains("이용") || text.contains("진입") ||
+                    text.contains("건너") || text.contains("올라") || text.contains("내려")
+            if (text.contains("육교") && isFacilityAction) return OVERPASS
+            if (text.contains("지하보도") && isFacilityAction) return UNDERPASS
+            if (text.contains("계단") && isFacilityAction) return STAIRS
+            if (text.contains("엘리베이터") && isFacilityAction) return ELEVATOR
+
+            // 3-4. 단순 직진 또는 기본 진행
+            return STRAIGHT
         }
     }
 }

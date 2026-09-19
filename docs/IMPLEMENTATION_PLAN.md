@@ -118,15 +118,24 @@ flowchart TD
 9. 저시력자를 위한 고대비 대형 방향 표시기(`LowVisionDirectionIndicator`: 80dp+ 심볼, 36sp+ 거리, 4dp 황색 테두리 `#FFD600`, 200% 폰트 스케일링)를 구현한다.
 10. 경로 선 투영, 진행도, 이탈·재탐색을 구현한다.
 11. 주변 시설을 Room에 캐시하고 접근 알림을 구현한다.
-12. TTS 우선순위 큐, 다시 듣기, 중지, 진동 어휘 체계를 구현한다.
-13. 모든 화면에 Compose semantics와 48/64dp 영역을 적용한다.
-14. TalkBack을 켜고 화면을 보지 않은 채 E2E 시험한다.
+12. TTS 우선순위 큐, 다시 듣기, 중지, 4대 진동 어휘 체계(`DANGER_STOP`, `CAUTION_APPROACH`, `CONFIRM_TURN`, `ORIENTATION_ALIGNED`)를 구현한다.
+13. 시각장애인 특화 음성 길안내 포맷터(`BlindGuidanceFormatter.kt`)를 구현한다:
+    - 1~12시 시계 방향(Clock Face) 상대 각도 및 성인 평균 보폭(0.65m) 기준 걸음 수 환산 병기.
+    - TMAP 상호명/출구 등 시각 랜드마크 필터링 및 능동적 신체 회전각 안내.
+14. 지자기 회전 센서(`Sensor.TYPE_ROTATION_VECTOR`) 기반 실시간 방위각 추적 및 경로 정대(Orientation Alignment) 분석을 구현한다:
+    - 진행 방향 정대(±18° 이내) 시 음성("올바른 진행 방향입니다. 전방을 주의하며 걸으세요.") 및 햅틱 콤파스 피드백(60ms-60ms-60ms 2회 진동, 6초 쿨다운).
+15. 횡단보도 접근 시(`APPROACHING_CROSSING` 15m/8m) 카메라 보조 화면 자동 전환 이벤트(`TriggerCrossingAssist`)를 구현한다.
+16. 실시간 경로 정대 고대비 상태 카드(🟢 정대 완료 / 🧭 회전 필요) 및 LiveRegion 접근성을 적용한다.
+17. 모든 화면에 Compose semantics와 48/64dp 영역을 적용한다.
+18. TalkBack을 켜고 화면을 보지 않은 채 E2E 시험한다.
 
 ### 통과 조건
 
 - 카메라 기능 없이도 목적지→경로→시설 알림→종료 가능
 - 위치 권한 거부·대략 위치·GPS OFF에서 안전한 축소
 - 방향 전환 시 음성 지연 0초(QUEUE_FLUSH) 및 저시력자 방향 지시 표시 확인
+- 시계 방향 및 걸음 수 음성 안내 정확성, 지자기 햅틱 콤파스 작동 확인
+- 횡단보도 15m 접근 시 화면 터치 없는 카메라 보조 화면 자동 전환 확인
 - 글꼴 200%, TalkBack, 한 손 조작 시 P0 흐름 통과
 - 30분 내비게이션의 배터리·발열 기준선 기록
 
@@ -162,10 +171,12 @@ flowchart TD
 1. `CrosswalkSceneEstimator`, `PedestrianSignalEstimator`, `TargetSignalAssociator`에 fake 구현을 먼저 연결한다.
 2. CameraX ImageAnalysis의 최신 프레임 전략과 lifecycle을 구현한다.
 3. 카메라 기울기·회전·방향 조정 음성을 구현한다.
-4. 보행자 신호 오탐 방지 필터를 구현한다:
-   - 가로형 차량용 신호기 배제: Bounding Box 종횡비(가로/세로)가 1.35를 초과하는 가로 직사각형 신호는 차량용 신호등으로 분류하여 엄격 배제.
-   - 황색/주황색 신호 배제: 색온도/Hue 기반 노란색/주황색 신호가 녹색으로 오인되지 않도록 필터링.
-   - 상단 ROI 제한: 프레임 상단 8% ~ 65% 영역에 국한하여 노면 빗물 반사광 및 상단 원거리 가로등 배제.
+4. 온디바이스 보행자 신호 적응형 비전 AI 및 오탐 방지 파이프라인을 구현한다:
+   - RGB→HSV 고속 변환 및 조도 적응: 조도(V)와 색조(H)/채도(S)를 완전 분리하여 한낮 직사광선/역광(백화 현상) 및 그늘/야간(저조도) 환경에서도 색상 고유 파장 추출.
+   - 한국 경찰청 표준 규격 파장: 에메랄드/청록색 Green(Hue 145°~195°) 및 고채도 Red(Hue 0°~15°, 345°~360°) 정밀 감지, 황색등/가로등(Hue 25°~55°) 즉시 배제.
+   - 세로 2구 보행신호등 기하 구조(상단 적색 정지인형 / 하단 녹색 보행인형) 분석 및 가로형 차량 신호등(종횡비 $W/H > 1.35$) 배제.
+   - 하드웨어 가속 러너(`TfliteModelRunner`): `org.tensorflow.lite.Interpreter` 바인딩을 통한 NPU/CPU 멀티스레드 가속 추론.
+   - 지능형 검증기(`LocalVlmSignalVerifier`): 최근 5프레임의 시간 일관성 롤링 버퍼(녹색 판정 시 60% 이상 안정 수신) 및 Zero False-Green 보장.
 5. 횡단보도 mask·방향과 보행신호 box를 같은 좌표계로 복원한다.
 6. 현장 지도 링크, 횡단보도 방향, 기기 pose로 목표 신호 하나를 연결한다.
 7. LiteRT estimator를 연결하지만 사용자에게 녹색 안내를 하지 않는다.
@@ -252,15 +263,19 @@ flowchart TD
 - E2-S8 실시간 GPS 신호품질(%) 및 정확도 반경(±m) 배지
 - E2-S9 NavigationForegroundService 영구 알림 및 1-Tap 즉시 중지
 - E2-S10 방향 분기점 즉시 음성 안내(QUEUE_FLUSH) 및 30m/15m 접근 사전 안내
+- E2-S11 시각장애인 특화 음성 길안내 포맷터(`BlindGuidanceFormatter.kt`: 1~12시 시계 방향, 보폭 0.65m 걸음수 병기, 랜드마크 필터링)
+- E2-S12 횡단보도 15m 접근 시 화면 터치 없는 카메라 보조 화면 자동 연동(`NavigationEffect.TriggerCrossingAssist`)
 
 ### Epic E3 — 접근성
 
 - E3-S1 TalkBack semantics
 - E3-S2 TTS arbiter 및 우선순위 큐
-- E3-S3 haptic vocabulary
+- E3-S3 haptic vocabulary (4대 진동 어휘 체계 확립)
 - E3-S4 글꼴·고대비
 - E3-S5 접근성 회귀 테스트
 - E3-S6 저시력자용 고대비 대형 방향 표시기(`LowVisionDirectionIndicator`: 80dp+ 심볼, 36sp+ 거리, 4dp 황색 테두리)
+- E3-S7 지자기 회전 센서(`ROTATION_VECTOR`) 기반 실시간 경로 정대(Orientation Alignment) 분석 및 햅틱 콤파스 피드백 (`ORIENTATION_ALIGNED`)
+- E3-S8 실시간 경로 정대 고대비 상태 카드 UI (🟢 정대 완료 / 🧭 회전 필요) 및 LiveRegion 낭독
 
 ### Epic E4 — 온디바이스 AI
 
@@ -290,6 +305,26 @@ flowchart TD
 - E6-S2 시크릿 유출 방지 스캐너(`secret_scanner.py`)
 - E6-S3 SBOM 생성기(`sbom_generator.py`)
 - E6-S4 Staging 릴리스 리허설 드릴 및 자동화 테스트(`rehearsal_drill.py`, `test_beta_rehearsal.py`)
+
+### Epic E7 — 국토교통부 VWorld 정밀 세부지도 및 실시간 보행 추적
+
+- E7-S1 국토교통부 VWorld 표준 2D 정밀 전자지도 타일 레이어 및 OSM/CartoDB 3중 자동 폴백 렌더러 (`RealRouteMapView.kt`)
+- E7-S2 보행 안내 화면(`NavigationScreen.kt`) 실시간 세부 지도 카드 (`DetailedNavigationMapCard`) 탑재
+- E7-S3 `NavigationUiState` 및 `NavigationViewModel` 실시간 위치 파이프라인 및 자바스크립트 무깜빡임 마커 이동(`updateUserLocation`)
+- E7-S4 TMAP 보행로 `facilityType 11` 표준 매핑 교정을 통한 육교 오안내 버그 수정
+
+### Epic E8 — SK TMAP 전국 POI(장소) 통합검색 및 목적지 연동
+
+- E8-S1 SK TMAP 공식 POI 통합검색 API(`TmapPoiRepository.kt`) 연동 (전국 역, 관공서, 상호, 도로명 주소 실시간 위경도 검색)
+- E8-S2 안드로이드 플랫폼 내장 `android.location.Geocoder` 2차 안전 폴백
+- E8-S3 현재 GPS 위치 기준 거리 계산 및 TMAP 5km 보행 제한 초과 알림 뱃지 (`🚶 350m` / `⚠️ 15km (초과)`)
+- E8-S4 하이브리드 즉시 필터링(0ms) 및 디바운스 실시간 검색, 음성 검색 결과 낭독 연동
+
+### Epic E9 — 백엔드 외부 연동 및 HTTPS 보안 터널
+
+- E9-S1 FastAPI 백엔드 프록시 및 외부 HTTPS 보안 터널(localtunnel) 연동
+- E9-S2 3단계 라우팅 복원력(백엔드 프록시 -> TMAP 클라우드 직접 호출 -> 오프라인 Fallback)
+- E9-S3 최신 디버그 APK (`app-debug.apk`, 43.1MB) 빌드 및 147개 단위 테스트 100% 검증 통과
 
 
 ## 10. 일일 개발 루틴

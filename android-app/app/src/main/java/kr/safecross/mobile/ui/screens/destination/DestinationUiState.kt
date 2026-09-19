@@ -11,7 +11,9 @@ data class DestinationUiState(
     val currentLocationAddress: String? = null,
     val isGpsReady: Boolean = false,
     val gpsSignalStrengthPercent: Int = 0,
-    val gpsAccuracyMeters: Float = 0f
+    val gpsAccuracyMeters: Float = 0f,
+    val isSearching: Boolean = false,
+    val searchError: String? = null
 )
 
 val defaultDestinations = listOf(

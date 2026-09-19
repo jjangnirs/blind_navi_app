@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kr.safecross.mobile.domain.model.LocationPoint
 import kr.safecross.mobile.domain.model.PedestrianRoute
 import kr.safecross.mobile.domain.model.WalkingMode
 import kr.safecross.mobile.guidance.ArbiterAction
@@ -24,6 +25,10 @@ import kr.safecross.mobile.location.LocationSource
 import kr.safecross.mobile.navigation.crossing.CrossingApproachEngine
 import kr.safecross.mobile.navigation.crossing.CrossingFacility
 import kr.safecross.mobile.navigation.engine.RouteProgressEngine
+import kr.safecross.mobile.guidance.BlindGuidanceFormatter
+import kr.safecross.mobile.navigation.engine.GeoMath
+import kr.safecross.mobile.perception.DevicePose
+import kr.safecross.mobile.sensor.DevicePoseTracker
 import kr.safecross.mobile.service.NavigationForegroundService
 
 /**
@@ -39,7 +44,8 @@ class NavigationViewModel(
     private var locationSource: LocationSource? = null,
     private var crossingFacilities: List<CrossingFacility> = emptyList(),
     val guidanceArbiter: GuidanceArbiter = GuidanceArbiter(),
-    private var routeRepository: kr.safecross.mobile.domain.repository.RouteRepository? = null
+    private var routeRepository: kr.safecross.mobile.domain.repository.RouteRepository? = null,
+    private var devicePoseTracker: DevicePoseTracker? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(NavigationUiState())
@@ -52,11 +58,13 @@ class NavigationViewModel(
     private var crossingApproachEngine: CrossingApproachEngine? = null
 
     private var locationJob: Job? = null
+    private var poseJob: Job? = null
     private var serviceStopJob: Job? = null
 
     // 분기점 사전 알림 추적 (30m, 15m 중복 방지)
     private var lastApproachAnnouncedManeuverIndex = -1
     private var lastApproachStage = 0
+    private var lastAlignmentTimeMs = 0L
 
     init {
         serviceStopJob = viewModelScope.launch {
@@ -72,16 +80,19 @@ class NavigationViewModel(
     fun setRoute(
         route: PedestrianRoute,
         source: LocationSource? = locationSource,
-        facilities: List<CrossingFacility> = crossingFacilities
+        facilities: List<CrossingFacility> = crossingFacilities,
+        poseTracker: DevicePoseTracker? = devicePoseTracker
     ) {
         this.locationSource = source
         this.crossingFacilities = facilities
+        this.devicePoseTracker = poseTracker
 
         routeProgressEngine = RouteProgressEngine(route)
         crossingApproachEngine = CrossingApproachEngine(facilities)
         guidanceArbiter.stopAll()
         lastApproachAnnouncedManeuverIndex = -1
         lastApproachStage = 0
+        lastAlignmentTimeMs = 0L
 
         _uiState.update {
             it.copy(
@@ -93,12 +104,106 @@ class NavigationViewModel(
                 remainingDistanceMeters = route.totalDistanceMeters,
                 isOffRoute = false,
                 isGpsDegraded = false,
-                isFinished = false
+                isFinished = false,
+                isOrientationAligned = true,
+                alignmentPromptMessage = "",
+                currentLocation = route.fullGeometry.firstOrNull() ?: route.maneuvers.firstOrNull()?.location
             )
         }
 
         speakCurrentStep()
         startLocationTracking()
+        startPoseTracking()
+    }
+
+    /**
+     * 기기 자세/나침반 센서 추적기 설정 및 가동.
+     */
+    fun setDevicePoseTracker(tracker: DevicePoseTracker) {
+        this.devicePoseTracker = tracker
+        startPoseTracking()
+    }
+
+    /**
+     * 실시간 헤딩 및 자세 추적 시작.
+     */
+    fun startPoseTracking() {
+        val tracker = devicePoseTracker ?: return
+        poseJob?.cancel()
+        tracker.startTracking()
+        poseJob = viewModelScope.launch {
+            tracker.currentPose.collect { pose ->
+                processDevicePose(pose)
+            }
+        }
+    }
+
+    /**
+     * 기기 헤딩 자세 수신 및 경로 정대(Orientation Alignment) 분석.
+     */
+    fun processDevicePose(pose: DevicePose, currentTimeMs: Long = System.currentTimeMillis()) {
+        val heading = pose.headingDegrees
+        _uiState.update { it.copy(currentHeadingDegrees = heading) }
+
+        val route = _uiState.value.route ?: return
+        if (_uiState.value.isFinished) return
+
+        val targetBearing = calculateTargetBearing() ?: return
+        val orientationPrompt = BlindGuidanceFormatter.evaluateOrientation(
+            currentHeadingDeg = heading.toDouble(),
+            targetBearingDeg = targetBearing
+        )
+
+        val wasAligned = _uiState.value.isOrientationAligned
+        _uiState.update {
+            it.copy(
+                isOrientationAligned = orientationPrompt.isAligned,
+                alignmentPromptMessage = orientationPrompt.message
+            )
+        }
+
+        // 제자리 회전 중 올바른 진행 방향으로 정대 완료 시 (wasAligned = false -> isAligned = true)
+        if (orientationPrompt.isAligned && !wasAligned && (currentTimeMs - lastAlignmentTimeMs) > 6000L) {
+            lastAlignmentTimeMs = currentTimeMs
+            enqueueGuidance(
+                GuidanceMessage(
+                    id = "orientation_aligned_${currentTimeMs}",
+                    text = orientationPrompt.message,
+                    priority = GuidancePriority.ROUTE,
+                    category = "orientation_alignment",
+                    hapticType = HapticFeedbackType.ORIENTATION_ALIGNED
+                ),
+                currentTimeMs
+            )
+        }
+    }
+
+    /**
+     * 현재 스텝에서 향해야 할 목표 지점의 방위각(Bearing)을 산출합니다.
+     */
+    fun calculateTargetBearing(): Double? {
+        val state = _uiState.value
+        val route = state.route ?: return null
+        val currentM = state.currentManeuver
+        val nextM = state.nextManeuver
+
+        if (currentM != null && nextM != null) {
+            return GeoMath.initialBearingDegrees(
+                lat1 = currentM.location.lat,
+                lon1 = currentM.location.lon,
+                lat2 = nextM.location.lat,
+                lon2 = nextM.location.lon
+            )
+        }
+
+        val seg = route.segments.getOrNull(state.currentManeuverIndex)
+        if (seg != null && seg.geometry.size >= 2) {
+            val p1 = seg.geometry.first()
+            val p2 = seg.geometry.last()
+            return GeoMath.initialBearingDegrees(p1.lat, p1.lon, p2.lat, p2.lon)
+        }
+
+        return null
     }
 
     /**
@@ -199,7 +304,8 @@ class NavigationViewModel(
                     distanceToNextManeuverMeters = progress.distanceToNextManeuverMeters.toInt(),
                     isOffRoute = progress.isOffRoute,
                     gpsSignalStrengthPercent = sample.signalStrengthPercent,
-                    gpsAccuracyMeters = sample.accuracyMeters
+                    gpsAccuracyMeters = sample.accuracyMeters,
+                    currentLocation = LocationPoint(sample.lat, sample.lon)
                 )
             }
 
@@ -209,7 +315,8 @@ class NavigationViewModel(
                 lastApproachStage = 0
                 val newManeuver = progress.currentManeuver
                 if (newManeuver != null) {
-                    val guidanceText = "${newManeuver.instruction}. ${_uiState.value.walkingMode.safetyGuidance}"
+                    val cleaned = BlindGuidanceFormatter.cleanInstruction(newManeuver.instruction)
+                    val guidanceText = "${cleaned}. ${_uiState.value.walkingMode.safetyGuidance}"
                     enqueueGuidance(
                         GuidanceMessage(
                             id = "maneuver_changed_${progress.currentManeuverIndex}_${currentTimeMs}",
@@ -222,19 +329,29 @@ class NavigationViewModel(
                     )
                 }
             } else {
-                // 1-2. 다음 분기점 사전 접근 안내 (30m 및 15m)
+                // 1-2. 다음 분기점 사전 접근 안내 (30m 및 15m: 시계방향 및 걸음수 포맷터 적용)
                 val nextM = progress.nextManeuver
                 val distToNext = progress.distanceToNextManeuverMeters
                 if (nextM != null) {
                     val nextAction = kr.safecross.mobile.domain.model.DirectionAction.fromManeuver(nextM)
+                    val targetBearing = calculateTargetBearing()
+                    val currentHeading = _uiState.value.currentHeadingDegrees.toDouble()
+                    val relativeBearing = if (targetBearing != null) {
+                        ((targetBearing - currentHeading + 540.0) % 360.0) - 180.0
+                    } else null
+
                     if (distToNext in 18.0..35.0 && (lastApproachAnnouncedManeuverIndex != progress.currentManeuverIndex || lastApproachStage < 30)) {
                         lastApproachAnnouncedManeuverIndex = progress.currentManeuverIndex
                         lastApproachStage = 30
-                        val distInt = ((distToNext / 5.0).toInt() * 5).coerceAtLeast(20)
+                        val text = BlindGuidanceFormatter.formatApproachGuidance(
+                            action = nextAction,
+                            distanceMeters = distToNext,
+                            relativeBearingDeg = relativeBearing
+                        )
                         enqueueGuidance(
                             GuidanceMessage(
                                 id = "approach_30m_${progress.currentManeuverIndex}_${currentTimeMs}",
-                                text = "${distInt}미터 앞 ${nextAction.label}입니다.",
+                                text = text,
                                 priority = GuidancePriority.ROUTE,
                                 category = "maneuver_approach"
                             ),
@@ -243,10 +360,15 @@ class NavigationViewModel(
                     } else if (distToNext in 5.0..18.0 && (lastApproachAnnouncedManeuverIndex != progress.currentManeuverIndex || lastApproachStage < 15)) {
                         lastApproachAnnouncedManeuverIndex = progress.currentManeuverIndex
                         lastApproachStage = 15
+                        val text = BlindGuidanceFormatter.formatApproachGuidance(
+                            action = nextAction,
+                            distanceMeters = distToNext,
+                            relativeBearingDeg = relativeBearing
+                        )
                         enqueueGuidance(
                             GuidanceMessage(
                                 id = "approach_15m_${progress.currentManeuverIndex}_${currentTimeMs}",
-                                text = "잠시 후 ${nextAction.label}입니다. 주변을 살피고 보행하세요.",
+                                text = text,
                                 priority = GuidancePriority.ROUTE,
                                 category = "maneuver_approach",
                                 hapticType = HapticFeedbackType.UNKNOWN_CAUTION
@@ -315,6 +437,12 @@ class NavigationViewModel(
                             currentTimeMs
                         )
                     }
+                    // 횡단보도 정지 준비 또는 진입 상태 도달 시 카메라 보조 화면 자동 트리거
+                    if (alert.targetMode == WalkingMode.CROSSING || alert.targetMode == WalkingMode.APPROACHING_CROSSING) {
+                        viewModelScope.launch {
+                            _effects.emit(NavigationEffect.TriggerCrossingAssist)
+                        }
+                    }
                 }
             }
         }
@@ -364,7 +492,8 @@ class NavigationViewModel(
         val state = _uiState.value
         val maneuver = state.currentManeuver
         val guidance = if (maneuver != null) {
-            "${state.walkingMode.label}. ${maneuver.instruction}. ${state.walkingMode.safetyGuidance}"
+            val cleaned = BlindGuidanceFormatter.cleanInstruction(maneuver.instruction)
+            "${state.walkingMode.label}. $cleaned. ${state.walkingMode.safetyGuidance}"
         } else {
             "목적지에 도착했습니다. 안내를 종료합니다."
         }
@@ -477,7 +606,8 @@ class NavigationViewModel(
                 it.copy(
                     currentManeuverIndex = nextIdx,
                     walkingMode = nextMode,
-                    distanceToNextManeuverMeters = if (nextMode == WalkingMode.CROSSING) 20 else 80
+                    distanceToNextManeuverMeters = if (nextMode == WalkingMode.CROSSING) 20 else 80,
+                    currentLocation = nextManeuver?.location ?: it.currentLocation
                 )
             }
             speakCurrentStep()
@@ -573,7 +703,10 @@ class NavigationViewModel(
     private fun stopLocationTracking() {
         locationJob?.cancel()
         locationJob = null
+        poseJob?.cancel()
+        poseJob = null
         locationSource?.stopTracking()
+        devicePoseTracker?.stopTracking()
         routeProgressEngine?.reset()
         crossingApproachEngine?.reset()
     }

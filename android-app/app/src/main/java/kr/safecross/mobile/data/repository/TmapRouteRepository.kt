@@ -8,6 +8,7 @@ import kr.safecross.mobile.domain.model.PedestrianRoute
 import kr.safecross.mobile.domain.model.ROUTE_DISCLAIMER_TEXT
 import kr.safecross.mobile.domain.model.RouteSegment
 import kr.safecross.mobile.domain.repository.RouteRepository
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -29,6 +30,7 @@ import kotlin.math.sqrt
 class TmapRouteRepository(
     private val appKey: String = resolveAppKey(),
     private val baseUrl: String = "https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1",
+    private val backendUrl: String = DEFAULT_BACKEND_URL,
     private val connectTimeoutMs: Int = 4000,
     private val readTimeoutMs: Int = 6000
 ) : RouteRepository {
@@ -36,6 +38,9 @@ class TmapRouteRepository(
     companion object {
         // TMAP 보행자 API 키 (사용자 등록 키)
         const val DEFAULT_APP_KEY = "n1yUJnoV6q7ZGNn73t1IX59wRHwAiTbW7KdIvFcD"
+
+        // 실시간 구동 중인 외부 백엔드 프록시 엔드포인트
+        const val DEFAULT_BACKEND_URL = "https://fifty-hornets-know.loca.lt/v1/routes/pedestrian"
 
         fun resolveAppKey(): String {
             return try {
@@ -54,14 +59,143 @@ class TmapRouteRepository(
         destinationName: String,
         excludeStairs: Boolean
     ): Result<PedestrianRoute> = withContext(Dispatchers.IO) {
+        // 1차: 실시간 백엔드 프록시 호출 시도 (외부 공인 터널 연동)
+        if (backendUrl.isNotBlank()) {
+            try {
+                val route = fetchFromBackendProxy(origin, destination, originName, destinationName, excludeStairs)
+                return@withContext Result.success(route)
+            } catch (_: Exception) {
+                // 백엔드 미실행 또는 장애 시 TMAP 클라우드 직접 호출로 안전 폴백
+            }
+        }
+
+        // 2차: TMAP 클라우드 직접 호출
         try {
             val route = fetchFromTmapApi(origin, destination, originName, destinationName, excludeStairs)
             Result.success(route)
         } catch (e: Exception) {
-            // 네트워크 오류 또는 인증 실패 시, 스마트폰 GPS 기반 보행 Fallback 경로 안전 제공
+            // 3차: 전체 네트워크 오프라인 시 GPS 기반 보행 Fallback 경로 안전 제공
             val fallbackRoute = generateFallbackRoute(origin, destination, originName, destinationName, excludeStairs)
             Result.success(fallbackRoute)
         }
+    }
+
+    /**
+     * 외부 백엔드 프록시(/v1/routes/pedestrian)를 호출하여 정규화된 보행 경로를 수신합니다.
+     */
+    private fun fetchFromBackendProxy(
+        origin: LocationPoint,
+        destination: LocationPoint,
+        originName: String,
+        destinationName: String,
+        excludeStairs: Boolean
+    ): PedestrianRoute {
+        val url = URL(backendUrl)
+        val conn = url.openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.connectTimeout = connectTimeoutMs
+        conn.readTimeout = readTimeoutMs
+        conn.doOutput = true
+        conn.doInput = true
+        conn.setRequestProperty("Accept", "application/json")
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        conn.setRequestProperty("Bypass-Tunnel-Reminder", "true")
+
+        val jsonBody = JSONObject().apply {
+            put("origin", JSONObject().apply {
+                put("lat", origin.lat)
+                put("lon", origin.lon)
+            })
+            put("destination", JSONObject().apply {
+                put("lat", destination.lat)
+                put("lon", destination.lon)
+            })
+            put("originName", originName)
+            put("destinationName", destinationName)
+            put("excludeStairs", excludeStairs)
+        }
+
+        OutputStreamWriter(conn.outputStream, "UTF-8").use { writer ->
+            writer.write(jsonBody.toString())
+            writer.flush()
+        }
+
+        val responseCode = conn.responseCode
+        if (responseCode != HttpURLConnection.HTTP_OK) {
+            throw IllegalStateException("Backend proxy error: HTTP $responseCode")
+        }
+
+        val responseText = BufferedReader(InputStreamReader(conn.inputStream, "UTF-8")).use { reader ->
+            reader.readText()
+        }
+
+        return parseBackendRouteJson(responseText)
+    }
+
+    fun parseBackendRouteJson(jsonString: String): PedestrianRoute {
+        val root = JSONObject(jsonString)
+        val provider = root.optString("provider", "TMAP-Backend")
+        val totalDist = root.optInt("totalDistanceMeters", 0)
+        val totalTime = root.optInt("totalDurationSeconds", 0)
+        val excludeStairs = root.optBoolean("excludeStairs", true)
+        val disclaimer = root.optString("disclaimer", ROUTE_DISCLAIMER_TEXT)
+
+        val fullGeoArray = root.optJSONArray("fullGeometry") ?: JSONArray()
+        val fullGeometry = mutableListOf<LocationPoint>()
+        for (i in 0 until fullGeoArray.length()) {
+            val ptObj = fullGeoArray.getJSONObject(i)
+            fullGeometry.add(LocationPoint(ptObj.getDouble("lat"), ptObj.getDouble("lon")))
+        }
+
+        val maneuversArray = root.optJSONArray("maneuvers") ?: JSONArray()
+        val maneuvers = mutableListOf<Maneuver>()
+        for (i in 0 until maneuversArray.length()) {
+            val mObj = maneuversArray.getJSONObject(i)
+            val locObj = mObj.getJSONObject("location")
+            maneuvers.add(
+                Maneuver(
+                    index = mObj.optInt("index", i),
+                    pointIndex = mObj.optInt("pointIndex", i),
+                    location = LocationPoint(locObj.getDouble("lat"), locObj.getDouble("lon")),
+                    instruction = mObj.optString("instruction", ""),
+                    turnType = if (mObj.has("turnType") && !mObj.isNull("turnType")) mObj.getInt("turnType") else null,
+                    facilityType = if (mObj.has("facilityType") && !mObj.isNull("facilityType")) mObj.getString("facilityType") else null
+                )
+            )
+        }
+
+        val segmentsArray = root.optJSONArray("segments") ?: JSONArray()
+        val segments = mutableListOf<RouteSegment>()
+        for (i in 0 until segmentsArray.length()) {
+            val sObj = segmentsArray.getJSONObject(i)
+            val geomArr = sObj.optJSONArray("geometry") ?: JSONArray()
+            val geomPoints = mutableListOf<LocationPoint>()
+            for (j in 0 until geomArr.length()) {
+                val gObj = geomArr.getJSONObject(j)
+                geomPoints.add(LocationPoint(gObj.getDouble("lat"), gObj.getDouble("lon")))
+            }
+            segments.add(
+                RouteSegment(
+                    index = sObj.optInt("index", i),
+                    name = sObj.optString("name", ""),
+                    distanceMeters = sObj.optInt("distanceMeters", 0),
+                    durationSeconds = sObj.optInt("durationSeconds", 0),
+                    geometry = geomPoints,
+                    facilityType = if (sObj.has("facilityType") && !sObj.isNull("facilityType")) sObj.getString("facilityType") else null
+                )
+            )
+        }
+
+        return PedestrianRoute(
+            provider = provider,
+            totalDistanceMeters = totalDist,
+            totalDurationSeconds = totalTime,
+            excludeStairs = excludeStairs,
+            fullGeometry = fullGeometry,
+            maneuvers = maneuvers,
+            segments = segments,
+            disclaimer = disclaimer
+        )
     }
 
     private fun fetchFromTmapApi(
@@ -202,18 +336,23 @@ class TmapRouteRepository(
     }
 
     private fun mapFacilityType(rawType: String): String? {
-        return when (rawType) {
-            "1" -> "횡단보도"
-            "2" -> "지하보도"
-            "3" -> "육교"
-            "11" -> "보도육교"
-            "12" -> "지하보도"
-            "14" -> "횡단보도"
-            "15" -> "계단"
-            "16" -> "경사로"
+        return when (rawType.trim()) {
+            "1" -> "교량"
+            "2" -> "터널"
+            "3" -> "고가도로"
+            "11" -> "보행로"
+            "12" -> "육교"
+            "14" -> "지하보도"
+            "15" -> "횡단보도"
+            "16" -> "대형시설물이동통로"
+            "17" -> "계단"
             "횡단보도" -> "횡단보도"
-            "육교" -> "육교"
+            "육교", "보도육교" -> "육교"
             "지하보도" -> "지하보도"
+            "보행로", "일반보도", "일반보행자도로" -> "보행로"
+            "계단" -> "계단"
+            "경사로" -> "경사로"
+            "엘리베이터" -> "엘리베이터"
             else -> if (rawType.isBlank()) null else rawType
         }
     }

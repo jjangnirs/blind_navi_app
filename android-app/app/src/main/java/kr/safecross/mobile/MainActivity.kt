@@ -203,6 +203,7 @@ fun SafeCrossNavHost(
             DestinationScreen(
                 viewModel = destinationViewModel,
                 voiceAnnouncer = ttsHelper,
+                currentGps = currentGps,
                 onNavigateToRouteSummary = { selectedDest ->
                     // 스마트폰의 실제 GPS 좌표 및 Geocoder 도로명 주소를 출발지로 자동 설정
                     val originPoint = currentGps ?: LocationPoint(35.1595, 126.8526)
@@ -256,6 +257,12 @@ fun SafeCrossNavHost(
             }.apply {
                 isEnabled = settingsState.isVibrationEnabled
                 intensity = settingsState.vibrationIntensity
+            }
+            val poseTracker = androidx.compose.runtime.remember {
+                kr.safecross.mobile.sensor.ProductionDevicePoseTracker(context)
+            }
+            androidx.compose.runtime.LaunchedEffect(poseTracker) {
+                navigationViewModel.setDevicePoseTracker(poseTracker)
             }
             val route = routeState.route
             if (route != null) {

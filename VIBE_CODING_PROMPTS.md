@@ -262,10 +262,10 @@ DDL만 만들고 API와 ETL은 구현하지 마라.
 ```text
 [마스터 프롬프트 적용]
 
-목표: 목적지 선택부터 경로 시작, 4단계 보행 모드, 저시력자 방향 안내 표시기, 실시간 GPS 뱃지, 종료까지 TalkBack과 고대비 UI로 구현하라.
+목표: 목적지 선택부터 경로 시작, 4단계 보행 모드, 저시력자 방향 안내 표시기, 실시간 GPS 뱃지, 시각장애인 특화 시계방향/걸음수 포맷터, 지자기 나침반 햅틱 콤파스, 횡단보도 자동 카메라 연동, 종료까지 TalkBack과 고대비 UI로 구현하라.
 
 관련 요구:
-- SR-F-001~006, SR-F-035~038, SR-F-070~078
+- SR-F-001~006, SR-F-035~038, SR-F-070~079-B
 - TRD.md 4.1, 4.8장
 
 해야 할 일:
@@ -273,17 +273,20 @@ DDL만 만들고 API와 ETL은 구현하지 마라.
 2. 실시간 4단계 보행 모드 상태머신(WalkingMode: IDLE → WALKING → APPROACHING_CROSSING → CROSSING)과 WalkingModeStatusBadge를 제작한다.
 3. NavigationScreen 상단에 실시간 GPS 수신 강도(%) 및 오차 반경(±m) 뱃지(80% 이상 녹색, 60~79% 청색, 40~59% 주황, 40% 미만 적색)를 노출한다.
 4. 저시력자를 위한 초고대비 대형 방향 안내 표시기(LowVisionDirectionIndicator: 4dp 형광노랑 테두리, 84dp 대형 방향 심볼, 38sp ExtraBold 대형 거리 텍스트, 24sp 행동 라벨)를 화면 최상단에 배치한다.
-5. 방향 분기점 변경 시 즉시 새 지침을 음성 발화(QUEUE_FLUSH)하고 30m 및 15m 전 사전 접근 알림을 발화한다.
-6. 백그라운드 및 화면 꺼짐 시에도 상태바 알림창 갱신과 위치/TTS 안내를 유지하는 NavigationForegroundService를 연동한다.
-7. 모든 icon/action에 고유 semantics 제공, 주요 안전 버튼 64dp, 일반 터치 타깃 최소 48dp 보장.
-8. 글꼴 200%, 다크모드, TalkBack 환경에서 전체 흐름 검증.
+5. 시각장애인 특화 음성 길안내 포맷터(BlindGuidanceFormatter)를 구축하여 1~12시 시계 방향 안내, 평균 보폭(0.65m) 기준 걸음 수 환산, TMAP 시각 단서(상호명/방면) 필터링, 신체 회전각 안내를 적용한다.
+6. Sensor.TYPE_ROTATION_VECTOR 지자기 센서로 실시간 나침반 헤딩을 추적하고, 경로 방향 정렬 시 ORIENTATION_ALIGNED 톡톡 2회 진동 및 정대 음성/상태 카드를 제공한다.
+7. 횡단보도 15m/8m 접근 시 수동 터치 없이 카메라 신호 보조 화면으로 자동 전환되는 TriggerCrossingAssist 이벤트를 연동한다.
+8. 방향 분기점 변경 시 즉시 새 지침을 음성 발화(QUEUE_FLUSH)하고 30m 및 15m 전 사전 접근 알림을 발화한다.
+9. 백그라운드 및 화면 꺼짐 시에도 상태바 알림창 갱신과 위치/TTS 안내를 유지하는 NavigationForegroundService를 연동한다.
+10. 모든 icon/action에 고유 semantics 제공, 주요 안전 버튼 64dp, 일반 터치 타깃 최소 48dp 보장.
+11. 글꼴 200%, 다크모드, TalkBack 환경에서 전체 흐름 검증.
 
 수용 기준:
 - TalkBack으로 전맹 사용자가 화면 없이 시작/진행/종료 가능
 - 저시력자용 84dp 대형 방향 화살표와 38sp 대형 거리 표시기 시인성 확보
+- 시계 방향 및 걸음 수 환산, 나침반 정대 햅틱 콤파스 및 자동 횡단보도 연동 테스트 통과
 - 4단계 보행 모드 상태머신 및 분기점 즉시 음성 발화 단위 테스트 통과
 - GPS 뱃지 및 Foreground Service 알림창 정상 갱신 확인
-```
 - accessibility unit/instrumentation test 통과
 ```
 
@@ -349,15 +352,15 @@ DDL만 만들고 API와 ETL은 구현하지 마라.
 - 금지 문구 0건
 ```
 
-## 11. 프롬프트 10 — CameraX와 비전/가짜 신호 추정기
+## 11. 프롬프트 10 — CameraX와 적응형 HSV 비전 신호 추정기
 
 ```text
 [마스터 프롬프트 적용]
 
-목표: CameraX 프레임 파이프라인과 실시간 비전 신호 추정기(CameraVisionSignalEstimator) 및 횡단보도·신호 연결기를 구현해 차량용 신호등 오인식 방지와 수명주기·개인정보·접근성을 검증하라.
+목표: CameraX 프레임 파이프라인과 실시간 고정밀 비전 신호 추정기(CameraVisionSignalEstimator) 및 횡단보도·신호 연결기를 구현해 차량용 신호등 오인식 방지와 수명주기·개인정보·접근성을 검증하라.
 
 관련 요구:
-- SR-F-040~041, SR-F-043a, SR-F-049, SR-F-052~054
+- SR-F-040~041, SR-F-043a~d, SR-F-049, SR-F-052~054
 - TRD.md 4.4, 4.6
 
 해야 할 일:
@@ -365,11 +368,13 @@ DDL만 만들고 API와 ETL은 구현하지 마라.
 2. CameraX ImageAnalysis를 lifecycle에 bind하고 STRATEGY_KEEP_ONLY_LATEST를 사용한다.
 3. ImageProxy는 try/finally에서 반드시 close한다.
 4. FrameRef는 저장/직렬화/네트워크 전송이 불가능한 앱 내부 타입으로 만든다.
-5. CameraVisionSignalEstimator에 다음 실시간 비전 필터링을 구현한다:
+5. CameraVisionSignalEstimator에 다음 고정밀 적응형 비전 파이프라인을 구현한다:
    - 도로 위 공중 신호 배제를 위한 시야 높이 ROI(8%~65%) 탐색
+   - RGB→HSV 고속 공간 분리를 통해 조도(V)와 색조(H)/채도(S)를 완전 분리하여 직사광선/역광(백화 현상) 및 그늘/야간(저조도) 적응형 보정 적용
+   - 한국 경찰청 보행신호등 표준 규격: 고채도 적색(Hue 0°~15°, 345°~360°) 및 에메랄드/청록색 Green(Hue 145°~195°) 광원 정밀 세그멘테이션
    - 차량용 가로 3~4구 횡형 신호등 배제 (Aspect Ratio Width/Height > 1.35 및 Width >= 16)
-   - 차량용 황색(Yellow) 및 주황색 불빛(R>=150, G>=120, B<120, |R-G|<55) 즉시 배제
-   - 한국형 보행신호 에메랄드/청록색 Green LED 및 고휘도 Red LED 스펙트럼 정밀화
+   - 차량용 황색(Yellow)/주황색 불빛 및 가로등(Hue 25°~55°) 즉시 배제
+   - 세로 2구 보행신호등 기하 구조(상단 적색 정지 사람 / 하단 녹색 보행 사람) 공간 배치 분석 및 상충 시 Red 우선(Zero False-Green) 원칙 적용
 6. fake crosswalk estimator가 mask/polygon, entrance, direction, quality를 반환하게 한다.
 7. fake associator가 unique, ambiguous, wrong-direction 시나리오를 반환하게 한다.
 8. 앱 background, 화면 종료, 권한 취소에서 카메라를 해제한다.
@@ -377,6 +382,7 @@ DDL만 만들고 API와 ETL은 구현하지 마라.
 10. 카메라 방향/기울기와 횡단보도 탐색 상태를 TTS와 진동으로 표현한다.
 
 수용 기준:
+- 역광/백화 및 에메랄드 청록색 신호등 검출 단위 테스트 통과
 - 가로형 차량 신호등 및 황색 불빛 입력 시 UNKNOWN으로 안전 기각 단위 테스트 통과
 - 단일 fake GREEN으로 사용자 GREEN_ESTIMATE가 나오지 않음
 - 횡단 문맥 없음·복수 신호·방향 불일치에서 UNKNOWN
@@ -384,26 +390,24 @@ DDL만 만들고 API와 ETL은 구현하지 마라.
 - 분석 지연이 누적되지 않고 권한 취소/회전/잠금에서 크래시 없음
 ```
 
-## 12. 프롬프트 11 — LiteRT 모델 통합
+## 12. 프롬프트 11 — LiteRT / TFLite 온디바이스 런타임 및 지능형 검증기
 
 ```text
 [마스터 프롬프트 적용]
 
-목표: 동결된 횡단보도 및 보행신호 .tflite 테스트 모델을 각 estimator에 연결하라. 모델을 새로 학습하지 마라.
+목표: 동결된 횡단보도 및 보행신호 .tflite 테스트 모델을 각 estimator에 연결하고, TfliteModelRunner 및 LocalVlmSignalVerifier를 통합하라.
 
 관련 요구:
-- SR-F-042~054
+- SR-F-042~054, SR-F-047a~b
 - SR-NF-001~015
 - TRD.md 4.5, 8장
 
-LiteRT 공식 문서에서 현재 권장 Android Kotlin API(CompiledModel 우선)와 fallback을 확인하라. 확인한 dependency와 URL을 ADR에 기록하라.
-
 해야 할 일:
-1. 모델 manifest, SHA-256, labels, input/output tensor 계약을 검증한다.
-2. 잘못된 해시/labels/tensor shape면 모델을 로드하지 않고 UNKNOWN으로 처리한다.
-3. YUV→모델 입력 전처리, signal box와 crosswalk mask/polygon 복원을 테스트 가능한 함수로 분리한다.
+1. 모델 manifest, SHA-256, labels, input/output tensor 계약을 검증한다 (ModelContractValidator).
+2. TfliteModelRunner에 org.tensorflow.lite.Interpreter를 공식 바인딩하여 NPU(NNAPI) 및 4스레드 CPU 멀티스레드 하드웨어 가속 추론을 구현한다.
+3. LocalVlmSignalVerifier에 최근 5프레임의 시간 일관성 롤링 버퍼(Temporal Rolling Buffer)를 구현하여 단일 프레임 잡음/반사광 오탐을 방지하고 녹색 판정 시 60% 이상 프레임 안정을 검증한다.
 4. CPU baseline을 먼저 만들고 지원 기기에서 GPU/NPU 경로를 기능 플래그로 추가한다.
-5. 가속기 실패 시 안전하게 CPU 또는 UNKNOWN으로 fallback한다.
+5. 가속기 실패 시 안전하게 CPU 또는 UNKNOWN으로 fallback한다 (Zero False-Green).
 6. 골든 입력의 출력 오차 허용범위를 정의하고 backend별 비교 테스트를 만든다.
 7. P50/P95 latency, peak memory, 모델 초기화 시간을 benchmark한다.
 8. 모델 score를 사용자에게 확률 또는 안전도로 표시하지 않는다.
@@ -411,11 +415,11 @@ LiteRT 공식 문서에서 현재 권장 Android Kotlin API(CompiledModel 우선
 10. 두 모델의 출력이 동일한 원본 프레임 좌표계를 사용함을 골든 테스트한다.
 
 수용 기준:
-- 변조 모델 로드 거부
-- label 순서 오류 탐지
-- 가속기 실패 시 크래시/green 없음
-- 비행기 모드에서 동작
-- 기기 benchmark 결과 문서화
+- TfliteModelRunner 하드웨어 가속 및 수명주기 테스트 통과
+- LocalVlmSignalVerifier 시간 일관성 롤링 버퍼 및 녹색 안전 강등 테스트 통과
+- 변조 모델 로드 거부 및 label 순서 오류 탐지
+- 가속기 실패 시 크래시/false-green 없음
+- 비행기 모드에서 100% 로컬 동작
 ```
 
 ## 13. 프롬프트 12 — 안전 상태기계

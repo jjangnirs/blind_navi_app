@@ -62,7 +62,14 @@ Every P0 flow must work without seeing the screen, while offering rich high-cont
 - Display real-time GPS signal strength (%) and accuracy radius (±m) badge on top of navigation screens to inform users of signal quality.
 - Route speech through the priority arbiter: safety, crossing, route, then information.
 - Structure walking navigation into the 4-stage state machine (`WalkingMode`: IDLE, WALKING, APPROACHING_CROSSING, CROSSING) with stage-specific safety guidance.
+- Format pedestrian navigation instructions through `BlindGuidanceFormatter` (1~12 clock-face directions, step count at 0.65m per step, stripping visual landmarks like "OO방면으로", and body turn angle guidance).
+- Continuously track real-time geomagnetic compass heading via `Sensor.TYPE_ROTATION_VECTOR` in `DevicePoseTracker`.
+- Deliver `ORIENTATION_ALIGNED` haptic compass feedback (60ms-60ms-60ms double pulse) and speech when the user aligns their body within 18° of the route path.
+- Automatically trigger camera crossing assist (`TriggerCrossingAssist`) when approaching crosswalks (15m/8m) to avoid requiring white-cane users to touch the screen while walking.
 - Emit immediate speech guidance upon maneuver turn/step transitions (`QUEUE_FLUSH`) and deliver 30m / 15m approach cues.
+- Integrate SK TMAP national POI search API and Geocoder fallback to search any national station, building, or address, displaying distance from GPS and 5km walking threshold badges.
+- Render national standard Ministry of Land, Infrastructure and Transport VWorld 2D precision electronic maps (1:1000 detailed building/alleyway in Korean) with 3-tier fallback (OSM, CartoDB) and live user radar pulse markers (🔵) / off-route feedback (🔴).
+- Standardize TMAP pedestrian pathway mapping (`facilityType 11` = flat pathway) to completely prevent overhead bridge misdirection.
 - Maintain background tracking and TTS audio through `NavigationForegroundService` with notification controls.
 - Provide repeat and immediate stop actions; avoid drag-only interactions.
 - Run automated Compose accessibility checks and a manual TalkBack flow for relevant UI changes.
@@ -78,19 +85,23 @@ Every P0 flow must work without seeing the screen, while offering rich high-cont
 5. Generate many-to-many spatial match candidates; do not merge different crossing directions by distance alone.
 6. Publish immutable versions only after review, keeping raw records and field verification separate.
 
-### Android camera and decision engine
+### Android camera, vision AI, and decision engine
 
 1. Integrate fake crosswalk, signal, and association estimators before real models.
 2. Use CameraX latest-frame analysis and verify lifecycle cleanup.
-3. Explicitly filter out vehicle traffic lights (horizontal 3~4 lamp layout with aspect ratio W/H > 1.35) and yellow/orange lights from pedestrian signal estimation.
-4. Tune color spectrum precisely to Korean pedestrian signal cyan-green and pure-red LED wavelengths; restrict ROI height (8%~65%) to exclude high overhead road signals.
-5. Validate signed model metadata, labels, tensor contract, and SHA-256 before loading.
-6. Establish a CPU baseline, then add GPU/NPU with tested fallback.
-7. Restore crosswalk masks and signal boxes into the same source coordinate system.
-8. Select a target signal from field-verified map links, crosswalk direction, device pose, and signal geometry before classifying a user-visible state.
-9. Track the same ephemeral signal target across frames; never treat a transition between different boxes as RED-to-GREEN.
-10. Keep the decision engine pure and deterministic, with monotonic timestamps.
-11. Cover SRD scenarios ST-001 through ST-015 before enabling user-facing estimates.
+3. Implement high-speed RGB-to-HSV color space segmentation in `CameraVisionSignalEstimator` to separate illumination (V) from hue (H) and saturation (S), adapting to sunlight backlight/overexposure and low-light shade.
+4. Tune color spectrum precisely to Korean pedestrian signal cyan-green (Hue 145°~195°) and pure-red (Hue 0°~15°, 345°~360°) LED wavelengths; restrict ROI height (8%~65%) to exclude high overhead road signals.
+5. Filter out horizontal vehicle traffic lights (aspect ratio W/H > 1.35) and yellow/orange lights (Hue 25°~55°).
+6. Verify vertical 2-light pedestrian signal geometry (top red / bottom green) and enforce Red Precedence (Zero False-Green) when ambiguous.
+7. Wrap `org.tensorflow.lite.Interpreter` with `TfliteModelRunner` for on-device hardware acceleration (NPU/CPU multithreading) with graceful fallback.
+8. Apply `LocalVlmSignalVerifier` 5-frame temporal rolling buffer to suppress single-frame flicker and enforce ≥60% frame stability for green states.
+9. Validate signed model metadata, labels, tensor contract, and SHA-256 before loading.
+10. Establish a CPU baseline, then add GPU/NPU with tested fallback.
+11. Restore crosswalk masks and signal boxes into the same source coordinate system.
+12. Select a target signal from field-verified map links, crosswalk direction, device pose, and signal geometry before classifying a user-visible state.
+13. Track the same ephemeral signal target across frames; never treat a transition between different boxes as RED-to-GREEN.
+14. Keep the decision engine pure and deterministic, with monotonic timestamps.
+15. Cover SRD scenarios ST-001 through ST-015 before enabling user-facing estimates.
 
 ### Authorized live signal
 

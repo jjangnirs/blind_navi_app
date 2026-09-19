@@ -49,5 +49,15 @@ enum class HapticFeedbackType(
         description = "안전 긴급 경고 (고강도 3회 진동)",
         patternMs = longArrayOf(0, 500, 200, 500, 200, 500),
         amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
+    ),
+
+    /**
+     * 경로 방향 정대 확인 (Haptic Compass Alignment).
+     * 올바른 진행 방향을 바라보았을 때 느껴지는 경쾌한 톡톡 2회 진동 (60ms 진동 - 60ms 쉼 - 60ms 진동).
+     */
+    ORIENTATION_ALIGNED(
+        description = "경로 방향 정대 확인 (경쾌한 톡톡 2회 진동)",
+        patternMs = longArrayOf(0, 60, 60, 60),
+        amplitudes = intArrayOf(0, 160, 0, 160)
     )
 }

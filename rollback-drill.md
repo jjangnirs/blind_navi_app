@@ -40,10 +40,14 @@ graph TD
 |---|---|---|---|---|
 | **DRILL-ADV-01** | **오프라인 / 터널 진입 (네트워크 완전 단절)** | 사전 캐시된 Room SQLite 기반으로 경로 유지 | 지도/경로 로컬 안내 유지, 0 크래시, 온라인 요청 백오프 | **PASSED** |
 | **DRILL-ADV-02** | **GPS 저정확도 / 다중경로 (>15m 오차, 가짜 위치)** | 정밀 횡단 방향 및 거리 안내 즉시 중지 | 즉각 `GPS_INACCURATE` 전이, "GPS 신호가 약합니다" 알림 | **PASSED** |
-| **DRILL-ADV-03** | **TTS 엔진 충돌 / 전화 수신으로 오디오 포커스 상실** | 햅틱 진동 및 TalkBack 스크린리더로 페일오버 | 3대 진동 Vocabulary 작동, 음성 중단되어도 촉각 상태 전달 | **PASSED** |
+| **DRILL-ADV-03** | **TTS 엔진 충돌 / 전화 수신으로 오디오 포커스 상실** | 햅틱 진동 및 TalkBack 스크린리더로 페일오버 | 4대 진동 Vocabulary(위험, 접근, 회전확인, 경로정대) 작동, 음성 중단되어도 촉각 상태 전달 | **PASSED** |
 | **DRILL-ADV-04** | **백엔드 서버 503 Service Unavailable** | 서킷 브레이커 3회 연속 실패 차단 및 30초 쿨다운 | 재시도 폭주 0건, 캐시 모드로 전환, 배터리 급방전 방지 | **PASSED** |
 | **DRILL-ADV-05** | **모델 바이너리 1바이트 변조 (Bit-flip attack)** | SHA-256 불일치 감지 및 네이티브 로드 거부 | `SecurityException` 격리, UNKNOWN 전이, 앱 무중단 유지 | **PASSED** |
 | **DRILL-ADV-06** | **공식 신호 지연(>5s), 시계 역행, 카메라 충돌** | Strict Conflict Veto로 즉각 UNKNOWN 격리 | 0 False-Green, 충돌 사유 로그 기록, 100% 안전 정지 | **PASSED** |
+| **DRILL-ADV-07** | **온디바이스 NPU/가속기 런타임 결함** | `TfliteModelRunner` 가속기 실패 시 자동 CPU Fallback | CPU 베이스라인 전환, 0 크래시, UNKNOWN 안전 유지 | **PASSED** |
+| **DRILL-ADV-08** | **주간 역광/백화 및 순간 반사광 노이즈** | `LocalVlmSignalVerifier` 5프레임 시간 롤링 버퍼 검증 | 단일 프레임 녹색 노이즈 무시, 0 False-Green, 60% 안정 시만 승인 | **PASSED** |
+| **DRILL-ADV-09** | **SK TMAP 전국 POI API 통신 장애** | 기기 내장 `android.location.Geocoder`로 2차 안전 자동 절체 | 주소 및 좌표 정상 산출, 검색 기능 무중단 유지 | **PASSED** |
+| **DRILL-ADV-10** | **국토교통부 VWorld 지도 타일 네트워크 장애** | OpenStreetMap → CartoDB Voyager 3중 타일망 자동 전환 | 지도 검은 화면 방지, 3-Tier 안전 타일 표출 유지 | **PASSED** |
 
 ---
 

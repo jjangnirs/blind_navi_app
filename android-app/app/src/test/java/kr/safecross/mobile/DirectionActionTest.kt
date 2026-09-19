@@ -78,4 +78,49 @@ class DirectionActionTest {
         val nullManeuver: Maneuver? = null
         assertEquals(DirectionAction.DESTINATION, DirectionAction.fromManeuver(nullManeuver))
     }
+
+    @Test
+    fun `prevents false overpass detection on normal walkways and landmark texts`() {
+        // 1. 일반 보행로(facilityType = "보행로", 구 TMAP 11)는 STRAIGHT여야 함 (육교로 오인 금지)
+        val walkwayManeuver = Maneuver(
+            index = 6,
+            pointIndex = 6,
+            location = LocationPoint(37.5, 127.0),
+            instruction = "일반보행로를 따라 직진하세요",
+            facilityType = "보행로",
+            turnType = 11
+        )
+        assertEquals(DirectionAction.STRAIGHT, DirectionAction.fromManeuver(walkwayManeuver))
+
+        // 2. "육교 방면으로 직진" 지명 텍스트는 육교가 아니라 STRAIGHT여야 함
+        val landmarkStraight = Maneuver(
+            index = 7,
+            pointIndex = 7,
+            location = LocationPoint(37.5, 127.0),
+            instruction = "금남육교 방면으로 120m 직진하세요",
+            turnType = 11
+        )
+        assertEquals(DirectionAction.STRAIGHT, DirectionAction.fromManeuver(landmarkStraight))
+
+        // 3. "육교 방면으로 우회전" 지명 텍스트는 육교가 아니라 RIGHT여야 함
+        val landmarkRight = Maneuver(
+            index = 8,
+            pointIndex = 8,
+            location = LocationPoint(37.5, 127.0),
+            instruction = "한빛육교 방면으로 우회전하세요",
+            turnType = 13
+        )
+        assertEquals(DirectionAction.RIGHT, DirectionAction.fromManeuver(landmarkRight))
+
+        // 4. 실제 육교 시설이나 육교 횡단 동작은 정상적으로 OVERPASS 판정되어야 함
+        val realOverpass = Maneuver(
+            index = 9,
+            pointIndex = 9,
+            location = LocationPoint(37.5, 127.0),
+            instruction = "육교를 이용하여 횡단하세요",
+            facilityType = "육교",
+            turnType = 125
+        )
+        assertEquals(DirectionAction.OVERPASS, DirectionAction.fromManeuver(realOverpass))
+    }
 }

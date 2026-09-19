@@ -22,13 +22,28 @@ FastAPI 기반의 Safe Cross KR 백엔드 서비스입니다.
 - 온디바이스 LiteRT 모델 SHA-256 무결성 검증 매니페스트 배포.
 - 중대 오탐 발생 시 모델별 / 지역별 / 전역 3단계 원격 긴급 비활성화.
 
+### 5. 외부 모바일 앱 연동 및 HTTPS 보안 터널
+- **터널 개설**: NAT/방화벽 외부의 실제 스마트폰 Android 앱에서 로컬 백엔드로 접속할 수 있도록 HTTPS 공인 터널을 지원합니다.
+- **실행 명령**:
+  ```powershell
+  # 터미널 1: FastAPI 백엔드 데몬 구동
+  uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  # 터미널 2: 외부 HTTPS 공인 터널 개설
+  npx -y localtunnel --port 8000
+  ```
+- **Android 3단계 안전 라우팅 복원력**:
+  1. 1차: 외부 백엔드 프록시(`POST /v1/routes/pedestrian`)
+  2. 2차: TMAP 클라우드 API 직접 호출
+  3. 3차: 네트워크 완전 단절 시 로컬 기하 Fallback 경로 생성
+
 ## 실행 방법
 
 ```powershell
 # 가상환경 활성화 후
 cd backend
 pip install -e ".[dev]"
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ## 테스트 실행
@@ -36,3 +51,4 @@ uvicorn app.main:app --reload --port 8000
 ```powershell
 pytest
 ```
+

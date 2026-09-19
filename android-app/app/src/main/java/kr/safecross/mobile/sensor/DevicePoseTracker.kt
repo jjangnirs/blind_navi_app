@@ -41,6 +41,8 @@ class ProductionDevicePoseTracker(
 ) : DevicePoseTracker, SensorEventListener {
 
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+    private val rotationVectorSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        ?: sensorManager?.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
     private val accelerometer = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
     private val _currentPose = MutableStateFlow(DevicePose(pitchDegrees = 0f, rollDegrees = 0f, headingDegrees = 0f))
@@ -50,11 +52,22 @@ class ProductionDevicePoseTracker(
     override val tiltGuidance: StateFlow<TiltGuidance> = _tiltGuidance.asStateFlow()
 
     private var isTracking = false
+    private val rotationMatrix = FloatArray(9)
+    private val orientationValues = FloatArray(3)
 
     override fun startTracking() {
-        if (!isTracking && sensorManager != null && accelerometer != null) {
-            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
-            isTracking = true
+        if (!isTracking && sensorManager != null) {
+            var registeredAny = false
+            if (rotationVectorSensor != null) {
+                sensorManager.registerListener(this, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
+                registeredAny = true
+            }
+            if (accelerometer != null && rotationVectorSensor == null) {
+                // 회전 벡터 센서가 없는 기기를 위한 가속도계 폴백
+                sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
+                registeredAny = true
+            }
+            isTracking = registeredAny
         }
     }
 
@@ -66,20 +79,42 @@ class ProductionDevicePoseTracker(
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
-        if (event == null || event.sensor.type != Sensor.TYPE_ACCELEROMETER) return
+        if (event == null) return
 
-        val ax = event.values[0]
-        val ay = event.values[1]
-        val az = event.values[2]
+        when (event.sensor.type) {
+            Sensor.TYPE_ROTATION_VECTOR, Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR -> {
+                try {
+                    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                    SensorManager.getOrientation(rotationMatrix, orientationValues)
 
-        // 세로 모드(Portrait Camera) 기준 Pitch & Roll 계산 (단위: 도)
-        // ax: 좌우 기울기, ay: 세로 중력축, az: 전후 기울기
-        val pitch = atan2(-az.toDouble(), sqrt((ax * ax + ay * ay).toDouble())).toFloat() * (180f / Math.PI.toFloat())
-        val roll = atan2(ax.toDouble(), ay.toDouble()).toFloat() * (180f / Math.PI.toFloat())
+                    // orientationValues[0]: Azimuth (-PI ~ +PI) -> 0.0 ~ 360.0 도
+                    val azimuthRad = orientationValues[0].toDouble()
+                    val heading = ((Math.toDegrees(azimuthRad) + 360.0) % 360.0).toFloat()
 
-        val pose = DevicePose(pitchDegrees = pitch, rollDegrees = roll, headingDegrees = 0f)
-        _currentPose.value = pose
-        _tiltGuidance.value = evaluateGuidance(pitch, roll)
+                    // orientationValues[1]: Pitch, orientationValues[2]: Roll
+                    val pitch = Math.toDegrees(orientationValues[1].toDouble()).toFloat()
+                    val roll = Math.toDegrees(orientationValues[2].toDouble()).toFloat()
+
+                    val pose = DevicePose(pitchDegrees = pitch, rollDegrees = roll, headingDegrees = heading)
+                    _currentPose.value = pose
+                    _tiltGuidance.value = evaluateGuidance(pitch, roll)
+                } catch (_: Exception) {}
+            }
+            Sensor.TYPE_ACCELEROMETER -> {
+                val ax = event.values[0]
+                val ay = event.values[1]
+                val az = event.values[2]
+
+                // 세로 모드(Portrait Camera) 기준 Pitch & Roll 계산 (단위: 도)
+                val pitch = atan2(-az.toDouble(), sqrt((ax * ax + ay * ay).toDouble())).toFloat() * (180f / Math.PI.toFloat())
+                val roll = atan2(ax.toDouble(), ay.toDouble()).toFloat() * (180f / Math.PI.toFloat())
+
+                val currentHeading = _currentPose.value.headingDegrees
+                val pose = DevicePose(pitchDegrees = pitch, rollDegrees = roll, headingDegrees = currentHeading)
+                _currentPose.value = pose
+                _tiltGuidance.value = evaluateGuidance(pitch, roll)
+            }
+        }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}

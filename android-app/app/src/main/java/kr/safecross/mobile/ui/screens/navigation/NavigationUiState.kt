@@ -23,7 +23,11 @@ data class NavigationUiState(
     val statusAnnouncement: String = "",
     val isFinished: Boolean = false,
     val gpsSignalStrengthPercent: Int = 0,
-    val gpsAccuracyMeters: Float = 0f
+    val gpsAccuracyMeters: Float = 0f,
+    val currentHeadingDegrees: Float = 0f,
+    val isOrientationAligned: Boolean = true,
+    val alignmentPromptMessage: String = "",
+    val currentLocation: kr.safecross.mobile.domain.model.LocationPoint? = null
 ) {
     val currentManeuver: Maneuver?
         get() = route?.maneuvers?.getOrNull(currentManeuverIndex)
@@ -44,4 +48,5 @@ sealed interface NavigationEffect {
     data class ShowOffRouteAlert(val message: String) : NavigationEffect
     data class ShowGpsDegradedAlert(val message: String) : NavigationEffect
     data object NavigationFinished : NavigationEffect
+    data object TriggerCrossingAssist : NavigationEffect
 }
