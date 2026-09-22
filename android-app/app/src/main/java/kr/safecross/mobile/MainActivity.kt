@@ -301,7 +301,7 @@ fun SafeCrossNavHost(
                     kr.safecross.mobile.ui.screens.crossingassist.CrossingAssistViewModel(
                         cameraPipeManager = kr.safecross.mobile.camera.ProductionCameraPipeManager(context),
                         crosswalkEstimator = kr.safecross.mobile.perception.FakeCrosswalkEstimator(),
-                        signalEstimator = kr.safecross.mobile.perception.CameraVisionSignalEstimator(context),
+                        signalEstimator = kr.safecross.mobile.perception.TwoTierHybridSignalEstimator.createDefault(context),
                         signalAssociator = kr.safecross.mobile.perception.FakeSignalAssociator(),
                         decisionEngine = kr.safecross.mobile.decision.CrossingDecisionEngine(),
                         poseTracker = kr.safecross.mobile.sensor.ProductionDevicePoseTracker(context),

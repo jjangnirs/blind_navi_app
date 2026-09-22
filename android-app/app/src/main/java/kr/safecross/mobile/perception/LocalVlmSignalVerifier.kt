@@ -16,6 +16,9 @@ class LocalVlmSignalVerifier(
     private val temporalWindowSize: Int = 5
 ) {
     private val history = ArrayDeque<SignalObservation>(temporalWindowSize)
+    private var lastObservation: SignalObservation? = null
+    private var currentTrackId: String = "track-dyn-1"
+    private var trackCounter: Int = 1
 
     data class VerificationResult(
         val verifiedState: ObservedSignalState,
@@ -36,6 +39,7 @@ class LocalVlmSignalVerifier(
         // 버퍼가 없거나 관측값이 UNKNOWN인 경우 기본 검증 통과
         if (frameBuffer == null || candidate.state == ObservedSignalState.UNKNOWN) {
             recordObservation(candidate)
+            lastObservation = candidate
             return VerificationResult(
                 verifiedState = candidate.state,
                 confidenceScore = candidate.score,
@@ -49,10 +53,11 @@ class LocalVlmSignalVerifier(
         val boxWidth = box.width * frameWidth
         val boxHeight = box.height * frameHeight
 
-        // 차량용 가로 신호등 (W > H * 1.3) 배제
+        // 차량용 가로 신호등 (W > H * 1.35) 배제
         if (boxWidth > boxHeight * 1.35f) {
             val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.25f)
             recordObservation(rejected)
+            lastObservation = rejected
             return VerificationResult(
                 verifiedState = ObservedSignalState.UNKNOWN,
                 confidenceScore = 0.25f,
@@ -61,11 +66,50 @@ class LocalVlmSignalVerifier(
             )
         }
 
-        // 2. 시간 일관성 필터링 (Temporal Consistency)
-        recordObservation(candidate)
+        // 2. 동적 움직임(Motion Vector) 및 고속 이동 차량 기각 (개선 2단계)
+        val prev = lastObservation
+        if (prev != null && prev.state != ObservedSignalState.UNKNOWN && prev.frameTimestampNanos > 0L && candidate.frameTimestampNanos > prev.frameTimestampNanos) {
+            val dtSec = (candidate.frameTimestampNanos - prev.frameTimestampNanos) / 1_000_000_000.0
+            if (dtSec in 0.01..0.50) {
+                val cx1 = (prev.box.left + prev.box.right) / 2f
+                val cy1 = (prev.box.top + prev.box.bottom) / 2f
+                val cx2 = (candidate.box.left + candidate.box.right) / 2f
+                val cy2 = (candidate.box.top + candidate.box.bottom) / 2f
+                val dist = kotlin.math.sqrt((cx2 - cx1) * (cx2 - cx1) + (cy2 - cy1) * (cy2 - cy1))
+                val velocity = (dist / dtSec).toFloat()
+
+                // 초당 화면 폭의 55% 이상 빠르게 이동하는 차량/동적 객체 기각
+                if (velocity > 0.55f) {
+                    val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
+                    recordObservation(rejected)
+                    lastObservation = rejected
+                    return VerificationResult(
+                        verifiedState = ObservedSignalState.UNKNOWN,
+                        confidenceScore = 0.20f,
+                        isVerified = false,
+                        verificationReason = "REJECTED_DYNAMIC_MOTION"
+                    )
+                }
+            }
+        }
+
+        // 3. IoU 기반 공간 추적 및 Track 일관성 검사 (개선 1단계)
+        if (prev != null && prev.state != ObservedSignalState.UNKNOWN) {
+            val iou = computeIoU(candidate.box, prev.box)
+            if (iou < 0.35f) {
+                // 이전 프레임과 위치가 튀었거나 다른 물체로 변경됨 -> 시간 큐 리셋 및 신규 Track 분리!
+                history.clear()
+                currentTrackId = "track-dyn-${++trackCounter}"
+            }
+        }
+
+        // 4. 시간 일관성 필터링 (Temporal Consistency)
+        val trackedCandidate = candidate.copy(ephemeralTrackId = currentTrackId)
+        recordObservation(trackedCandidate)
+        lastObservation = trackedCandidate
         val smoothedState = evaluateTemporalStability()
 
-        // 3. Zero False-Green 보장: 녹색 신호가 최근 기록에서 불안정하면 즉시 UNKNOWN으로 안전 강등
+        // 5. Zero False-Green 보장: 녹색 신호가 최근 기록에서 불안정하면 즉시 UNKNOWN으로 안전 강등
         val finalState = if (candidate.state == ObservedSignalState.GREEN && smoothedState != ObservedSignalState.GREEN) {
             ObservedSignalState.UNKNOWN
         } else {
@@ -91,6 +135,23 @@ class LocalVlmSignalVerifier(
             history.removeFirst()
         }
         history.addLast(obs)
+    }
+
+    companion object {
+        fun computeIoU(b1: NormalizedBox, b2: NormalizedBox): Float {
+            val interLeft = maxOf(b1.left, b2.left)
+            val interTop = maxOf(b1.top, b2.top)
+            val interRight = minOf(b1.right, b2.right)
+            val interBottom = minOf(b1.bottom, b2.bottom)
+
+            if (interRight <= interLeft || interBottom <= interTop) return 0.0f
+
+            val interArea = (interRight - interLeft) * (interBottom - interTop)
+            val area1 = b1.width * b1.height
+            val area2 = b2.width * b2.height
+            val unionArea = area1 + area2 - interArea
+            return if (unionArea > 0f) interArea / unionArea else 0.0f
+        }
     }
 
     private fun evaluateTemporalStability(): ObservedSignalState {
@@ -124,5 +185,7 @@ class LocalVlmSignalVerifier(
      */
     fun reset() {
         history.clear()
+        lastObservation = null
+        currentTrackId = "track-dyn-1"
     }
 }
