@@ -139,4 +139,48 @@ class CrossingAssistViewModelTest {
         assertTrue(effects.contains(CrossingAssistEffect.FinishScreen))
         job.cancel()
     }
+
+    @Test
+    fun testSignalLockedInReticleEmitsConfirmationHaptic() = runTest {
+        val effects = mutableListOf<CrossingAssistEffect>()
+        val job = launch {
+            viewModel.effects.collect { effects.add(it) }
+        }
+
+        viewModel.onCameraPermissionGranted(verifiedCrossing)
+        advanceUntilIdle()
+
+        // FakeSignalEstimator의 기본 박스는 NormalizedBox(0.45f, 0.20f, 0.55f, 0.40f)로
+        // UI 기본 reticleBox(0.20f, 0.10f, 0.80f, 0.60f)의 중심에 정확히 위치함
+        viewModel.processFrame(FrameRef.createForTesting(timestampNanos = 100_000_000L))
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertTrue(state.isSignalInReticle)
+
+        val lockOnEffect = effects.filterIsInstance<CrossingAssistEffect.SpeakGuidance>()
+            .firstOrNull { it.text.contains("신호등이 조준") }
+        assertTrue(lockOnEffect != null)
+        assertEquals(kr.safecross.mobile.guidance.HapticFeedbackType.ORIENTATION_ALIGNED, lockOnEffect?.hapticType)
+
+        job.cancel()
+    }
+
+    @Test
+    fun testTiltGuidanceHysteresisAndSuitableElevationRange() = runTest {
+        // -20도 ~ +30도 사이의 보행 자세는 SUITABLE 유지
+        poseTracker.setPose(pitch = 10f, roll = 0f)
+        advanceUntilIdle()
+        assertEquals(kr.safecross.mobile.sensor.TiltGuidance.SUITABLE, viewModel.uiState.value.tiltGuidance)
+
+        // 바닥을 너무 향할 때 TILT_UP 유도
+        poseTracker.setPose(pitch = -30f, roll = 0f)
+        advanceUntilIdle()
+        assertEquals(kr.safecross.mobile.sensor.TiltGuidance.TILT_UP, viewModel.uiState.value.tiltGuidance)
+
+        // 고개를 살짝 들어 -15도에 도달하면 히스테리시스로 인해 즉시 SUITABLE 복귀
+        poseTracker.setPose(pitch = -15f, roll = 0f)
+        advanceUntilIdle()
+        assertEquals(kr.safecross.mobile.sensor.TiltGuidance.SUITABLE, viewModel.uiState.value.tiltGuidance)
+    }
 }

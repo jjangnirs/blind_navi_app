@@ -51,19 +51,31 @@ class CrossingAssistViewModel(
     private var activeCrossingContext: VerifiedCrossingContext? = null
     private var isAnalyzing = false
     private var guidanceSeq = 0
+    private var lastTiltSpeechTimeMs: Long = 0L
+    private var lastSpokenTiltGuidance: TiltGuidance? = null
+    private val tiltSpeechCooldownMs: Long = 6_000L
 
     init {
-        // 기기 기울기 모니터링 구독
+        // 기기 기울기 모니터링 구독 (과도한 반복 발화 억제를 위한 쿨다운 적용)
         viewModelScope.launch {
             poseTracker.tiltGuidance.collect { guidance ->
                 _uiState.value = _uiState.value.copy(tiltGuidance = guidance)
                 if (!guidance.isSuitable && isAnalyzing) {
-                    emitGuidance(
-                        text = guidance.instruction,
-                        priority = GuidancePriority.CROSSING,
-                        category = "tilt_guidance",
-                        hapticType = kr.safecross.mobile.guidance.HapticFeedbackType.UNKNOWN_CAUTION
-                    )
+                    val now = System.currentTimeMillis()
+                    val canSpeak = (now - lastTiltSpeechTimeMs >= tiltSpeechCooldownMs) ||
+                            (lastSpokenTiltGuidance != guidance && now - lastTiltSpeechTimeMs >= 3_000L)
+                    if (canSpeak) {
+                        lastTiltSpeechTimeMs = now
+                        lastSpokenTiltGuidance = guidance
+                        emitGuidance(
+                            text = guidance.instruction,
+                            priority = GuidancePriority.CROSSING,
+                            category = "tilt_guidance",
+                            hapticType = kr.safecross.mobile.guidance.HapticFeedbackType.UNKNOWN_CAUTION
+                        )
+                    }
+                } else if (guidance.isSuitable) {
+                    lastSpokenTiltGuidance = null
                 }
             }
         }
@@ -137,12 +149,36 @@ class CrossingAssistViewModel(
                     isTiltSuitable = isTiltOk
                 )
 
+                val targetBox = association.targetSignal?.box
+                val reticle = _uiState.value.reticleBox
+                val isInsideReticle = if (targetBox != null) {
+                    val cx = (targetBox.left + targetBox.right) / 2f
+                    val cy = (targetBox.top + targetBox.bottom) / 2f
+                    cx in reticle.left..reticle.right && cy in reticle.top..reticle.bottom
+                } else {
+                    false
+                }
+
+                val wasInReticle = _uiState.value.isSignalInReticle
+                if (isInsideReticle && !wasInReticle) {
+                    viewModelScope.launch {
+                        _effects.emit(
+                            CrossingAssistEffect.SpeakGuidance(
+                                text = "신호등이 조준되었습니다.",
+                                hapticType = kr.safecross.mobile.guidance.HapticFeedbackType.ORIENTATION_ALIGNED,
+                                queueFlush = false
+                            )
+                        )
+                    }
+                }
+
                 _uiState.value = _uiState.value.copy(
                     decisionState = decision.state,
                     crosswalkDetected = cwObs.hasCrosswalk,
                     statusMessage = decision.guidanceText ?: decision.state.description,
-                    detectedSignalBox = association.targetSignal?.box,
-                    detectedSignalColor = association.targetSignal?.state
+                    detectedSignalBox = targetBox,
+                    detectedSignalColor = association.targetSignal?.state,
+                    isSignalInReticle = isInsideReticle
                 )
 
                 // 5. 발화 안내 이벤트 전송

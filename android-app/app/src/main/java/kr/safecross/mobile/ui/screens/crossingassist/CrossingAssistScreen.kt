@@ -183,20 +183,32 @@ fun CrossingAssistScreen(
                 )
             }
 
-            // B. 저시력자를 위한 선택적 Preview (지연 없는 640x480 화면 및 신호등/색상 감지 오버레이)
+            // B. 저시력자를 위한 선택적 Preview (신호등 조준 가이드 박스 및 실시간 뷰파인더 오버레이)
             if (uiState.hasCameraPermission && uiState.isCameraBound) {
-                val previewBorderColor = when (uiState.detectedSignalColor) {
-                    kr.safecross.mobile.perception.ObservedSignalState.RED -> Color(0xFFFF1744)
-                    kr.safecross.mobile.perception.ObservedSignalState.GREEN -> Color(0xFF00E676)
+                val previewBorderColor = when {
+                    uiState.isSignalInReticle && uiState.detectedSignalColor == kr.safecross.mobile.perception.ObservedSignalState.RED -> Color(0xFFFF1744)
+                    uiState.isSignalInReticle -> Color(0xFF00E676)
+                    uiState.detectedSignalColor == kr.safecross.mobile.perception.ObservedSignalState.RED -> Color(0xFFFF1744)
+                    uiState.detectedSignalColor == kr.safecross.mobile.perception.ObservedSignalState.GREEN -> Color(0xFF00E676)
+                    uiState.tiltGuidance.isSuitable -> Color(0xFF00E5FF)
                     else -> HighContrastYellow
                 }
 
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(240.dp)
+                        .height(280.dp)
                         .background(Color(0xFF212121), RoundedCornerShape(12.dp))
-                        .border(2.5.dp, previewBorderColor, RoundedCornerShape(12.dp)),
+                        .border(2.5.dp, previewBorderColor, RoundedCornerShape(12.dp))
+                        .semantics {
+                            contentDescription = if (uiState.isSignalInReticle) {
+                                "카메라 프리뷰 화면: 신호등이 가이드 박스 안에 정확히 조준되었습니다."
+                            } else if (uiState.tiltGuidance.isSuitable) {
+                                "카메라 프리뷰 화면: 각도가 적합합니다. 화면 가운데 가이드 박스 안에 신호등을 맞춰주세요."
+                            } else {
+                                "카메라 프리뷰 화면: ${uiState.tiltGuidance.instruction}"
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     AndroidView(
@@ -213,7 +225,15 @@ fun CrossingAssistScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // 신호등 검출 위치 바운딩 박스 오버레이
+                    // 1. 신호등 조준 가이드 박스(뷰파인더 프레임) 및 각도 피드백 오버레이
+                    TrafficLightReticleOverlay(
+                        reticleBox = uiState.reticleBox,
+                        tiltGuidance = uiState.tiltGuidance,
+                        isSignalLocked = uiState.isSignalInReticle,
+                        detectedSignalColor = uiState.detectedSignalColor
+                    )
+
+                    // 2. 신호등 검출 위치 바운딩 박스 오버레이
                     val box = uiState.detectedSignalBox
                     val signalColor = uiState.detectedSignalColor
                     if (box != null && (signalColor == kr.safecross.mobile.perception.ObservedSignalState.RED || signalColor == kr.safecross.mobile.perception.ObservedSignalState.GREEN)) {
@@ -235,7 +255,7 @@ fun CrossingAssistScreen(
                         }
                     }
 
-                    // 실시간 신호등 감지 상태 플로팅 뱃지
+                    // 3. 실시간 신호등 감지 상태 플로팅 뱃지 (우측 상단)
                     if (uiState.detectedSignalColor != null && uiState.detectedSignalColor != kr.safecross.mobile.perception.ObservedSignalState.UNKNOWN) {
                         val isRed = uiState.detectedSignalColor == kr.safecross.mobile.perception.ObservedSignalState.RED
                         Row(
@@ -248,7 +268,7 @@ fun CrossingAssistScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (isRed) "🔴 적색 신호 감지됨" else "🟢 녹색 신호 감지됨",
+                                text = if (isRed) "🔴 적색 감지" else "🟢 녹색 감지",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.ExtraBold,
                                     color = if (isRed) Color(0xFFFF5252) else Color(0xFF00E676),
@@ -415,3 +435,171 @@ fun DecisionStateBadge(
         )
     }
 }
+
+/**
+ * 카메라 프리뷰 상단 신호등 조준 뷰파인더 가이드 박스(Target Reticle Frame) 및 실시간 각도 안내 오버레이
+ */
+@Composable
+fun TrafficLightReticleOverlay(
+    reticleBox: kr.safecross.mobile.perception.NormalizedBox,
+    tiltGuidance: kr.safecross.mobile.sensor.TiltGuidance,
+    isSignalLocked: Boolean,
+    detectedSignalColor: kr.safecross.mobile.perception.ObservedSignalState?,
+    modifier: Modifier = Modifier
+) {
+    val reticleColor = when {
+        isSignalLocked && detectedSignalColor == kr.safecross.mobile.perception.ObservedSignalState.RED -> Color(0xFFFF1744)
+        isSignalLocked -> Color(0xFF00E676)
+        tiltGuidance.isSuitable -> Color(0xFF00E5FF)
+        else -> HighContrastYellow
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        // 1. 뷰파인더 4모서리 코너 브래킷 및 중앙 타깃 십자선
+        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            val left = reticleBox.left * w
+            val top = reticleBox.top * h
+            val right = reticleBox.right * w
+            val bottom = reticleBox.bottom * h
+            val reticleWidth = right - left
+            val reticleHeight = bottom - top
+
+            val strokeWidth = if (isSignalLocked) 7f else 4.5f
+            val cornerLen = (reticleWidth * 0.20f).coerceIn(24f, 48f)
+
+            // 은은한 가이드 박스 윤곽선
+            drawRect(
+                color = reticleColor.copy(alpha = if (isSignalLocked) 0.45f else 0.25f),
+                topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                size = androidx.compose.ui.geometry.Size(reticleWidth, reticleHeight),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
+            )
+
+            // 좌상단 L 브래킷
+            drawLine(reticleColor, androidx.compose.ui.geometry.Offset(left, top), androidx.compose.ui.geometry.Offset(left + cornerLen, top), strokeWidth)
+            drawLine(reticleColor, androidx.compose.ui.geometry.Offset(left, top), androidx.compose.ui.geometry.Offset(left, top + cornerLen), strokeWidth)
+
+            // 우상단 L 브래킷
+            drawLine(reticleColor, androidx.compose.ui.geometry.Offset(right, top), androidx.compose.ui.geometry.Offset(right - cornerLen, top), strokeWidth)
+            drawLine(reticleColor, androidx.compose.ui.geometry.Offset(right, top), androidx.compose.ui.geometry.Offset(right, top + cornerLen), strokeWidth)
+
+            // 좌하단 L 브래킷
+            drawLine(reticleColor, androidx.compose.ui.geometry.Offset(left, bottom), androidx.compose.ui.geometry.Offset(left + cornerLen, bottom), strokeWidth)
+            drawLine(reticleColor, androidx.compose.ui.geometry.Offset(left, bottom), androidx.compose.ui.geometry.Offset(left, bottom - cornerLen), strokeWidth)
+
+            // 우하단 L 브래킷
+            drawLine(reticleColor, androidx.compose.ui.geometry.Offset(right, bottom), androidx.compose.ui.geometry.Offset(right - cornerLen, bottom), strokeWidth)
+            drawLine(reticleColor, androidx.compose.ui.geometry.Offset(right, bottom), androidx.compose.ui.geometry.Offset(right, bottom - cornerLen), strokeWidth)
+
+            // 중앙 타깃 십자 표식
+            val cx = (left + right) / 2f
+            val cy = (top + bottom) / 2f
+            val crosshairLen = 12f
+            drawLine(reticleColor.copy(alpha = 0.7f), androidx.compose.ui.geometry.Offset(cx - crosshairLen, cy), androidx.compose.ui.geometry.Offset(cx + crosshairLen, cy), 2.5f)
+            drawLine(reticleColor.copy(alpha = 0.7f), androidx.compose.ui.geometry.Offset(cx, cy - crosshairLen), androidx.compose.ui.geometry.Offset(cx, cy + crosshairLen), 2.5f)
+            drawCircle(reticleColor, radius = 3.5f, center = androidx.compose.ui.geometry.Offset(cx, cy))
+        }
+
+        // 2. 가이드 상단/하단 직관적 안내 뱃지
+        when {
+            isSignalLocked -> {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 10.dp)
+                        .background(Color(0xEE000000), RoundedCornerShape(8.dp))
+                        .border(1.5.dp, reticleColor, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "🎯 신호등 조준 완료 (락온)",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = reticleColor,
+                            fontSize = 13.sp
+                        )
+                    )
+                }
+            }
+            tiltGuidance == kr.safecross.mobile.sensor.TiltGuidance.TILT_UP -> {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 10.dp)
+                        .background(Color(0xEE000000), RoundedCornerShape(8.dp))
+                        .border(1.5.dp, HighContrastYellow, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "▲ 카메라를 올려주세요 (정면 조준)",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = HighContrastYellow,
+                            fontSize = 13.sp
+                        )
+                    )
+                }
+            }
+            tiltGuidance == kr.safecross.mobile.sensor.TiltGuidance.TILT_DOWN -> {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 10.dp)
+                        .background(Color(0xEE000000), RoundedCornerShape(8.dp))
+                        .border(1.5.dp, HighContrastYellow, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "▼ 카메라를 내려주세요 (정면 조준)",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = HighContrastYellow,
+                            fontSize = 13.sp
+                        )
+                    )
+                }
+            }
+            tiltGuidance == kr.safecross.mobile.sensor.TiltGuidance.LEVEL_PHONE -> {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 10.dp)
+                        .background(Color(0xEE000000), RoundedCornerShape(8.dp))
+                        .border(1.5.dp, HighContrastYellow, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "↔ 스마트폰을 수평으로 세워주세요",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = HighContrastYellow,
+                            fontSize = 13.sp
+                        )
+                    )
+                }
+            }
+            tiltGuidance.isSuitable -> {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 10.dp)
+                        .background(Color(0xEE000000), RoundedCornerShape(8.dp))
+                        .border(1.5.dp, Color(0xFF00E5FF), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "✔ 각도 적합 · 신호등을 네모 안에 맞추세요",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF00E5FF),
+                            fontSize = 12.sp
+                        )
+                    )
+                }
+            }
+        }
+    }
+}
+
