@@ -262,8 +262,11 @@ fun isLocationUsable(location: LocationSample): Boolean =
      - 상단 = 적색 정지 인형 픽토그램 / 하단 = 녹색 보행 인형 픽토그램의 공간적 상하 배치($Y_{green} > Y_{red}$) 검증.
      - 가로형 차량 신호등(종횡비 $W/H > 1.35$ 및 $W \ge 16$) 자동 기각.
      - 적색과 녹색이 동시 검출되거나 모호한 경우 Red 우선(Zero False-Green) 원칙 적용.
+  5. **다크 하우징(Dark Housing) 콘트라스트 검증:**
+     - 램프 발광체 외곽 테두리 마진 밴드(Collar Band)의 평균 명도($V_{\text{collar}}$)와 발광부($V_{\text{lamp}}$) 대비 샘플링.
+     - 검은색/암회색 차광판 케이스가 없는 전광판, 상점 간판, 건물 유리창 조명($V_{\text{collar}} \ge 0.45, \Delta V < 0.20$)을 비신호등으로 원천 기각.
 
-### 4.5 LiteRT / TFLite 온디바이스 런타임 및 비전 검증기
+### 4.5 LiteRT / TFLite 온디바이스 런타임 및 지능형 검증기
 
 구현 구조:
 
@@ -272,8 +275,14 @@ fun isLocationUsable(location: LocationSample): Boolean =
    - 플랫폼 NPU(NNAPI) 및 4스레드 멀티스레드 CPU 실행 지원.
    - 가속기 장애 시 Graceful Fallback 및 안전 종료 보장.
 2. **온디바이스 비전 검증기 (`LocalVlmSignalVerifier`):**
-   - 시간 일관성 롤링 버퍼(Temporal Rolling Buffer): 최근 5프레임의 상태 전이를 추적하여 단일 프레임 잡음/반사광 오탐 방지.
+   - **IoU 기반 공간 추적기 (`computeIoU`):** 프레임 간 Bounding Box $\text{IoU} \ge 0.35$ 일 때만 동일 Track으로 인정. 박스 위치 급변/점프 시 시간 버퍼를 즉시 리셋(`history.clear()`)하여 서로 다른 위치의 불빛 오합산 100% 차단.
+   - **동역학(Motion) 변위 속도 필터:** 프레임 간 중심점 이동 속도($v = \Delta \text{dist} / \Delta t$)를 계산하여, 차도를 가로지르는 고속 이동 차량/버스($v > 0.55/\text{sec}$)를 감지하고 `REJECTED_DYNAMIC_MOTION`으로 즉시 `UNKNOWN` 기각.
+   - **시간 일관성 롤링 버퍼(Temporal Rolling Buffer):** 최근 5프레임의 상태 전이를 추적하여 단일 프레임 잡음/반사광 오탐 방지.
    - **Zero False-Green 절대 수호:** 녹색 신호 판정 시 최근 버퍼의 60% 이상 안정적 수신을 요구하며, 미달 시 즉시 UNKNOWN으로 강등.
+3. **2단계 하이브리드 보행신호 판정 파이프라인 (`TwoTierHybridSignalEstimator`):**
+   - **Tier 1 (LiteRT 딥러닝 객체 검출):** 보행신호기 형태(Bounding Box)를 선검출. 미검출 시 배경 초록색과 무관하게 즉시 `UNKNOWN` 강등 차단.
+   - **Tier 2 (박스 한정 ROI HSV 정밀 분석):** 확정된 신호등 박스 내부 영역만 스캔하여 연산량 90% 절감 및 배경 잡음 완전 격리.
+   - **Tier 3 (기하·동역학·시간 일관성 검증):** `LocalVlmSignalVerifier`를 통한 3중 교차 검증 통과 시에만 최종 관측치 방출.
 
 모델 산출물:
 

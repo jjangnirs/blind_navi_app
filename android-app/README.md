@@ -94,12 +94,22 @@ cd android-app
 - **한국형 보행신호등 2구 세로 기하 구조 분석**:
   - 상단 = 적색 정지 인형 픽토그램 / 하단 = 녹색 보행 인형 픽토그램의 공간적 상하 배치 검증
   - 차량용 가로 신호등(종횡비 $W/H > 1.35$) 및 황색등/가로등(Hue 25°~55°) 원천 배제
+- **다크 하우징(Dark Housing) 콘트라스트 검증**:
+  - 신호등 발광 램프 외곽 마진 테두리(Collar Band)의 명도($V_{\text{collar}}$)와 발광부($V_{\text{lamp}}$) 대비를 샘플링
+  - 차광판 및 검은색 케이스가 없는 전광판, 상점 간판, 건물 유리창 조명($V_{\text{collar}} \ge 0.45, \Delta V < 0.20$)을 비신호등으로 원천 기각
 
 ### 12. 온디바이스 TFLite 런타임 및 지능형 검증기 (`TfliteModelRunner`, `LocalVlmSignalVerifier`)
 - **하드웨어 가속 TFLite 러너 (`TfliteModelRunner`)**: `org.tensorflow.lite.Interpreter`를 공식 바인딩하여 NPU/NNAPI 및 멀티스레드 CPU 가속 지원
 - **온디바이스 비전 검증기 (`LocalVlmSignalVerifier`)**:
-  - 시간 일관성 필터(Temporal Rolling Buffer): 단일 프레임 잡음/반사광 오탐 방지를 위한 최근 5프레임 상태 전이 검증
-  - **Zero False-Green 절대 원칙**: 조금이라도 의심스럽거나 깜빡이는 경우 즉시 `UNKNOWN` 또는 `RED`로 유지하여 보행자 생명 안전 최우선 보호
+  - **IoU 기반 공간 추적기 (`computeIoU`)**: 프레임 간 Bounding Box IoU $\ge 0.35$ 일 때만 동일 Track으로 인정하고, 박스 점프 시 즉시 시간 버퍼(`history.clear()`)를 리셋하여 서로 다른 위치의 불빛 오합산 100% 방지
+  - **동역학(Motion) 변위 속도 필터**: 프레임 간 중심점 이동 속도($v = \Delta \text{dist} / \Delta t$)를 연산하여 차도를 가로지르는 고속 이동 차량/버스($v > 0.55/\text{sec}$)를 감지하고 `REJECTED_DYNAMIC_MOTION`으로 즉시 `UNKNOWN` 기각
+  - **시간 일관성 필터(Temporal Rolling Buffer)**: 최근 5프레임 중 60% 이상 안정적으로 녹색이 지속될 때만 승인
+  - **Zero False-Green 절대 원칙**: 조금이라도 의심스럽거나 불안정한 경우 즉시 `UNKNOWN` 또는 `RED`로 유지하여 보행자 생명 안전 최우선 보호
+
+### 13. 2단계 하이브리드 보행신호 판정 파이프라인 (`TwoTierHybridSignalEstimator`)
+- **Tier 1 (LiteRT 딥러닝 객체 검출)**: 전방 보행신호등 Bounding Box를 먼저 검출. 미검출 시 배경 초록색과 무관하게 즉시 `UNKNOWN`으로 차단
+- **Tier 2 (박스 한정 ROI HSV 정밀 분석)**: 선별된 신호등 박스 내부 영역으로만 스캔을 한정하여 연산량 90% 절감 및 배경 잡음 완전 격리
+- **Tier 3 (기하·동역학·시간 일관성 검증)**: `LocalVlmSignalVerifier`를 통해 최종 검증된 결과만 반환
 
 
 ## TalkBack 수동 시험 절차

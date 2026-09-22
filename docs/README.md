@@ -49,7 +49,10 @@ MVP에 포함한다.
 9. 지자기 회전 센서(ROTATION_VECTOR) 기반 실시간 나침반 헤딩 추적 및 햅틱 콤파스(경로 방향 정대 시 톡톡 2회 진동 및 상태 카드)
 10. 횡단보도 접근 시 카메라 보행 보조 자동 연동(TriggerCrossingAssist)
 11. GPS 정확도와 데이터 최신성 표시
-12. 온디바이스 카메라 기반 보행자 신호 고정밀 추정 (`CameraVisionSignalEstimator` 적응형 HSV 색공간 분리, 한국 경찰청 에메랄드/청록색 Green 및 고채도 Red 규격 파장 검출, 역광/그늘 적응 보정, 세로 2구 신호등 기하 구조 분석, `TfliteModelRunner` 하드웨어 가속, `LocalVlmSignalVerifier` 시간 일관성 롤링 버퍼 및 Zero False-Green 원칙)
+12. 온디바이스 카메라 기반 2단계 하이브리드 보행신호 추정 파이프라인 (`TwoTierHybridSignalEstimator`):
+    - Tier 1: LiteRT 딥러닝 객체 검출 모델(`LiteRtPedestrianSignalEstimator`)의 보행신호등 바운딩 박스 선검출 (미검출 시 배경 초록색과 무관하게 즉시 `UNKNOWN` 강등 차단으로 Zero False-Green 보장)
+    - Tier 2: 신호등 박스 한정 적응형 HSV 정밀 분석 (`CameraVisionSignalEstimator.estimateWithinRoi`, 한국 경찰청 에메랄드/청록색 Green 및 고채도 Red 규격 파장 검출, 다크 하우징 콘트라스트 검증으로 간판/전광판 오탐 배제)
+    - Tier 3: 온디바이스 기하·동역학·시간 일관성 검증기 (`LocalVlmSignalVerifier`, IoU 공간 추적기 및 점프 시 버퍼 리셋, 이동 차량 $v > 0.55/\text{sec}$ 기각 모션 필터, 5프레임 롤링 윈도우)
 13. 횡단보도 영역·진행 방향 인식과 목표 보행신호 연결
 14. 여러 프레임·위치·방향·장면 문맥을 함께 확인하는 안전 상태기계
 15. 승인 지역의 공식 실시간 신호정보를 위한 선택적 어댑터와 충돌 차단

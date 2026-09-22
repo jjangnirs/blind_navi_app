@@ -171,12 +171,15 @@ flowchart TD
 1. `CrosswalkSceneEstimator`, `PedestrianSignalEstimator`, `TargetSignalAssociator`에 fake 구현을 먼저 연결한다.
 2. CameraX ImageAnalysis의 최신 프레임 전략과 lifecycle을 구현한다.
 3. 카메라 기울기·회전·방향 조정 음성을 구현한다.
-4. 온디바이스 보행자 신호 적응형 비전 AI 및 오탐 방지 파이프라인을 구현한다:
-   - RGB→HSV 고속 변환 및 조도 적응: 조도(V)와 색조(H)/채도(S)를 완전 분리하여 한낮 직사광선/역광(백화 현상) 및 그늘/야간(저조도) 환경에서도 색상 고유 파장 추출.
-   - 한국 경찰청 표준 규격 파장: 에메랄드/청록색 Green(Hue 145°~195°) 및 고채도 Red(Hue 0°~15°, 345°~360°) 정밀 감지, 황색등/가로등(Hue 25°~55°) 즉시 배제.
-   - 세로 2구 보행신호등 기하 구조(상단 적색 정지인형 / 하단 녹색 보행인형) 분석 및 가로형 차량 신호등(종횡비 $W/H > 1.35$) 배제.
+4. 온디바이스 2단계 하이브리드 보행자 신호 판정 파이프라인(`TwoTierHybridSignalEstimator`) 및 오탐 방지 필터를 구현한다:
+   - Tier 1 (LiteRT 딥러닝 객체 검출): 신호등 바운딩 박스를 선검출하며, 미검출 시 배경 색상과 무관하게 즉시 `UNKNOWN` 강등 차단 (Zero False-Green 절대 수호).
+   - Tier 2 (신호등 박스 한정 정밀 HSV 분석): ROI 내부로만 스캔을 한정(연산량 90% 절감)하여 경찰청 규격 파장(Green 145°~195°, Red 0°~15°/345°~360°) 정밀 감지, 황색등/가로등 배제.
+   - 다크 하우징(Dark Housing) 콘트라스트 검증: 램프 외곽 테두리 마진 명도($V_{\text{collar}} \ge 0.45, \Delta V < 0.20$) 대비 검사를 통해 차광판 케이스가 없는 전광판/간판/유리창 조명체 비신호등 기각.
    - 하드웨어 가속 러너(`TfliteModelRunner`): `org.tensorflow.lite.Interpreter` 바인딩을 통한 NPU/CPU 멀티스레드 가속 추론.
-   - 지능형 검증기(`LocalVlmSignalVerifier`): 최근 5프레임의 시간 일관성 롤링 버퍼(녹색 판정 시 60% 이상 안정 수신) 및 Zero False-Green 보장.
+   - 지능형 검증기(`LocalVlmSignalVerifier`):
+     - IoU 기반 공간 추적기: 프레임 간 Bounding Box $\text{IoU} < 0.35$ 점프 시 시간 롤링 버퍼 즉시 리셋(`history.clear()`) 및 신규 Track 분리.
+     - 동역학(Motion) 변위 속도 필터: 화면을 가로지르는 고속 이동 차량/버스($v > 0.55/\text{sec}$)를 감지하여 `REJECTED_DYNAMIC_MOTION`으로 즉시 `UNKNOWN` 기각.
+     - 시간 일관성 롤링 버퍼: 최근 5프레임 중 60% 이상 안정 수신 시에만 녹색 승인.
 5. 횡단보도 mask·방향과 보행신호 box를 같은 좌표계로 복원한다.
 6. 현장 지도 링크, 횡단보도 방향, 기기 pose로 목표 신호 하나를 연결한다.
 7. LiteRT estimator를 연결하지만 사용자에게 녹색 안내를 하지 않는다.

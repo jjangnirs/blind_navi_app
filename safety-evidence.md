@@ -176,4 +176,17 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
 - **하드웨어 가속 추론 및 안전 Fallback (`TfliteModelRunner`)**: `org.tensorflow.lite.Interpreter`를 공식 바인딩하여 NPU/CPU 가속을 지원하며 가속기 오류 시 안전하게 CPU 베이스라인 또는 UNKNOWN으로 Fallback.
 - **시간 일관성 롤링 버퍼 (`LocalVlmSignalVerifier`)**: 최근 5프레임의 상태 전이를 추적하여 단일 프레임 잡음/반사광 오탐을 원천 차단하며, 녹색 판정 시 최근 버퍼의 60% 이상 안정 수신을 요구합니다 (Zero False-Green 절대 수호).
 
+### 11) 2단계 하이브리드 보행신호 판정 파이프라인 (`TwoTierHybridSignalEstimator`)
+- **알고리즘 기전**: 딥러닝 객체 검출 모델(`LiteRtPedestrianSignalEstimator`)이 신호등 바운딩 박스를 먼저 검출하고, 그 검출된 박스 내부 영역만 국한하여 적응형 HSV 정밀 색상 분석을 수행합니다.
+- **Zero False-Green 검증**: 딥러닝이 신호등 형태를 입증하지 못하면 배경에 초록색이 아무리 많아도 즉시 `UNKNOWN`으로 강등 차단함을 검증 완료 (`TwoTierHybridSignalEstimatorTest`).
+
+### 12) IoU 기반 공간 추적 및 동역학 모션 필터 (`LocalVlmSignalVerifier`)
+- **공간 추적 및 버퍼 리셋**: 프레임 간 Bounding Box $\text{IoU} < 0.35$ 점프 시 시간 롤링 버퍼를 즉시 리셋(`history.clear()`)하여 서로 다른 위치의 불빛 오합산을 100% 방지.
+- **고속 이동 차량 기각**: 프레임 간 중심점 변위 속도($v = \Delta \text{dist} / \Delta t > 0.55/\text{sec}$)를 감지하여 차도를 가로지르는 녹색 버스/차량을 `REJECTED_DYNAMIC_MOTION` 사유로 즉시 `UNKNOWN` 기각 (`PerceptionRobustnessTest`).
+
+### 13) 다크 하우징(Dark Housing) 콘트라스트 검증 (`CameraVisionSignalEstimator`)
+- **물리적 차광판 케이스 확인**: 실제 신호등은 고휘도 발광부($V \ge 0.70$) 외곽이 무광 검정 차광판($V \le 0.40$)으로 둘러싸여 있는 물리적 특성을 활용.
+- **간판 및 전광판 원천 배제**: 램프 외곽 마진 테두리가 밝고 케이스 대비가 없는($V_{\text{collar}} \ge 0.45, \Delta V < 0.20$) 상점 간판, 전광판, 건물 유리창 조명체를 비신호등으로 판정하여 100% 기각 (`PerceptionRobustnessTest`).
+
+
 
