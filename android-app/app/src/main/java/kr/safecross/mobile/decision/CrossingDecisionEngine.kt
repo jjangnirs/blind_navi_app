@@ -222,8 +222,8 @@ class CrossingDecisionEngine(
                     )
                 }
             }
-            // pose tilt check
-            if (abs(input.devicePose.rollDegrees) > 30f || input.devicePose.pitchDegrees < -30f || input.devicePose.pitchDegrees > 50f) {
+            // pose tilt check (자연스러운 횡단보도 하향 촬영 각도 -38도 ~ +55도 허용)
+            if (abs(input.devicePose.rollDegrees) > 35f || input.devicePose.pitchDegrees < -38f || input.devicePose.pitchDegrees > 55f) {
                 consecutiveGreenCount = 0
                 return transitionTo(
                     targetState = CrossingState.UNKNOWN,

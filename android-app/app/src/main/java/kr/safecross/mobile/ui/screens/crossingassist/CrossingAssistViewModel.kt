@@ -149,9 +149,13 @@ class CrossingAssistViewModel(
                     isTiltSuitable = isTiltOk
                 )
 
-                val targetBox = association.targetSignal?.box
+                val targetSignal = association.targetSignal
+                val targetBox = targetSignal?.box
                 val reticle = _uiState.value.reticleBox
-                val isInsideReticle = if (targetBox != null) {
+
+                // 실제 유효 신호(RED 또는 GREEN)가 명확히 감지된 경우에만 조준 완료(락온)로 인정 (더미 탐색 박스 오조준 방지)
+                val isActualSignalDetected = targetSignal != null && targetSignal.state != kr.safecross.mobile.perception.ObservedSignalState.UNKNOWN
+                val isInsideReticle = if (isActualSignalDetected && targetBox != null) {
                     val cx = (targetBox.left + targetBox.right) / 2f
                     val cy = (targetBox.top + targetBox.bottom) / 2f
                     cx in reticle.left..reticle.right && cy in reticle.top..reticle.bottom
@@ -172,12 +176,22 @@ class CrossingAssistViewModel(
                     }
                 }
 
+                // 횡단보도는 감지되었으나 신호등이 감지되지 않는 경우 직관적인 상태 메시지 제공
+                val resolvedStatusMessage = when {
+                    decision.state == CrossingAssistDecisionState.UNKNOWN && cwObs.hasCrosswalk && !isActualSignalDetected ->
+                        "횡단보도 감지됨 (신호등 미인식 / 무신호 주의)"
+                    decision.guidanceText != null ->
+                        decision.guidanceText
+                    else ->
+                        decision.state.description
+                }
+
                 _uiState.value = _uiState.value.copy(
                     decisionState = decision.state,
                     crosswalkDetected = cwObs.hasCrosswalk,
-                    statusMessage = decision.guidanceText ?: decision.state.description,
-                    detectedSignalBox = targetBox,
-                    detectedSignalColor = association.targetSignal?.state,
+                    statusMessage = resolvedStatusMessage,
+                    detectedSignalBox = if (isActualSignalDetected) targetBox else null,
+                    detectedSignalColor = if (isActualSignalDetected) targetSignal?.state else null,
                     isSignalInReticle = isInsideReticle
                 )
 

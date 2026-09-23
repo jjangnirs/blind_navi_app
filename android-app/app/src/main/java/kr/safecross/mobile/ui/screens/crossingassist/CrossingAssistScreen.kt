@@ -313,7 +313,11 @@ fun CrossingAssistScreen(
             }
 
             // D. 신호 추정 상태 뱃지 (텍스트 + 아이콘 + 색상 다중화)
-            DecisionStateBadge(decisionState = uiState.decisionState)
+            DecisionStateBadge(
+                decisionState = uiState.decisionState,
+                statusMessage = uiState.statusMessage,
+                crosswalkDetected = uiState.crosswalkDetected
+            )
 
             // E. 횡단보도 탐색 상태 카드
             Row(
@@ -385,6 +389,8 @@ fun CrossingAssistScreen(
 @Composable
 fun DecisionStateBadge(
     decisionState: CrossingAssistDecisionState,
+    statusMessage: String? = null,
+    crosswalkDetected: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val (icon, color, stateTitle) = when (decisionState) {
@@ -395,8 +401,16 @@ fun DecisionStateBadge(
         CrossingAssistDecisionState.RED_ESTIMATE -> Triple(Icons.Default.Close, Color(0xFFFF5252), "🔴 적색 정지 신호 (보행 멈춤)")
         CrossingAssistDecisionState.GREEN_CANDIDATE -> Triple(Icons.Default.Info, Color(0xFFFFD54F), "녹색 신호 분석 중")
         CrossingAssistDecisionState.GREEN_ESTIMATE -> Triple(Icons.Default.CheckCircle, Color(0xFF00E676), "🟢 보행 신호 (녹색 감지됨)")
-        CrossingAssistDecisionState.UNKNOWN -> Triple(Icons.Default.Warning, Color(0xFFFF9800), "신호 직접 확인 요망")
+        CrossingAssistDecisionState.UNKNOWN -> {
+            if (crosswalkDetected) {
+                Triple(Icons.Default.Warning, Color(0xFFFF9800), "신호 미인식 (무신호 주의)")
+            } else {
+                Triple(Icons.Default.Warning, Color(0xFFFF9800), "신호 직접 확인 요망")
+            }
+        }
     }
+
+    val finalDescription = statusMessage ?: decisionState.description
 
     Column(
         modifier = modifier
@@ -405,7 +419,7 @@ fun DecisionStateBadge(
             .border(2.dp, color, RoundedCornerShape(16.dp))
             .padding(20.dp)
             .semantics(mergeDescendants = true) {
-                contentDescription = "현재 판정 상태: $stateTitle. ${decisionState.description}"
+                contentDescription = "현재 판정 상태: $stateTitle. $finalDescription"
                 liveRegion = LiveRegionMode.Assertive
             },
         horizontalAlignment = Alignment.CenterHorizontally
@@ -427,7 +441,7 @@ fun DecisionStateBadge(
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = decisionState.description,
+            text = finalDescription,
             style = MaterialTheme.typography.bodyLarge.copy(
                 color = HighContrastWhite,
                 fontSize = 16.sp

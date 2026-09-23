@@ -138,15 +138,15 @@ class ProductionDevicePoseTracker(
             }
 
             // 2. 상하 각도(Pitch, 전방 수평 기준 Elevation Angle):
-            // - 수평선 기준 -20도(횡단보도 앞쪽) ~ +30도(건너편 높은 신호등)가 보행자 기준 완벽한 촬영 각도
-            // - 카메라가 너무 바닥을 향하는 경우 (pitch < -22도 또는 이전 TILT_UP 상태 시 < -16도) -> TILT_UP
-            val downLimit = if (previous == TiltGuidance.TILT_UP) -16f else -22f
+            // - 수평선 기준 -35도(횡단보도 앞쪽 지면) ~ +40도(건너편 높은 신호등)가 보행자 기준 자연스러운 촬영 각도
+            // - 카메라가 너무 바닥을 향하는 경우 (pitch < -35도 또는 이전 TILT_UP 상태 시 < -28도) -> TILT_UP
+            val downLimit = if (previous == TiltGuidance.TILT_UP) -28f else -35f
             if (pitch < downLimit) {
                 return TiltGuidance.TILT_UP
             }
 
-            // - 카메라가 너무 하늘을 향하는 경우 (pitch > 35도 또는 이전 TILT_DOWN 상태 시 > 28도) -> TILT_DOWN
-            val upLimit = if (previous == TiltGuidance.TILT_DOWN) 28f else 35f
+            // - 카메라가 너무 하늘을 향하는 경우 (pitch > 40도 또는 이전 TILT_DOWN 상태 시 > 32도) -> TILT_DOWN
+            val upLimit = if (previous == TiltGuidance.TILT_DOWN) 32f else 40f
             if (pitch > upLimit) {
                 return TiltGuidance.TILT_DOWN
             }

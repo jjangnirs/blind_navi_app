@@ -167,19 +167,77 @@ class CrossingAssistViewModelTest {
     }
 
     @Test
+    fun testSignalUnknownDoesNotLockOnReticle() = runTest {
+        val effects = mutableListOf<CrossingAssistEffect>()
+        val job = launch {
+            viewModel.effects.collect { effects.add(it) }
+        }
+
+        // 신호등 미검출(더미 박스 및 UNKNOWN 상태) 시뮬레이션
+        val unknownEstimator = object : kr.safecross.mobile.perception.PedestrianSignalEstimator {
+            override suspend fun estimate(frame: FrameRef): List<kr.safecross.mobile.perception.SignalObservation> {
+                return listOf(
+                    kr.safecross.mobile.perception.SignalObservation(
+                        ephemeralTrackId = "track-unk",
+                        state = kr.safecross.mobile.perception.ObservedSignalState.UNKNOWN,
+                        score = 0.30f,
+                        box = kr.safecross.mobile.perception.NormalizedBox(0.45f, 0.20f, 0.55f, 0.40f),
+                        frameTimestampNanos = frame.timestampNanos,
+                        quality = kr.safecross.mobile.perception.FrameQuality(1.0f, 1.0f, true),
+                        modelVersion = "test"
+                    )
+                )
+            }
+        }
+
+        val unkViewModel = CrossingAssistViewModel(
+            cameraPipeManager = cameraPipe,
+            crosswalkEstimator = crosswalkEstimator,
+            signalEstimator = unknownEstimator,
+            signalAssociator = signalAssociator,
+            decisionEngine = decisionEngine,
+            poseTracker = poseTracker,
+            guidanceArbiter = guidanceArbiter
+        )
+
+        unkViewModel.onCameraPermissionGranted(verifiedCrossing)
+        advanceUntilIdle()
+
+        unkViewModel.processFrame(FrameRef.createForTesting(timestampNanos = 100_000_000L))
+        advanceUntilIdle()
+
+        val state = unkViewModel.uiState.value
+        // 실제 신호(RED/GREEN)가 없으면 박스가 가이드 중앙에 있어도 조준 완료(락온)가 되지 않아야 함
+        org.junit.Assert.assertFalse(state.isSignalInReticle)
+        org.junit.Assert.assertNull(state.detectedSignalColor)
+        org.junit.Assert.assertNull(state.detectedSignalBox)
+
+        // 조준 완료 음성이 출력되지 않아야 함
+        val lockOnEffect = effects.filterIsInstance<CrossingAssistEffect.SpeakGuidance>()
+            .firstOrNull { it.text.contains("신호등이 조준") }
+        org.junit.Assert.assertTrue(lockOnEffect == null)
+
+        job.cancel()
+    }
+
+    @Test
     fun testTiltGuidanceHysteresisAndSuitableElevationRange() = runTest {
-        // -20도 ~ +30도 사이의 보행 자세는 SUITABLE 유지
+        // -35도 ~ +40도 사이의 자연스러운 보행 자세(발 앞 횡단보도 조준)는 SUITABLE 유지
+        poseTracker.setPose(pitch = -25f, roll = 0f)
+        advanceUntilIdle()
+        assertEquals(kr.safecross.mobile.sensor.TiltGuidance.SUITABLE, viewModel.uiState.value.tiltGuidance)
+
         poseTracker.setPose(pitch = 10f, roll = 0f)
         advanceUntilIdle()
         assertEquals(kr.safecross.mobile.sensor.TiltGuidance.SUITABLE, viewModel.uiState.value.tiltGuidance)
 
-        // 바닥을 너무 향할 때 TILT_UP 유도
-        poseTracker.setPose(pitch = -30f, roll = 0f)
+        // 바닥을 너무 향할 때(-35도 이하) TILT_UP 유도
+        poseTracker.setPose(pitch = -40f, roll = 0f)
         advanceUntilIdle()
         assertEquals(kr.safecross.mobile.sensor.TiltGuidance.TILT_UP, viewModel.uiState.value.tiltGuidance)
 
-        // 고개를 살짝 들어 -15도에 도달하면 히스테리시스로 인해 즉시 SUITABLE 복귀
-        poseTracker.setPose(pitch = -15f, roll = 0f)
+        // 고개를 살짝 들어 -25도에 도달하면 히스테리시스(-28도 복귀 조건)로 인해 즉시 SUITABLE 복귀
+        poseTracker.setPose(pitch = -25f, roll = 0f)
         advanceUntilIdle()
         assertEquals(kr.safecross.mobile.sensor.TiltGuidance.SUITABLE, viewModel.uiState.value.tiltGuidance)
     }
