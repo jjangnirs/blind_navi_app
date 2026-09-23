@@ -228,4 +228,53 @@ class PerceptionRobustnessTest {
         // 하우징이 없는 간판의 녹색은 보행자 신호등이 아니므로 UNKNOWN으로 기각되어야 함 (Zero False-Green)
         assertEquals(ObservedSignalState.UNKNOWN, observations.first().state)
     }
+
+    @Test
+    fun testIsolatesPedestrianLightFromCoexistingVehicleLight() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        // 어두운 배경 (신호등 하우징 환경)
+        for (i in 0 until width * height) {
+            buffer.put(30.toByte())
+            buffer.put(30.toByte())
+            buffer.put(30.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 좌측 가로형 차량 신호등 (y: 40..46, x: 40..75 -> width 36, height 7, 가로 비율 > 5.0)
+        for (y in 40..46) {
+            for (x in 40..75) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 240.toByte())
+                buffer.put(offset + 1, 30.toByte())
+                buffer.put(offset + 2, 30.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 2. 우측 세로형 보행자 신호등 (y: 40..50, x: 155..160 -> width 6, height 11, 세로 비율 정상)
+        for (y in 40..50) {
+            for (x in 155..160) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 245.toByte())
+                buffer.put(offset + 1, 25.toByte())
+                buffer.put(offset + 2, 25.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        val observations = estimator.estimate(frame)
+
+        assertEquals(1, observations.size)
+        val obs = observations.first()
+        // 가로형 차량 신호등에 간섭받지 않고 우측 세로형 보행자 신호등을 정확히 식별
+        assertEquals(ObservedSignalState.RED, obs.state)
+        // 검출된 박스의 중심이 보행자 신호등 위치(x=155..160) 주변이어야 함
+        val boxCenterX = (obs.box.left + obs.box.right) / 2f * width
+        assertTrue("박스 중심($boxCenterX)이 보행자 신호등 부근이어야 함", boxCenterX in 140f..175f)
+    }
 }

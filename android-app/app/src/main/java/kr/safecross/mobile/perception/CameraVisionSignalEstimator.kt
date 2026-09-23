@@ -105,31 +105,25 @@ class CameraVisionSignalEstimator(
             return emptyList()
         }
 
-        var redCount = 0
-        var redMinX = width
-        var redMaxX = 0
-        var redMinY = height
-        var redMaxY = 0
-        var redSumX = 0L
-        var redSumY = 0L
-        var redSumV = 0.0f
+        val step = if (targetRoi != null) 1 else 2 // ROI 내부에서는 1픽셀 전수 샘플링으로 20m+ 원거리 3x4px 램프 포착
+        val gridW = (endX - startX + step - 1) / step
+        val gridH = (endY - startY + step - 1) / step
+        if (gridW <= 0 || gridH <= 0) {
+            return emptyList()
+        }
 
-        var greenCount = 0
-        var greenMinX = width
-        var greenMaxX = 0
-        var greenMinY = height
-        var greenMaxY = 0
-        var greenSumX = 0L
-        var greenSumY = 0L
-        var greenSumV = 0.0f
-
-        val step = 2 // 2픽셀 샘플링으로 60FPS 실시간성 확보
+        val grid = ByteArray(gridW * gridH)
+        val vGrid = FloatArray(gridW * gridH)
 
         try {
             buffer.rewind()
-            for (y in startY until endY step step) {
+            for (gy in 0 until gridH) {
+                val y = startY + gy * step
+                if (y >= endY) break
                 val rowOffset = y * width * 4
-                for (x in startX until endX step step) {
+                for (gx in 0 until gridW) {
+                    val x = startX + gx * step
+                    if (x >= endX) break
                     val offset = rowOffset + (x * 4)
                     if (offset + 3 >= buffer.capacity()) break
 
@@ -177,14 +171,9 @@ class CameraVisionSignalEstimator(
 
                     val isRed = isRedHsv || isRedRgb
                     if (isRed) {
-                        redCount++
-                        redSumV += v
-                        if (x < redMinX) redMinX = x
-                        if (x > redMaxX) redMaxX = x
-                        if (y < redMinY) redMinY = y
-                        if (y > redMaxY) redMaxY = y
-                        redSumX += x
-                        redSumY += y
+                        val gIdx = gy * gridW + gx
+                        grid[gIdx] = 1
+                        vGrid[gIdx] = v
                         continue
                     }
 
@@ -199,14 +188,9 @@ class CameraVisionSignalEstimator(
 
                     val isGreen = isGreenHsv || isGreenRgb
                     if (isGreen) {
-                        greenCount++
-                        greenSumV += v
-                        if (x < greenMinX) greenMinX = x
-                        if (x > greenMaxX) greenMaxX = x
-                        if (y < greenMinY) greenMinY = y
-                        if (y > greenMaxY) greenMaxY = y
-                        greenSumX += x
-                        greenSumY += y
+                        val gIdx = gy * gridW + gx
+                        grid[gIdx] = 2
+                        vGrid[gIdx] = v
                     }
                 }
             }
@@ -214,55 +198,34 @@ class CameraVisionSignalEstimator(
             return emptyList()
         }
 
-        val minClusterPixels = if (targetRoi != null) 6 else 12
+        // 개별 연결 요소(Connected-Component Blob) 분리 식별 (서로 다른 신호등 혼선 방지)
+        val redBlobs = findBlobs(grid, vGrid, gridW, gridH, 1, startX, startY, step)
+        val greenBlobs = findBlobs(grid, vGrid, gridW, gridH, 2, startX, startY, step)
 
-        // 가로/세로 비율(Aspect Ratio) 분석을 통한 차량용 가로 신호등 배제
-        val redWidth = if (redCount >= minClusterPixels) redMaxX - redMinX + 1 else 0
-        val redHeight = if (redCount >= minClusterPixels) redMaxY - redMinY + 1 else 0
-        val isRedVehicleHorizontal = (redWidth > redHeight * 1.35f) && (redWidth >= 16) && (targetRoi == null)
-        var hasRed = (redCount >= minClusterPixels) && !isRedVehicleHorizontal
+        val minClusterPixels = if (targetRoi != null) 4 else 8
 
-        val greenWidth = if (greenCount >= minClusterPixels) greenMaxX - greenMinX + 1 else 0
-        val greenHeight = if (greenCount >= minClusterPixels) greenMaxY - greenMinY + 1 else 0
-        val isGreenVehicleHorizontal = (greenWidth > greenHeight * 1.35f) && (greenWidth >= 16) && (targetRoi == null)
-        var hasGreen = (greenCount >= minClusterPixels) && !isGreenVehicleHorizontal
-
-        // 다크 하우징(Dark Housing) 콘트라스트 검증 (개선 3단계)
-        if (hasGreen) {
-            val greenAvgV = if (greenCount > 0) greenSumV / greenCount else 0.85f
-            val hasGreenHousing = verifyDarkHousingContrast(
-                buffer = buffer,
-                width = width,
-                height = height,
-                minX = greenMinX,
-                maxX = greenMaxX,
-                minY = greenMinY,
-                maxY = greenMaxY,
-                lampBrightness = greenAvgV
-            )
-            if (!hasGreenHousing) {
-                hasGreen = false
-            }
+        // 적색 유효 블롭 필터링 (가로형 차량 신호등 배제 및 다크 하우징 검증)
+        val validRedBlobs = redBlobs.filter { blob ->
+            if (blob.pixelCount < minClusterPixels) return@filter false
+            val isHorizontalVehicle = (blob.width > blob.height * 1.35f) && (blob.width >= 12)
+            if (isHorizontalVehicle) return@filter false
+            verifyDarkHousingContrast(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, blob.avgV)
         }
 
-        if (hasRed) {
-            val redAvgV = if (redCount > 0) redSumV / redCount else 0.85f
-            val hasRedHousing = verifyDarkHousingContrast(
-                buffer = buffer,
-                width = width,
-                height = height,
-                minX = redMinX,
-                maxX = redMaxX,
-                minY = redMinY,
-                maxY = redMaxY,
-                lampBrightness = redAvgV
-            )
-            if (!hasRedHousing) {
-                hasRed = false
-            }
+        // 녹색 유효 블롭 필터링 (가로수/간판 배제 및 다크 하우징 검증)
+        val validGreenBlobs = greenBlobs.filter { blob ->
+            if (blob.pixelCount < minClusterPixels) return@filter false
+            val isHorizontalVehicle = (blob.width > blob.height * 1.35f) && (blob.width >= 12)
+            if (isHorizontalVehicle) return@filter false
+            verifyDarkHousingContrast(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, blob.avgV)
         }
 
-        if (!hasRed && !hasGreen) {
+        // 타깃 중심(또는 화면 중앙)에 가장 가까운 유효 블롭을 대표 신호로 선택
+        val targetCenterX = if (targetRoi != null) (startX + endX) / 2f else width / 2f
+        val primaryRed = validRedBlobs.minByOrNull { abs(it.centerX - targetCenterX) }
+        val primaryGreen = validGreenBlobs.minByOrNull { abs(it.centerX - targetCenterX) }
+
+        if (primaryRed == null && primaryGreen == null) {
             val defaultBox = targetRoi ?: NormalizedBox(left = 0.45f, top = 0.20f, right = 0.55f, bottom = 0.40f)
             val unkObs = SignalObservation(
                 ephemeralTrackId = "track-sig-scanning",
@@ -279,29 +242,23 @@ class CameraVisionSignalEstimator(
 
         // 적색과 녹색 판정
         val (detectedState, box, score) = when {
-            hasRed && !hasGreen -> {
-                val b = targetRoi ?: calculateBox(redMinX, redMaxX, redMinY, redMaxY, width, height)
-                Triple(ObservedSignalState.RED, b, (0.93f + (redCount / 150f) * 0.05f).coerceIn(0.93f, 0.98f))
+            primaryRed != null && primaryGreen == null -> {
+                val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
+                Triple(ObservedSignalState.RED, b, (0.93f + (primaryRed.pixelCount / 150f) * 0.05f).coerceIn(0.93f, 0.98f))
             }
-            hasGreen && !hasRed -> {
-                val b = targetRoi ?: calculateBox(greenMinX, greenMaxX, greenMinY, greenMaxY, width, height)
-                Triple(ObservedSignalState.GREEN, b, (0.94f + (greenCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
+            primaryGreen != null && primaryRed == null -> {
+                val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
+                Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
             }
-            hasRed && hasGreen -> {
+            primaryRed != null && primaryGreen != null -> {
                 // 상하 공간 관계 검증: 한국 보행신호등은 상단이 적색(Y 작음), 하단이 녹색(Y 큼)
-                val redAvgY = if (redCount > 0) redSumY / redCount else 0L
-                val greenAvgY = if (greenCount > 0) greenSumY / greenCount else 0L
-
-                if (redCount >= greenCount * 1.25) {
-                    val b = targetRoi ?: calculateBox(redMinX, redMaxX, redMinY, redMaxY, width, height)
-                    Triple(ObservedSignalState.RED, b, 0.95f)
-                } else if (greenCount >= redCount * 1.25 && greenAvgY > redAvgY) {
+                if (primaryGreen.pixelCount >= primaryRed.pixelCount * 1.25 && primaryGreen.centerY > primaryRed.centerY) {
                     // 녹색이 하단에 위치하고 픽셀 우위일 때만 녹색 인정 (Zero False-Green 안전 원칙)
-                    val b = targetRoi ?: calculateBox(greenMinX, greenMaxX, greenMinY, greenMaxY, width, height)
+                    val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
                     Triple(ObservedSignalState.GREEN, b, 0.95f)
                 } else {
                     // 상충되거나 공간 불일치 시 적색 우선(Red Precedence)
-                    val b = targetRoi ?: calculateBox(redMinX, redMaxX, redMinY, redMaxY, width, height)
+                    val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
                     Triple(ObservedSignalState.RED, b, 0.93f)
                 }
             }
@@ -337,8 +294,11 @@ class CameraVisionSignalEstimator(
         width: Int,
         height: Int
     ): NormalizedBox {
-        val marginX = ((maxX - minX) * 0.3f).coerceAtLeast(10f).toInt()
-        val marginY = ((maxY - minY) * 0.3f).coerceAtLeast(10f).toInt()
+        val blobW = maxX - minX + 1
+        val blobH = maxY - minY + 1
+
+        val marginX = (blobW * 0.4f).coerceIn(4f, 16f).toInt()
+        val marginY = (blobH * 0.6f).coerceIn(6f, 24f).toInt()
 
         val left = ((minX - marginX).coerceAtLeast(0).toFloat() / width).coerceIn(0f, 1f)
         val right = ((maxX + marginX).coerceAtMost(width).toFloat() / width).coerceIn(0f, 1f)
@@ -346,6 +306,95 @@ class CameraVisionSignalEstimator(
         val bottom = ((maxY + marginY).coerceAtMost(height).toFloat() / height).coerceIn(0f, 1f)
 
         return NormalizedBox(left = left, top = top, right = right, bottom = bottom)
+    }
+
+    data class ColorBlob(
+        val minX: Int,
+        val maxX: Int,
+        val minY: Int,
+        val maxY: Int,
+        val pixelCount: Int,
+        val sumX: Long,
+        val sumY: Long,
+        val sumV: Float
+    ) {
+        val width: Int get() = maxX - minX + 1
+        val height: Int get() = maxY - minY + 1
+        val avgV: Float get() = if (pixelCount > 0) sumV / pixelCount else 0.85f
+        val centerX: Float get() = if (pixelCount > 0) sumX.toFloat() / pixelCount else (minX + maxX) / 2f
+        val centerY: Float get() = if (pixelCount > 0) sumY.toFloat() / pixelCount else (minY + maxY) / 2f
+    }
+
+    private fun findBlobs(
+        grid: ByteArray,
+        vGrid: FloatArray,
+        gridW: Int,
+        gridH: Int,
+        targetType: Byte,
+        startX: Int,
+        startY: Int,
+        step: Int
+    ): List<ColorBlob> {
+        val blobs = mutableListOf<ColorBlob>()
+        val visited = BooleanArray(gridW * gridH)
+        val queue = IntArray(gridW * gridH)
+        val dx = intArrayOf(-1, 0, 1, -1, 1, -1, 0, 1)
+        val dy = intArrayOf(-1, -1, -1, 0, 0, 1, 1, 1)
+
+        for (gy in 0 until gridH) {
+            val rowOff = gy * gridW
+            for (gx in 0 until gridW) {
+                val idx = rowOff + gx
+                if (grid[idx] != targetType || visited[idx]) continue
+
+                var head = 0
+                var tail = 0
+                queue[tail++] = idx
+                visited[idx] = true
+
+                var minX = startX + gx * step
+                var maxX = minX
+                var minY = startY + gy * step
+                var maxY = minY
+                var count = 0
+                var sumX = 0L
+                var sumY = 0L
+                var sumV = 0.0f
+
+                while (head < tail) {
+                    val curr = queue[head++]
+                    val cy = curr / gridW
+                    val cx = curr % gridW
+                    val px = startX + cx * step
+                    val py = startY + cy * step
+                    val v = vGrid[curr]
+
+                    count++
+                    sumX += px
+                    sumY += py
+                    sumV += v
+                    if (px < minX) minX = px
+                    if (px > maxX) maxX = px
+                    if (py < minY) minY = py
+                    if (py > maxY) maxY = py
+
+                    for (d in 0 until 8) {
+                        val nx = cx + dx[d]
+                        val ny = cy + dy[d]
+                        if (nx in 0 until gridW && ny in 0 until gridH) {
+                            val nIdx = ny * gridW + nx
+                            if (grid[nIdx] == targetType && !visited[nIdx]) {
+                                visited[nIdx] = true
+                                queue[tail++] = nIdx
+                            }
+                        }
+                    }
+                }
+
+                blobs.add(ColorBlob(minX, maxX, minY, maxY, count, sumX, sumY, sumV))
+            }
+        }
+        return blobs
     }
 
     /**

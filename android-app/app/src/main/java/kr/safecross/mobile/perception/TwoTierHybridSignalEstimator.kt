@@ -14,7 +14,8 @@ import kr.safecross.mobile.camera.FrameRef
 class TwoTierHybridSignalEstimator(
     val primaryDetector: PedestrianSignalEstimator,
     val colorAnalyzer: CameraVisionSignalEstimator = CameraVisionSignalEstimator(),
-    val verifier: LocalVlmSignalVerifier = LocalVlmSignalVerifier()
+    val verifier: LocalVlmSignalVerifier = LocalVlmSignalVerifier(),
+    val fallbackToViewfinder: Boolean = false
 ) : PedestrianSignalEstimator {
 
     override suspend fun estimate(frame: FrameRef): List<SignalObservation> {
@@ -30,9 +31,30 @@ class TwoTierHybridSignalEstimator(
             signal.box.width >= 0.02f && signal.box.height >= 0.03f
         }
 
-        // [게이트 1: 신호등 객체 미검출 시 즉시 UNKNOWN 안전 반환]
-        // 딥러닝이 신호등을 발견하지 못했다면 배경에 어떤 색상이 있든 절대 GREEN 판정을 내리지 않음
+        // [게이트 1: 신호등 객체 미검출 시]
         if (targetSignal == null) {
+            // 뷰파인더 폴백 활성화 시: 뷰파인더 가이드 박스(0.20..0.80, 0.10..0.60) 내부를 정밀 분석
+            if (fallbackToViewfinder) {
+                val viewfinderBox = NormalizedBox(left = 0.20f, top = 0.10f, right = 0.80f, bottom = 0.60f)
+                val roiObservations = colorAnalyzer.estimateWithinRoi(frame, viewfinderBox)
+                val candidate = roiObservations.firstOrNull()
+                if (candidate != null && candidate.state != ObservedSignalState.UNKNOWN) {
+                    val verifiedResult = verifier.verify(
+                        candidate,
+                        frame.rgbaBuffer,
+                        frame.width,
+                        frame.height
+                    )
+                    return listOf(
+                        candidate.copy(
+                            state = verifiedResult.verifiedState,
+                            score = verifiedResult.confidenceScore,
+                            modelVersion = "two-tier-hybrid-viewfinder-v2.1"
+                        )
+                    )
+                }
+            }
+
             val unkObservation = SignalObservation(
                 ephemeralTrackId = "track-hybrid-scanning",
                 state = ObservedSignalState.UNKNOWN,
@@ -70,39 +92,52 @@ class TwoTierHybridSignalEstimator(
 
     companion object {
         fun createDefault(context: android.content.Context): TwoTierHybridSignalEstimator {
-            val detector: PedestrianSignalEstimator = try {
+            val modelBytes = try {
                 val assetManager = context.assets
-                val modelBytes = assetManager.open("models/ped_signal_v1.tflite").use { it.readBytes() }
-                val sigSha256 = kr.safecross.mobile.ml.contract.ModelContractValidator.computeSha256(modelBytes)
-                val sigLabels = listOf("PEDESTRIAN_SIGNAL_RED", "PEDESTRIAN_SIGNAL_GREEN", "UNKNOWN")
-                val manifest = kr.safecross.mobile.ml.contract.ModelManifest(
-                    modelName = "ped_signal",
-                    modelVersion = "1.0.0",
-                    sha256 = sigSha256,
-                    minAppVersion = "0.1.0",
-                    disabled = false,
-                    inputTensor = kr.safecross.mobile.ml.contract.TensorSpec("input_image", listOf(1, 320, 320, 3), "FLOAT32"),
-                    outputTensors = listOf(
-                        kr.safecross.mobile.ml.contract.TensorSpec("detection_boxes", listOf(1, 10, 4), "FLOAT32"),
-                        kr.safecross.mobile.ml.contract.TensorSpec("detection_classes", listOf(1, 10), "FLOAT32"),
-                        kr.safecross.mobile.ml.contract.TensorSpec("detection_scores", listOf(1, 10), "FLOAT32"),
-                        kr.safecross.mobile.ml.contract.TensorSpec("num_detections", listOf(1), "FLOAT32")
-                    ),
-                    labelsOrder = sigLabels
-                )
-
-                kr.safecross.mobile.ml.LiteRtPedestrianSignalEstimator(
-                    modelBytes = modelBytes,
-                    manifest = manifest,
-                    labels = sigLabels
-                )
+                assetManager.open("models/ped_signal_v1.tflite").use { it.readBytes() }
             } catch (_: Exception) {
+                null
+            }
+
+            // 모델 바이트가 1KB 미만인 경우(80바이트 테스트 스텁) 실기기에서는 뷰파인더 가이드 검출기를 기본 사용
+            val isStubModel = modelBytes == null || modelBytes.size < 1024
+
+            val detector: PedestrianSignalEstimator = if (isStubModel) {
                 DefaultViewfinderDetector()
+            } else {
+                try {
+                    val sigSha256 = kr.safecross.mobile.ml.contract.ModelContractValidator.computeSha256(modelBytes!!)
+                    val sigLabels = listOf("PEDESTRIAN_SIGNAL_RED", "PEDESTRIAN_SIGNAL_GREEN", "UNKNOWN")
+                    val manifest = kr.safecross.mobile.ml.contract.ModelManifest(
+                        modelName = "ped_signal",
+                        modelVersion = "1.0.0",
+                        sha256 = sigSha256,
+                        minAppVersion = "0.1.0",
+                        disabled = false,
+                        inputTensor = kr.safecross.mobile.ml.contract.TensorSpec("input_image", listOf(1, 320, 320, 3), "FLOAT32"),
+                        outputTensors = listOf(
+                            kr.safecross.mobile.ml.contract.TensorSpec("detection_boxes", listOf(1, 10, 4), "FLOAT32"),
+                            kr.safecross.mobile.ml.contract.TensorSpec("detection_classes", listOf(1, 10), "FLOAT32"),
+                            kr.safecross.mobile.ml.contract.TensorSpec("detection_scores", listOf(1, 10), "FLOAT32"),
+                            kr.safecross.mobile.ml.contract.TensorSpec("num_detections", listOf(1), "FLOAT32")
+                        ),
+                        labelsOrder = sigLabels
+                    )
+
+                    kr.safecross.mobile.ml.LiteRtPedestrianSignalEstimator(
+                        modelBytes = modelBytes,
+                        manifest = manifest,
+                        labels = sigLabels
+                    )
+                } catch (_: Exception) {
+                    DefaultViewfinderDetector()
+                }
             }
 
             return TwoTierHybridSignalEstimator(
                 primaryDetector = detector,
-                colorAnalyzer = CameraVisionSignalEstimator(context)
+                colorAnalyzer = CameraVisionSignalEstimator(context),
+                fallbackToViewfinder = true
             )
         }
     }

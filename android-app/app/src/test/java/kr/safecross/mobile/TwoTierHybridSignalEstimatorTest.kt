@@ -146,4 +146,23 @@ class TwoTierHybridSignalEstimatorTest {
         val results = hybridEstimator.estimate(FrameRef.createForTesting())
         assertEquals(ObservedSignalState.RED, results[0].state)
     }
+
+    @Test
+    fun testViewfinderFallbackDetectsSignalWhenPrimaryDetectorMisses() = runBlocking {
+        // Tier 1 모델이 원거리 등으로 검출에 실패한 경우 (emptyList)
+        val fakeDetector = FakeObjectDetector(detectedBoxes = emptyList())
+        // Tier 2 비전 엔진: 뷰파인더 가이드 박스 내에서 적색 신호가 감지됨
+        val colorAnalyzer = CameraVisionSignalEstimator(testFallbackState = ObservedSignalState.RED)
+
+        val hybridEstimator = TwoTierHybridSignalEstimator(
+            primaryDetector = fakeDetector,
+            colorAnalyzer = colorAnalyzer,
+            fallbackToViewfinder = true
+        )
+
+        val results = hybridEstimator.estimate(FrameRef.createForTesting())
+        assertEquals(1, results.size)
+        // 뷰파인더 폴백이 활성화되어 적색 신호가 정상 인식되어야 함
+        assertEquals(ObservedSignalState.RED, results[0].state)
+    }
 }
