@@ -218,12 +218,20 @@ fun NavigationScreen(
                 }
             }
 
-            // 3-2. 맞게 가고 있는지 실시간으로 확인하는 정밀 세부 지도 카드
+            // 3-2. 맞게 가고 있는지 실시간으로 확인하는 정밀 세부 지도 카드 (진행방향 위로 연동)
+            val currentHeading = if (uiState.currentHeadingDegrees != 0f) {
+                uiState.currentHeadingDegrees
+            } else {
+                viewModel.calculateTargetBearing()?.toFloat() ?: 0f
+            }
+
             DetailedNavigationMapCard(
                 route = route,
                 currentLocation = uiState.currentLocation,
                 currentManeuverIndex = uiState.currentManeuverIndex,
-                isOffRoute = uiState.isOffRoute
+                isOffRoute = uiState.isOffRoute,
+                headingDegrees = currentHeading,
+                isHeadingUp = true
             )
 
             // 4. 보행 단계 진행 번호 및 안전 지침 안내
@@ -437,6 +445,8 @@ fun DetailedNavigationMapCard(
     currentLocation: kr.safecross.mobile.domain.model.LocationPoint?,
     currentManeuverIndex: Int,
     isOffRoute: Boolean,
+    headingDegrees: Float = 0f,
+    isHeadingUp: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val originName = route.maneuvers.firstOrNull()?.instruction ?: "출발지"
@@ -489,7 +499,7 @@ fun DetailedNavigationMapCard(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // 고정밀 국토교통부 VWorld 세부 지도 뷰어
+        // 고정밀 국토교통부 VWorld 세부 지도 뷰어 (진행방향 위로 회전 연동)
         RealRouteMapView(
             route = route,
             originName = originName,
@@ -497,6 +507,8 @@ fun DetailedNavigationMapCard(
             currentLocation = currentLocation,
             currentManeuverIndex = currentManeuverIndex,
             isOffRoute = isOffRoute,
+            headingDegrees = headingDegrees,
+            isHeadingUp = isHeadingUp,
             showLiveTrackingControls = true,
             modifier = Modifier
                 .fillMaxWidth()
@@ -511,7 +523,7 @@ fun DetailedNavigationMapCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "📍 파란 원: 현재 내 위치 | 🟢/🔴: 출발/도착 | 🟠: 횡단보도",
+                text = "🧭 진행방향 위로 회전 | 📍 내 위치 | 🟢/🔴 출발/도착",
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontSize = 11.sp,
                     color = Color(0xFFB0BEC5)

@@ -45,6 +45,8 @@ fun RealRouteMapView(
     currentLocation: LocationPoint? = null,
     currentManeuverIndex: Int = 0,
     isOffRoute: Boolean = false,
+    headingDegrees: Float = 0f,
+    isHeadingUp: Boolean = false,
     showLiveTrackingControls: Boolean = true,
     tmapAppKey: String = BuildConfig.TMAP_APP_KEY,
     modifier: Modifier = Modifier
@@ -56,6 +58,8 @@ fun RealRouteMapView(
             destinationName = destinationName,
             initialLocation = currentLocation,
             initialOffRoute = isOffRoute,
+            initialHeading = headingDegrees,
+            initialHeadingUp = isHeadingUp,
             showControls = showLiveTrackingControls
         )
     }
@@ -93,10 +97,15 @@ fun RealRouteMapView(
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
-                            // 페이지 로드 완료 후 현재 위치 즉시 반영
-                            currentLocation?.let { loc ->
+                            // 페이지 로드 완료 후 현재 위치 및 진행방향 각도 즉시 반영
+                            if (currentLocation != null) {
                                 view?.evaluateJavascript(
-                                    "if (typeof updateUserLocation === 'function') { updateUserLocation(${loc.lat}, ${loc.lon}, $isOffRoute, false); }",
+                                    "if (typeof updateUserLocation === 'function') { updateUserLocation(${currentLocation.lat}, ${currentLocation.lon}, $isOffRoute, false, $headingDegrees, $isHeadingUp); }",
+                                    null
+                                )
+                            } else {
+                                view?.evaluateJavascript(
+                                    "if (typeof setHeading === 'function') { setHeading($headingDegrees, $isHeadingUp); }",
                                     null
                                 )
                             }
@@ -137,9 +146,12 @@ fun RealRouteMapView(
                         null
                     )
                 } else {
-                    // HTML 재로드 없이 자바스크립트로 내 위치 마커만 실시간 부드럽게 갱신
+                    // HTML 재로드 없이 자바스크립트로 내 위치 마커 및 맵 회전 실시간 부드럽게 갱신
                     if (currentLocation != null) {
-                        val js = "if (typeof updateUserLocation === 'function') { updateUserLocation(${currentLocation.lat}, ${currentLocation.lon}, $isOffRoute, false); }"
+                        val js = "if (typeof updateUserLocation === 'function') { updateUserLocation(${currentLocation.lat}, ${currentLocation.lon}, $isOffRoute, false, $headingDegrees, $isHeadingUp); }"
+                        webView.evaluateJavascript(js, null)
+                    } else {
+                        val js = "if (typeof setHeading === 'function') { setHeading($headingDegrees, $isHeadingUp); }"
                         webView.evaluateJavascript(js, null)
                     }
                 }
@@ -150,6 +162,7 @@ fun RealRouteMapView(
 
 /**
  * 국토교통부 VWorld 정밀 국가 전자지도 타일 및 Leaflet 기반 독립형 HTML 문서 생성.
+ * 보행자 진행방향 위로(Heading-Up) 부드러운 지도 회전 및 북쪽 고정(North-Up) 토글 지원.
  */
 private fun buildRouteMapHtml(
     route: PedestrianRoute,
@@ -157,6 +170,8 @@ private fun buildRouteMapHtml(
     destinationName: String,
     initialLocation: LocationPoint?,
     initialOffRoute: Boolean,
+    initialHeading: Float = 0f,
+    initialHeadingUp: Boolean = false,
     showControls: Boolean
 ): String {
     val coords = if (route.fullGeometry.isNotEmpty()) {
@@ -204,7 +219,7 @@ private fun buildRouteMapHtml(
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         * { box-sizing: border-box; }
-        html, body, #map {
+        html, body {
             width: 100%;
             height: 100%;
             margin: 0;
@@ -214,11 +229,28 @@ private fun buildRouteMapHtml(
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", Helvetica, Arial, sans-serif;
         }
 
+        /* 360도 회전 시 맵 모서리 빈 공간이 보이지 않도록 170% 확장 뷰포트 레이아웃 */
+        #map-viewport {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        #map {
+            position: absolute;
+            width: 170%;
+            height: 170%;
+            left: -35%;
+            top: -35%;
+            transform-origin: 50% 50%;
+            transition: transform 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
         /* 컨트롤 버튼 플로팅 패널 */
         .map-control-panel {
             position: absolute;
             right: 12px;
-            bottom: 16px;
+            bottom: 14px;
             z-index: 1000;
             display: flex;
             flex-direction: column;
@@ -229,20 +261,25 @@ private fun buildRouteMapHtml(
             color: #FFFFFF;
             border: 1.5px solid #3B4660;
             border-radius: 8px;
-            padding: 8px 12px;
-            font-size: 13px;
+            padding: 7px 11px;
+            font-size: 12px;
             font-weight: bold;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 5px;
             user-select: none;
             touch-action: manipulation;
         }
         .map-btn:active {
             background: #2D3954;
             transform: scale(0.96);
+        }
+        .map-btn.active-mode {
+            background: #0D47A1;
+            border-color: #448AFF;
+            color: #FFFFFF;
         }
 
         /* 핀 마커 공통 스타일 */
@@ -280,36 +317,51 @@ private fun buildRouteMapHtml(
             font-size: 14px;
         }
 
-        /* 실시간 내 위치 펄싱 마커 */
+        /* 실시간 내 위치 펄싱 및 진행방향 쉐브론 마커 */
         .user-loc-wrapper {
             position: relative;
-            width: 24px;
-            height: 24px;
-        }
-        .user-loc-dot {
-            width: 22px;
-            height: 22px;
-            border-radius: 50%;
-            background: #2979FF;
-            border: 3px solid #FFFFFF;
-            box-shadow: 0 0 12px rgba(41, 121, 255, 0.9);
-            position: absolute;
-            top: 1px;
-            left: 1px;
-            z-index: 2;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         .user-loc-radar {
-            width: 48px;
-            height: 48px;
+            width: 46px;
+            height: 46px;
             border-radius: 50%;
-            background: rgba(41, 121, 255, 0.28);
+            background: rgba(41, 121, 255, 0.3);
             border: 2px solid #2979FF;
             position: absolute;
-            top: -12px;
-            left: -12px;
+            top: -5px;
+            left: -5px;
             z-index: 1;
             animation: radar-wave 2s infinite ease-out;
             pointer-events: none;
+        }
+        .user-loc-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #2979FF;
+            border: 2px solid #FFFFFF;
+            position: absolute;
+            top: 11px;
+            left: 11px;
+            z-index: 2;
+        }
+        .user-loc-arrow {
+            position: absolute;
+            width: 26px;
+            height: 26px;
+            top: 5px;
+            left: 5px;
+            z-index: 3;
+            pointer-events: none;
+            transition: transform 0.25s ease-out;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         .user-loc-offroute {
             background: #FF1744 !important;
@@ -322,7 +374,7 @@ private fun buildRouteMapHtml(
 
         @keyframes radar-wave {
             0% { transform: scale(0.4); opacity: 1; }
-            100% { transform: scale(1.9); opacity: 0; }
+            100% { transform: scale(1.8); opacity: 0; }
         }
         @keyframes pulse-ring {
             0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.7), 0 4px 10px rgba(0,0,0,0.6); }
@@ -340,6 +392,7 @@ private fun buildRouteMapHtml(
             border-radius: 6px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.6);
             padding: 3px 7px;
+            white-space: nowrap;
         }
         .leaflet-popup-content-wrapper {
             background: #1E2638 !important;
@@ -357,9 +410,12 @@ private fun buildRouteMapHtml(
     </style>
 </head>
 <body>
-    <div id="map"></div>
+    <div id="map-viewport">
+        <div id="map"></div>
+    </div>
 
     <div class="map-control-panel">
+        <button type="button" id="btn-heading" class="map-btn" onclick="toggleHeadingMode()">🧭 진행방향 위</button>
         <button type="button" class="map-btn" onclick="focusUserLocation()">📍 내 위치</button>
         <button type="button" class="map-btn" onclick="fitRouteBounds()">🔍 전체 경로</button>
     </div>
@@ -373,6 +429,8 @@ private fun buildRouteMapHtml(
         var initLat = $initLat;
         var initLon = $initLon;
         var isOffRoute = $initialOffRoute;
+        var currentHeading = $initialHeading;
+        var isHeadingUp = $initialHeadingUp;
 
         var map = null;
         var routePolyline = null;
@@ -477,26 +535,95 @@ private fun buildRouteMapHtml(
                     });
                 }
 
-                // 전체 경로 자동 맞춤
-                map.fitBounds(routeBounds, {
-                    padding: [36, 36],
-                    maxZoom: 18
-                });
+                // 시작 시 위치가 없으면 경로 전체에 맞춤
+                if (!hasInitLoc) {
+                    map.fitBounds(routeBounds, {
+                        padding: [36, 36],
+                        maxZoom: 18
+                    });
+                }
             }
 
-            // 초기 내 위치 표시
+            // 초기 내 위치 표시 및 진행방향 각도 회전
             if (hasInitLoc) {
-                updateUserLocation(initLat, initLon, isOffRoute, false);
+                updateUserLocation(initLat, initLon, isOffRoute, isHeadingUp, currentHeading, isHeadingUp);
+            } else {
+                applyMapRotation(currentHeading, isHeadingUp);
+            }
+            updateHeadingButtonUi();
+        }
+
+        // 지도 회전 적용 함수
+        function applyMapRotation(headingDeg, headingUp) {
+            var mapEl = document.getElementById('map');
+            if (!mapEl) return;
+            if (headingUp) {
+                // 진행방향(Heading)이 화면 상단(위쪽)을 향하도록 지도 자체를 -headingDeg 회전
+                mapEl.style.transform = "rotate(" + (-headingDeg) + "deg)";
+            } else {
+                // 북쪽 고정(North-Up)
+                mapEl.style.transform = "rotate(0deg)";
+            }
+        }
+
+        // 헤딩 모드 토글 (진행방향 위 <-> 북쪽 위)
+        function toggleHeadingMode() {
+            isHeadingUp = !isHeadingUp;
+            updateHeadingButtonUi();
+            applyMapRotation(currentHeading, isHeadingUp);
+            if (userMarker) {
+                map.panTo(userMarker.getLatLng(), { animate: true, duration: 0.3 });
+            }
+        }
+
+        function updateHeadingButtonUi() {
+            var btn = document.getElementById('btn-heading');
+            if (btn) {
+                if (isHeadingUp) {
+                    btn.className = "map-btn active-mode";
+                    btn.innerHTML = "🧭 진행방향 위";
+                } else {
+                    btn.className = "map-btn";
+                    btn.innerHTML = "🧭 북쪽 고정";
+                }
+            }
+        }
+
+        function setHeading(headingDeg, headingUp) {
+            currentHeading = headingDeg;
+            if (typeof headingUp === 'boolean') {
+                isHeadingUp = headingUp;
+                updateHeadingButtonUi();
+            }
+            applyMapRotation(currentHeading, isHeadingUp);
+            updateMarkerArrow(currentHeading);
+        }
+
+        function updateMarkerArrow(headingDeg) {
+            if (!userMarker) return;
+            var el = userMarker.getElement();
+            if (!el) return;
+            var arrow = el.querySelector('.user-loc-arrow');
+            if (arrow) {
+                arrow.style.transform = "rotate(" + headingDeg + "deg)";
             }
         }
 
         // 실시간 내 위치 마커 생성 및 위치 갱신 함수 (네이티브 Android에서 evaluateJavascript로 호출)
-        function updateUserLocation(lat, lon, offRoute, autoCenter) {
+        function updateUserLocation(lat, lon, offRoute, autoCenter, heading, headingUp) {
             if (!map || typeof L === 'undefined') return;
             var latLng = [lat, lon];
             var offRouteClass = offRoute ? " user-loc-offroute" : "";
             var offRouteRadar = offRoute ? " radar-offroute" : "";
-            var tooltipText = offRoute ? "⚠️ 경로 이탈! 경로로 이동하세요" : "📍 현재 내 위치 (정상 진행 중)";
+            var tooltipText = offRoute ? "⚠️ 경로 이탈! 경로로 이동하세요" : "📍 현재 내 위치";
+
+            if (typeof heading === 'number') {
+                currentHeading = heading;
+            }
+            if (typeof headingUp === 'boolean') {
+                isHeadingUp = headingUp;
+                updateHeadingButtonUi();
+            }
 
             if (!userMarker) {
                 var userIcon = L.divIcon({
@@ -504,16 +631,21 @@ private fun buildRouteMapHtml(
                     html: '<div class="user-loc-wrapper">' +
                           '  <div class="user-loc-radar' + offRouteRadar + '"></div>' +
                           '  <div class="user-loc-dot' + offRouteClass + '"></div>' +
+                          '  <div class="user-loc-arrow">' +
+                          '    <svg viewBox="0 0 24 24" width="26" height="26">' +
+                          '      <polygon points="12,2 22,21 12,16 2,21" fill="#00E5FF" stroke="#FFFFFF" stroke-width="2"/>' +
+                          '    </svg>' +
+                          '  </div>' +
                           '</div>',
-                    iconSize: [24, 24],
-                    iconAnchor: [12, 12]
+                    iconSize: [36, 36],
+                    iconAnchor: [18, 18]
                 });
 
                 userMarker = L.marker(latLng, { icon: userIcon, zIndexOffset: 2000 }).addTo(map);
                 userMarker.bindTooltip(tooltipText, {
-                    permanent: true,
+                    permanent: false,
                     direction: 'top',
-                    offset: [0, -14],
+                    offset: [0, -18],
                     className: 'user-tooltip'
                 });
             } else {
@@ -529,8 +661,11 @@ private fun buildRouteMapHtml(
                 }
             }
 
-            if (autoCenter) {
-                map.panTo(latLng);
+            updateMarkerArrow(currentHeading);
+            applyMapRotation(currentHeading, isHeadingUp);
+
+            if (isHeadingUp || autoCenter) {
+                map.panTo(latLng, { animate: true, duration: 0.3 });
             }
         }
 
@@ -538,6 +673,7 @@ private fun buildRouteMapHtml(
         function focusUserLocation() {
             if (userMarker) {
                 map.setView(userMarker.getLatLng(), 18, { animate: true });
+                applyMapRotation(currentHeading, isHeadingUp);
             } else if (coords && coords.length > 0) {
                 map.setView(coords[0], 18, { animate: true });
             }
@@ -546,6 +682,10 @@ private fun buildRouteMapHtml(
         // 전체 경로 한눈에 보기 버튼 동작
         function fitRouteBounds() {
             if (map && routeBounds) {
+                // 전체 경로를 한눈에 볼 때는 북쪽 고정(0도)으로 전환하여 경로 전체를 똑바로 표출
+                isHeadingUp = false;
+                updateHeadingButtonUi();
+                applyMapRotation(0, false);
                 map.fitBounds(routeBounds, {
                     padding: [36, 36],
                     maxZoom: 18,

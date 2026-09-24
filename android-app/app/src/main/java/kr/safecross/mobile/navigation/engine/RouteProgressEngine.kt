@@ -25,9 +25,10 @@ data class RouteProgressState(
  */
 class RouteProgressEngine(
     private val route: PedestrianRoute,
-    private val offRouteThresholdMeters: Double = 30.0,
+    private val offRouteThresholdMeters: Double = 35.0,
     private val maneuverAdvanceDistanceMeters: Double = 15.0,
-    private val destinationArrivalDistanceMeters: Double = 10.0
+    private val destinationArrivalDistanceMeters: Double = 10.0,
+    private val minConsecutiveOffRoute: Int = 2
 ) {
 
     private var currentManeuverIndex = 0
@@ -112,14 +113,15 @@ class RouteProgressEngine(
             }
         }
 
-        // 이탈 여부 판단 (연속 2회 이상 임계값 초과 시)
-        val isCurrentSampleOff = minCrossTrack > offRouteThresholdMeters
+        // 이탈 여부 판단: GPS 정확도가 25m 이내로 유효한 상태에서 연속 임계값 초과 시에만 인정 (도심 난반사 보호)
+        val isAccuracyReliable = sample.accuracyMeters <= 25.0f
+        val isCurrentSampleOff = isAccuracyReliable && (minCrossTrack > offRouteThresholdMeters)
         if (isCurrentSampleOff) {
             offRouteConsecutiveCount++
         } else {
             offRouteConsecutiveCount = 0
         }
-        val isOffRoute = offRouteConsecutiveCount >= 2
+        val isOffRoute = offRouteConsecutiveCount >= minConsecutiveOffRoute
 
         // Maneuver 전진 판단: 다음 목표 Maneuver 지점(nextManeuver)에 도달 시 스텝 전진
         val maneuvers = route.maneuvers

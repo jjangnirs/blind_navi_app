@@ -87,12 +87,13 @@ class NavigationViewModel(
         this.crossingFacilities = facilities
         this.devicePoseTracker = poseTracker
 
-        routeProgressEngine = RouteProgressEngine(route)
+        routeProgressEngine = RouteProgressEngine(route, offRouteThresholdMeters = 35.0, minConsecutiveOffRoute = 4)
         crossingApproachEngine = CrossingApproachEngine(facilities)
         guidanceArbiter.stopAll()
         lastApproachAnnouncedManeuverIndex = -1
         lastApproachStage = 0
         lastAlignmentTimeMs = 0L
+        hasCalibratedInitialStart = false
 
         _uiState.update {
             it.copy(
@@ -255,15 +256,21 @@ class NavigationViewModel(
                 }
                 recalculateRouteFromCurrentLocation(sample)
             } else {
-                // 초기 출발 위치와 실제 수신 GPS가 20m 이상 차이나는 경우 즉시 새 출발점 기준 경로로 변환
-                val currentRoute = _uiState.value.route
-                if (currentRoute != null && _uiState.value.distanceAlongRouteMeters == 0 && _uiState.value.currentManeuverIndex == 0) {
-                    val startPoint = currentRoute.fullGeometry.firstOrNull() ?: currentRoute.maneuvers.firstOrNull()?.location
-                    if (startPoint != null) {
-                        val distToStart = calculateDistanceMeters(startPoint, kr.safecross.mobile.domain.model.LocationPoint(sample.lat, sample.lon))
-                        if (distToStart > 20.0) {
-                            recalculateRouteFromCurrentLocation(sample)
+                // 초기 출발 위치와 실제 수신 GPS가 25m 이상 차이나는 경우 최초 1회에 한해 새 출발점 기준 경로로 변환 (보행 시작 후에는 반복 재탐색 차단)
+                if (!hasCalibratedInitialStart) {
+                    val currentRoute = _uiState.value.route
+                    if (currentRoute != null && _uiState.value.distanceAlongRouteMeters < 5 && _uiState.value.currentManeuverIndex == 0) {
+                        val startPoint = currentRoute.fullGeometry.firstOrNull() ?: currentRoute.maneuvers.firstOrNull()?.location
+                        if (startPoint != null) {
+                            val distToStart = calculateDistanceMeters(startPoint, kr.safecross.mobile.domain.model.LocationPoint(sample.lat, sample.lon))
+                            if (distToStart > 25.0) {
+                                hasCalibratedInitialStart = true
+                                recalculateRouteFromCurrentLocation(sample)
+                            }
                         }
+                    }
+                    if (progress.distanceAlongRouteMeters >= 10.0 || progress.currentManeuverIndex > 0) {
+                        hasCalibratedInitialStart = true
                     }
                 }
             }
@@ -631,6 +638,7 @@ class NavigationViewModel(
 
     private var isRerouting = false
     private var lastRerouteTimeMs = 0L
+    private var hasCalibratedInitialStart = false
 
     /**
      * 현재 GPS 위치를 새로운 출발점으로 하여 목적지까지 경로를 자동 재탐색/변환합니다.
@@ -639,7 +647,7 @@ class NavigationViewModel(
         val repo = routeRepository ?: return
         val currentRoute = _uiState.value.route ?: return
         val now = System.currentTimeMillis()
-        if (isRerouting || (now - lastRerouteTimeMs) < 7000L) return
+        if (isRerouting || (now - lastRerouteTimeMs) < 12000L) return
 
         val destPoint = currentRoute.fullGeometry.lastOrNull()
             ?: currentRoute.maneuvers.lastOrNull()?.location ?: return
@@ -658,7 +666,8 @@ class NavigationViewModel(
             )
             result.fold(
                 onSuccess = { newRoute ->
-                    routeProgressEngine = RouteProgressEngine(newRoute)
+                    routeProgressEngine = RouteProgressEngine(newRoute, offRouteThresholdMeters = 35.0, minConsecutiveOffRoute = 4)
+                    hasCalibratedInitialStart = true
                     _uiState.update {
                         it.copy(
                             route = newRoute,
