@@ -77,6 +77,11 @@ MVP에 포함한다.
     - 2.5도 불감대(Deadband) 필터: 미세 손떨림 및 발걸음 진자 운동에 의한 지도 파르르 떨림 방지
     - 원형 저주파 통과 필터(Circular EMA Low-Pass, $\alpha = 0.25$) 및 12.5Hz 적응형 스로틀링: 센서 잡음 완충 및 UI 렌더링 부하 80% 절감
     - 보행 속도($\ge 0.8\text{ m/s}$) 연동 GPS Course(65%) + Compass(35%) 상보 융합: 보행 중 팔 스윙에도 진행 도로 방향 중심 안정 유지
+28. 보행 녹색 신호 쿨다운 차단 해제 및 도로 하단/차량 신호등 분리 안정화 (`GuidanceArbiter`, `CrossingAssistViewModel`, `CameraVisionSignalEstimator`, ADR-023):
+    - 음성 중재기 카테고리 분리(`signal_decision_red` vs `signal_decision_green`): 적색 안내 발화 직후 녹색 신호 전환 시 3초 쿨다운에 의한 녹색 발화 차단 결함 해결
+    - 적색 발화 중 녹색 신호 즉시 선점(`PREEMPT_AND_PLAY`): 적색 대기 멘트 중이라도 녹색 신호 감지 시 즉시 녹색 음성 전환
+    - 물리적 등두(Head) 수직 거리 검증 및 도로 하단 차량 브레이크등 배제: 상단 녹색 신호등 아래쪽 정차 차량 브레이크등에 의한 적색 오반전(Red Flipping) 결함 방지
+    - 가로형 차량 신호등 인식 및 트래커 단일 인스턴스화: 교차로 가로형 차량 직진 녹색 수용 및 트랙 ID 분절 방지
 
 MVP에서 제외한다.
 

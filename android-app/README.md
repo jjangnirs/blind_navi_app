@@ -179,6 +179,18 @@ cd android-app
 - **진북(North 0.0°) Falsy 오판 버그 수정**:
   - `NavigationScreen`에서 `currentHeadingDegrees != 0f` 조건으로 인해 0.0° 진북일 때 가상 베어링으로 튀는 버그 제거
 
+### 24. 보행 녹색 신호 쿨다운 차단 해제 및 도로 하단/차량 신호등 분리 안정화 (`GuidanceArbiter`, `CrossingAssistViewModel`, `CameraVisionSignalEstimator`, `TwoTierHybridSignalEstimator`)
+- **GuidanceArbiter 카테고리 분리 및 녹색 신호 즉시 선점(Preemption)**:
+  - 기존 `signal_decision` 공용 카테고리로 인해 적색 신호 발화 3초 이내에 전환된 녹색 신호가 쿨다운에 의해 침묵 차단되던 결함을 `signal_decision_red`와 `signal_decision_green`으로 분리하여 완전 해결
+  - 적색 안내 멘트 발화 중이더라도 녹색 보행 신호 감지 시 적색 발화를 즉시 중단하고 선점 재생(`PREEMPT_AND_PLAY`)하도록 보장
+  - `hasSpokenCurrentGreenPhase` 래치 플래그를 도입하여 녹색 확정 음성 안내 100% 전달 보장
+- **물리적 등두(Head) 수직 거리 검증 및 도로 하단 차량 브레이크등 배제**:
+  - 신호등 등두 내 물리적 램프 수직 거리(`maxVerticalHeadDist = maxOf(H_g, H_r) * 3.5f + 25f`)를 초과하는 하단 차량 브레이크등/후미등을 동일 기둥 판정에서 배제(`isLowerRoadwayRed`)
+  - 녹색 블롭 아래쪽에 위치한 적색 아티팩트에 의한 공간 불일치 적색 강제 반전(False Red Flipping) 결함을 제거하여 선명한 녹색 신호 누적 무결성 확보
+- **가로형 차량 신호등 인식 및 트래커 단일화**:
+  - 교차로 가로형 차량 신호등(동일 수평선상 좌측 적색, 우측 녹색) 수용 및 직진 녹색 신호 정상 인식
+  - `TwoTierHybridSignalEstimator`와 `CameraVisionSignalEstimator` 간 `LocalVlmSignalVerifier` 단일 인스턴스 공유로 트랙 ID 파편화 및 롤링 버퍼 이중 리셋 원천 차단
+
 ## TalkBack 수동 시험 절차
 1. **TalkBack 활성화**: Android 기기 설정 -> 접근성 -> TalkBack 켜기 (또는 볼륨 업+다운 키 3초 길게 누르기).
 2. **목적지 검색 시험**:

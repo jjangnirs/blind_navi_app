@@ -152,4 +152,74 @@ class GuidanceArbiterTest {
         assertEquals(0, arbiter.getQueueSize())
         assertNull(arbiter.onSpeechCompleted())
     }
+
+    @Test
+    fun testGreenGuidancePreemptsCurrentlySpeakingRedGuidance() {
+        val arbiter = GuidanceArbiter(
+            safetyCooldownMs = 3_000L
+        )
+        val now = 100_000L
+
+        // 1. 적색 신호 발화 시작 (현재 발화 중)
+        val redMsg = GuidanceMessage(
+            id = "red_1",
+            text = "적색 신호입니다. 대기하세요.",
+            priority = GuidancePriority.SAFETY,
+            category = "signal_decision_red",
+            timestampMs = now
+        )
+        val redDecision = arbiter.enqueue(redMsg, now)
+        assertEquals(ArbiterAction.PLAY_IMMEDIATELY, redDecision.action)
+
+        // 2. 400ms 후 녹색 신호로 상태 전이 -> 적색 발화를 즉시 선점(Preempt)하고 발화되어야 함!
+        val greenMsg = GuidanceMessage(
+            id = "green_1",
+            text = "녹색으로 추정됩니다. 앱만으로 안전을 보장할 수 없습니다.",
+            priority = GuidancePriority.SAFETY,
+            category = "signal_decision_green",
+            timestampMs = now + 400L
+        )
+        val greenDecision = arbiter.enqueue(greenMsg, now + 400L)
+        assertEquals(
+            "적색 발화 중 녹색 신호 인입 시 즉시 PREEMPT_AND_PLAY되어야 함",
+            ArbiterAction.PREEMPT_AND_PLAY,
+            greenDecision.action
+        )
+    }
+
+    @Test
+    fun testGreenGuidanceNotSuppressedByRecentRedCooldown() {
+        val arbiter = GuidanceArbiter(
+            safetyCooldownMs = 3_000L
+        )
+        val now = 100_000L
+
+        // 1. 적색 발화 완료
+        val redMsg = GuidanceMessage(
+            id = "red_1",
+            text = "적색 신호입니다. 대기하세요.",
+            priority = GuidancePriority.SAFETY,
+            category = "signal_decision_red",
+            timestampMs = now
+        )
+        arbiter.enqueue(redMsg, now)
+        arbiter.onSpeechCompleted(now + 1_000L)
+
+        // 2. 적색 발화 완료 500ms 후 (이전 적색 인입 후 1.5초 후) 녹색 신호 인입
+        //    (전체 카테고리가 아닌 개별 상태 카테고리이므로 3초 쿨다운에 걸리지 않고 즉시 발화되어야 함)
+        val greenMsg = GuidanceMessage(
+            id = "green_1",
+            text = "녹색으로 추정됩니다. 앱만으로 안전을 보장할 수 없습니다.",
+            priority = GuidancePriority.SAFETY,
+            category = "signal_decision_green",
+            timestampMs = now + 1_500L
+        )
+        val greenDecision = arbiter.enqueue(greenMsg, now + 1_500L)
+        assertEquals(
+            "적색 쿨다운이 녹색 안내를 차단해서는 안 됨",
+            ArbiterAction.PLAY_IMMEDIATELY,
+            greenDecision.action
+        )
+    }
 }
+

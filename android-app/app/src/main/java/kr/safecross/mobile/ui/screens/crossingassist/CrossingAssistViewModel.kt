@@ -58,6 +58,7 @@ class CrossingAssistViewModel(
     private var reticleOutCount = 0
     private var lastGreenGuidanceTimeMs = 0L
     private var lastLockOnSpeechTimeMs = 0L
+    private var hasSpokenCurrentGreenPhase = false
 
     init {
         // 기기 기울기 모니터링 구독 (과도한 반복 발화 억제를 위한 쿨다운 적용)
@@ -231,24 +232,39 @@ class CrossingAssistViewModel(
                 )
 
                 // 5. 발화 안내 이벤트 전송
-                if (decision.guidanceText != null) {
-                    if (decision.state == CrossingAssistDecisionState.GREEN_ESTIMATE) {
+                if (decision.state == CrossingAssistDecisionState.GREEN_ESTIMATE) {
+                    if (!hasSpokenCurrentGreenPhase) {
+                        hasSpokenCurrentGreenPhase = true
                         lastGreenGuidanceTimeMs = System.currentTimeMillis()
+                        val textToSpeak = decision.guidanceText ?: "녹색으로 추정됩니다. 앱만으로 안전을 보장할 수 없습니다."
+                        emitGuidance(
+                            text = textToSpeak,
+                            priority = GuidancePriority.SAFETY,
+                            category = "signal_decision_green",
+                            hapticType = decision.hapticType ?: kr.safecross.mobile.guidance.HapticFeedbackType.GREEN_ESTIMATE
+                        )
                     }
-                    val priority = when (decision.state) {
-                        CrossingAssistDecisionState.RED_ESTIMATE -> GuidancePriority.SAFETY
-                        CrossingAssistDecisionState.GREEN_ESTIMATE -> GuidancePriority.SAFETY
-                        CrossingAssistDecisionState.UNKNOWN -> GuidancePriority.CROSSING
-                        else -> GuidancePriority.INFO
-                    }
-                    val category = "signal_decision"
+                } else {
+                    hasSpokenCurrentGreenPhase = false
+                    if (decision.guidanceText != null) {
+                        val priority = when (decision.state) {
+                            CrossingAssistDecisionState.RED_ESTIMATE -> GuidancePriority.SAFETY
+                            CrossingAssistDecisionState.UNKNOWN -> GuidancePriority.CROSSING
+                            else -> GuidancePriority.INFO
+                        }
+                        val category = when (decision.state) {
+                            CrossingAssistDecisionState.RED_ESTIMATE -> "signal_decision_red"
+                            CrossingAssistDecisionState.UNKNOWN -> "signal_decision_unknown"
+                            else -> "signal_decision_info"
+                        }
 
-                    emitGuidance(
-                        text = decision.guidanceText,
-                        priority = priority,
-                        category = category,
-                        hapticType = decision.hapticType
-                    )
+                        emitGuidance(
+                            text = decision.guidanceText,
+                            priority = priority,
+                            category = category,
+                            hapticType = decision.hapticType
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -315,6 +331,7 @@ class CrossingAssistViewModel(
         cameraPipeManager.unbind()
         decisionEngine.reset()
         guidanceArbiter.stopAll()
+        hasSpokenCurrentGreenPhase = false
         _uiState.value = _uiState.value.copy(
             isCameraBound = false,
             isTerminated = true,

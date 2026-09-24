@@ -419,6 +419,56 @@ class CameraVisionSignalEstimatorTest {
         assertEquals(ObservedSignalState.GREEN, lastObs.state)
         assertTrue(lastObs.score >= 0.90f)
     }
+
+    @Test
+    fun testLowerRoadwayRedDoesNotVetoPedestrianGreen() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 신호등 높이에 위치한 녹색 보행/차량 신호등 (y: 80..105, x: 150..170)
+        for (y in 80..105) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 2. 도로 하단에 위치한 차량 브레이크등/후미등 반사체 (y: 150..165, x: 152..168, 수직 50px 아래)
+        for (y in 150..165) {
+            for (x in 152..168) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 240.toByte())
+                buffer.put(offset + 1, 30.toByte())
+                buffer.put(offset + 2, 30.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 도로 하단 차량 브레이크등/후미등에 의해 상단 녹색 신호가 기각되지 않고 GREEN으로 판정되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
 }
+
 
 

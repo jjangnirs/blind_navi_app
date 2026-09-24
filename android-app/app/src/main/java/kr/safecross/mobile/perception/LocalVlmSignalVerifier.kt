@@ -116,10 +116,11 @@ class LocalVlmSignalVerifier(
             val isSmallBox = minOf(candidate.box.width, prev.box.width) < 0.12f ||
                     minOf(candidate.box.height, prev.box.height) < 0.15f
             val isInCentralViewfinder = cx2 in 0.15f..0.85f && cy2 in 0.10f..0.75f
+            val isSameStateCandidate = candidate.state == prev.state && candidate.state != ObservedSignalState.UNKNOWN
             val isContinuous = if (isSmallBox) {
-                iou >= 0.10f || centerDist <= 0.18f || (isInCentralViewfinder && centerDist <= 0.25f)
+                iou >= 0.10f || centerDist <= 0.18f || (isInCentralViewfinder && (centerDist <= 0.28f || (isSameStateCandidate && centerDist <= 0.35f)))
             } else {
-                iou >= 0.20f || centerDist <= 0.16f || (isInCentralViewfinder && centerDist <= 0.22f)
+                iou >= 0.20f || centerDist <= 0.16f || (isInCentralViewfinder && (centerDist <= 0.25f || (isSameStateCandidate && centerDist <= 0.32f)))
             }
 
             if (!isContinuous) {

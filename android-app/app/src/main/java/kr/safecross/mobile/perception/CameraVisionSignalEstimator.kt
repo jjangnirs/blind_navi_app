@@ -22,7 +22,7 @@ import kotlin.math.min
 class CameraVisionSignalEstimator(
     private val context: Context? = null,
     var testFallbackState: ObservedSignalState? = null,
-    private val verifier: LocalVlmSignalVerifier = LocalVlmSignalVerifier()
+    val verifier: LocalVlmSignalVerifier = LocalVlmSignalVerifier()
 ) : PedestrianSignalEstimator {
 
     override suspend fun estimate(frame: FrameRef): List<SignalObservation> {
@@ -277,24 +277,44 @@ class CameraVisionSignalEstimator(
                 Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
             }
             primaryRed != null && primaryGreen != null -> {
-                // 동일 기둥 판정: 두 블롭의 X 중심 거리가 폭 허용오차 이내인지 검사
+                // 동일 기둥 판정: 두 블롭의 X 중심 거리가 폭 허용오차 이내이고,
+                // 단일 신호기 등두(Head)의 수직 거리(램프 높이 3.5배 + 25px) 이내여야 함
                 val maxColDist = maxOf(primaryGreen.width, primaryRed.width) * 1.8f + 16f
-                val isSamePole = abs(primaryRed.centerX - primaryGreen.centerX) <= maxColDist
+                val isSameXColumn = abs(primaryRed.centerX - primaryGreen.centerX) <= maxColDist
+                val maxVerticalHeadDist = maxOf(primaryGreen.height, primaryRed.height) * 3.5f + 25f
+                val isPlausibleVerticalHead = abs(primaryRed.centerY - primaryGreen.centerY) <= maxVerticalHeadDist
+                val isSamePole = isSameXColumn && isPlausibleVerticalHead
 
                 val redNormY = primaryRed.centerY / height
                 val greenNormY = primaryGreen.centerY / height
 
-                // 상단 차량용 신호기(차도 위 가공 설치, 보통 Y < 0.22) vs 보행자 신호기(인도 기둥 눈높이, Y in 0.22..0.70)
-                val isRedOverheadVehicle = redNormY < 0.22f && greenNormY >= 0.22f
-                val isGreenOverheadVehicle = greenNormY < 0.22f && redNormY >= 0.22f
+                // 상단 차량용 신호기(차도 위 가공 설치) vs 보행자/차로 하단
+                val isRedOverheadVehicle = redNormY < 0.25f && greenNormY >= 0.25f
+                val isGreenOverheadVehicle = greenNormY < 0.25f && redNormY >= 0.25f
+
+                // 가로형 차량 신호등 (수평 배치: 좌측 적색, 우측 녹색, 거의 동일한 수평선상)
+                val isHorizontalPair = abs(primaryRed.centerY - primaryGreen.centerY) <= maxOf(primaryGreen.height, primaryRed.height) * 1.3f + 10f
+                val isVehicleHorizontalLayout = isHorizontalPair && (primaryRed.centerX < primaryGreen.centerX)
+
+                // 도로 하단 적색 아티팩트(차량 브레이크등/후미등/반사판): 녹색등보다 25px 이상 아래쪽에 위치한 적색
+                val isLowerRoadwayRed = primaryRed.centerY > primaryGreen.centerY + 25f
 
                 // 발광 화소수(에너지) 압도도 비교: 능동 발광 중인 보행등이 미세 반사광/원거리 차량등을 압도하는 경우
-                val isGreenOverwhelming = primaryGreen.pixelCount >= primaryRed.pixelCount * 2.0f
+                val isGreenOverwhelming = primaryGreen.pixelCount >= primaryRed.pixelCount * 1.5f ||
+                        (primaryGreen.pixelCount >= 15 && primaryGreen.pixelCount >= primaryRed.pixelCount * 1.1f)
                 val isRedOverwhelming = primaryRed.pixelCount >= primaryGreen.pixelCount * 2.0f
 
                 if (!isSamePole) {
                     if (isRedOverheadVehicle && !isRedOverwhelming) {
                         // 상단 차도 가로등/차량 적색 신호 배제 -> 인도 보행 녹색 선택
+                        val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
+                        Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
+                    } else if (isLowerRoadwayRed && !isRedOverwhelming) {
+                        // 하단 차로 차량 브레이크등/후미등 배제 -> 상단 신호등(녹색) 선택
+                        val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
+                        Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
+                    } else if (isVehicleHorizontalLayout && isGreenOverwhelming) {
+                        // 가로형 차량 신호등: 녹색 직진 신호 활성 인정
                         val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
                         Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
                     } else if (isGreenOverheadVehicle && !isGreenOverwhelming) {
@@ -333,10 +353,10 @@ class CameraVisionSignalEstimator(
                     val isGreenActive = (isGreenBelow && (
                         primaryGreen.pixelCount >= primaryRed.pixelCount * 0.80f ||
                         (primaryGreen.avgV >= primaryRed.avgV && primaryGreen.pixelCount >= primaryRed.pixelCount * 0.50f)
-                    )) || isGreenOverwhelming
+                    )) || isGreenOverwhelming || (!isGreenBelow && primaryGreen.pixelCount >= 12 && primaryGreen.pixelCount >= primaryRed.pixelCount)
 
                     if (isGreenActive) {
-                        // 녹색이 하단에 위치하고 발광 에너지/면적 우위일 때 녹색 인정
+                        // 녹색이 하단에 위치하고 발광 에너지/면적 우위이거나, 유효 녹색 클러스터일 때 녹색 인정
                         val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
                         Triple(ObservedSignalState.GREEN, b, 0.95f)
                     } else {

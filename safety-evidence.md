@@ -248,6 +248,23 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `NavigationViewModelTest.testWalkingGpsCourseFusesWithCompassHeading`: $1.2\text{ m/s}$ 보행 시 GPS 궤적과 나침반 각도의 $65:35$ 상보 융합 무결성 검증 (100% PASS).
   - 총 175개 안드로이드 단위 테스트 전체 통과 (100% PASS).
 
+### 21) 보행 녹색 신호 쿨다운 차단 해제 및 도로 하단/차량 신호등 분리 안정화 (ADR 0023)
+- **GuidanceArbiter 카테고리 분리 및 녹색 신호 즉시 선점(Preemption)**:
+  - 기존 `signal_decision` 공용 카테고리로 인해 적색 신호 발화 3초 이내에 전환된 녹색 신호가 쿨다운에 의해 침묵 차단되던 결함을 `signal_decision_red`와 `signal_decision_green`으로 분리하여 완전 해결.
+  - 적색 안내 멘트 발화 중이더라도 녹색 보행 신호 감지 시 적색 발화를 즉시 중단하고 선점 재생(`PREEMPT_AND_PLAY`)하도록 보장.
+  - `hasSpokenCurrentGreenPhase` 래치 플래그를 도입하여 녹색 확정 음성 안내 100% 전달 보장.
+- **물리적 등두(Head) 수직 거리 검증 및 도로 하단 차량 브레이크등 배제**:
+  - 신호등 등두 내 물리적 램프 수직 거리(`maxVerticalHeadDist = maxOf(H_g, H_r) * 3.5f + 25f`)를 초과하는 하단 차량 브레이크등/후미등을 동일 기둥 판정에서 배제(`isLowerRoadwayRed`).
+  - 녹색 블롭 아래쪽에 위치한 적색 아티팩트에 의한 공간 불일치 적색 강제 반전(False Red Flipping) 결함을 제거하여 선명한 녹색 신호 누적 무결성 확보.
+- **가로형 차량 신호등 인식 및 트래커 단일화**:
+  - 교차로 가로형 차량 신호등(동일 수평선상 좌측 적색, 우측 녹색) 수용 및 직진 녹색 신호 정상 인식.
+  - `TwoTierHybridSignalEstimator`와 `CameraVisionSignalEstimator` 간 `LocalVlmSignalVerifier` 단일 인스턴스 공유로 트랙 ID 파편화 및 롤링 버퍼 이중 리셋 원천 차단.
+- **단위 테스트 및 안전성 검증**:
+  - `GuidanceArbiterTest.testGreenGuidancePreemptsCurrentlySpeakingRedGuidance`: 적색 발화 중 녹색 신호 즉시 선점 재생 통과.
+  - `GuidanceArbiterTest.testGreenGuidanceNotSuppressedByRecentRedCooldown`: 적색 쿨다운에 의한 녹색 안내 차단 방지 통과.
+  - `CameraVisionSignalEstimatorTest.testLowerRoadwayRedDoesNotVetoPedestrianGreen`: 하단 차량 브레이크등 존재 시 상단 녹색 신호 정상 판정 통과.
+  - 총 178개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
 
 
 

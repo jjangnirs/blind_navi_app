@@ -14,7 +14,7 @@ import kr.safecross.mobile.camera.FrameRef
 class TwoTierHybridSignalEstimator(
     val primaryDetector: PedestrianSignalEstimator,
     val colorAnalyzer: CameraVisionSignalEstimator = CameraVisionSignalEstimator(),
-    val verifier: LocalVlmSignalVerifier = LocalVlmSignalVerifier(),
+    val verifier: LocalVlmSignalVerifier = colorAnalyzer.verifier,
     val fallbackToViewfinder: Boolean = false
 ) : PedestrianSignalEstimator {
 

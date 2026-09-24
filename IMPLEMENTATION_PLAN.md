@@ -365,6 +365,15 @@ flowchart TD
 - E14-S5 진북($0.0^\circ$) Falsy 오판 버그 수정 (`NavigationScreen.kt`)
 - E14-S6 175개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.6MB) 빌드 검증
 
+### Epic E15 — 보행 녹색 신호 쿨다운 차단 해제 및 도로 하단/차량 신호등 분리 안정화 (ADR-023)
+
+- E15-S1 `GuidanceArbiter` 발화 카테고리 분리(`signal_decision_red` vs `signal_decision_green`) 및 적색 발화 중 녹색 신호 즉시 선점(`isGreenOverridingRed -> PREEMPT_AND_PLAY`)
+- E15-S2 `CrossingAssistViewModel`의 `hasSpokenCurrentGreenPhase` 래치 플래그 도입을 통한 녹색 음성 안내 100% 전달 보장
+- E15-S3 물리적 등두(Head) 수직 거리 검증(`maxVerticalHeadDist`) 및 하단 차량 브레이크등/후미등 분리 배제 (`CameraVisionSignalEstimator.kt`)
+- E15-S4 교차로 가로형 차량 신호등(직진 녹색) 인식 및 적색 아래 녹색 램프 우선 판정
+- E15-S5 `TwoTierHybridSignalEstimator` 단일 `LocalVlmSignalVerifier` 공유 및 중앙 뷰파인더 손떨림 허용 오차(`0.35f`) 확장
+- E15-S6 178개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.5MB) 빌드 검증
+
 
 ## 10. 일일 개발 루틴
 

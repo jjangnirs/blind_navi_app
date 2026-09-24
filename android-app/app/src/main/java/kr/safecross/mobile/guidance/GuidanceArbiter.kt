@@ -91,9 +91,11 @@ class GuidanceArbiter(
                 }
             }
 
-            // 현재 발화 중인 메시지가 낮은 우선순위(ROUTE, INFO)라면 즉시 선점 중단 판정
+            // 현재 발화 중인 메시지가 낮은 우선순위(ROUTE, INFO)이거나, 적색 발화 중 녹색 신호로 전환된 경우 즉시 선점 중단 판정
             val cur = currentlySpeakingMessage
-            if (cur != null && cur.priority.level < GuidancePriority.CROSSING.level) {
+            val isGreenOverridingRed = (message.category == "signal_decision_green" || message.text.contains("녹색")) &&
+                    (cur?.category == "signal_decision_red" || cur?.text?.contains("적색") == true)
+            if (cur != null && (cur.priority.level < GuidancePriority.CROSSING.level || isGreenOverridingRed)) {
                 recordSpoken(message, currentTimeMs)
                 return ArbiterDecision(
                     action = ArbiterAction.PREEMPT_AND_PLAY,
