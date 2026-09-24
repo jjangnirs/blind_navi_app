@@ -159,6 +159,13 @@ cd android-app
   - `scripts/pull_navigation_logs.ps1`: USB 연결 시 ADB/MTP를 통해 단말기 로그 파일 PC 자동 추출
   - `scripts/analyze_navigation_log.py`: 로그 자동 파싱하여 GPS 정확도, CTE 분포, 재탐색 횟수, 방위각 일치율 요약 리포트 생성
 
+### 22. 차량용 신호등 고공 분리 배제 및 한손 파지 손떨림 적응형 보행 녹색 판정 안정화 (`CameraVisionSignalEstimator`, `LocalVlmSignalVerifier`, `CrossingDecisionEngine`)
+- **상단 차량용 신호기 수직 고도 분리 ($Y_{norm} < 0.22$ vs $Y_{norm} \ge 0.22$)**: 교차로 차도 상공에 설치된 차량용 적색 신호가 인도 보행자 눈높이의 녹색 보행 신호를 기각하지 못하도록 배제
+- **에너지 압도도 필터**: 보행 녹색 화소수가 미세 반사광/상단 적색의 2배 이상일 때 능동 점등된 보행 신호를 확실하게 선택
+- **한손 파지 손떨림 적응형 공간 추적**: 손떨림 허용 거리를 0.08에서 0.18(화면 18%)로 확장하고, 뷰파인더 중앙부 영역 내 위치 시 동일 Track ID 지속 유지
+- **Track ID 승계(Inheritance) 및 슬라이딩 윈도우 완충**: 손떨림으로 Track ID가 증가하더라도 누적 카운트를 보존하고, 5프레임 중 75% 이상 녹색 합의 시 `GREEN_ESTIMATE` 정상 승인
+- **조준선 디바운싱(8프레임/270ms) 및 조준 발화 쿨다운(4초)**: 손떨림 중 조준 풀림 및 조준 반복 음성이 녹색 신호 음성 안내를 간섭하지 않도록 방어
+
 ## TalkBack 수동 시험 절차
 1. **TalkBack 활성화**: Android 기기 설정 -> 접근성 -> TalkBack 켜기 (또는 볼륨 업+다운 키 3초 길게 누르기).
 2. **목적지 검색 시험**:

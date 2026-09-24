@@ -215,6 +215,22 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `scripts/pull_navigation_logs.ps1`: USB 연결 시 ADB/MTP를 통해 단말기 로그 파일 PC 자동 추출.
   - `scripts/analyze_navigation_log.py`: 로그 자동 파싱하여 GPS 정확도, CTE 분포, 재탐색 횟수, 방위각 일치율 요약 리포트 생성.
 
+### 19) 차량용 고소 신호등 분리 및 한손 파지 손떨림 적응형 보행 녹색 판정 (ADR 0021)
+- **차량용 고소(Overhead) 신호등 및 차로 적색등 분리**:
+  - 카메라 화각 상단 도로 중앙($Y_{norm} < 0.22$)에 위치하는 차량용 횡형/현수식 신호등과 보도측 보행자 신호등($Y_{norm} \ge 0.22$)의 고도 분리.
+  - 가로 신호등($W > H \times 1.35$) 필터 외에 단일 원형 차량 적색등($W \approx H$)이 보행등 위치와 경합할 때, 보행자 신호 영역의 녹색 에너지 우세비($G \ge 2R$) 가중치를 적용하여 도로 건너편 차량 적색등이나 브레이크등에 의해 보행 녹색이 부당하게 기각되는 현상 방지.
+- **한손 파지 보행자 손떨림(Jitter) 적응형 추적**:
+  - 시각장애인 또는 보행자가 한손으로 스마트폰을 파지할 때 발생하는 뷰파인더 중심 변위 허용 오차를 기존 $0.08$에서 $0.18$(중심 조준 영역에서는 최대 $0.25$)로 완화.
+  - 손떨림으로 인해 트랙 ID가 `track-dyn-1` $\rightarrow$ `track-dyn-2`로 재식별되더라도 동일 세션 및 인접 영역인 경우 `isJitteredSameDynamicTrack`을 계승하여 누적된 연속 녹색 프레임 카운트가 0으로 강제 초기화되는 문제 방지.
+- **손떨림 단일 프레임 블러 내성 강화**:
+  - 손떨림에 의한 1프레임 순간 블러/UNKNOWN 발생 시 기존의 가혹한 0 리셋 대신 완만한 감쇄(1 차감)를 적용하고, 최근 5프레임 중 3프레임 이상 녹색인 경우 완충(Buffer Dampening)을 유지하여 연속 8프레임 녹색 달성률 보장.
+- **조준선(Reticle) UX 최적화**:
+  - 조준선 감지 박스를 하단($Y \le 0.70$)까지 확장하고, 락온 디바운싱을 8프레임(270ms)으로 안정화하며, 조준 완료 음성 안내에 4초 쿨다운을 적용하여 오디오 채널 독점 방지.
+- **단위 테스트 및 안전성 검증**:
+  - `CameraVisionSignalEstimatorTest.testOverheadVehicleRedLightDoesNotVetoPedestrianGreenLight`: 상공 차량용 적색등 존재 하에서도 보행등 녹색 판정 정상 통과 (100% PASS).
+  - `CrossingDecisionEngineTest.testHandheldDynamicTrackJitterAccumulatesGreen`: 한손 파지 손떨림 트랙 전이 시 녹색 프레임 누적 및 최종 GREEN 승인 통과 (100% PASS).
+
+
 
 
 

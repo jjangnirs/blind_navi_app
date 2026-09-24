@@ -348,6 +348,14 @@ flowchart TD
 - E12-S2 보행 내비게이션 상단 실시간 경로 분석 HUD 칩(`RouteDevBadge`: 거리 오차, 신뢰도, 카운트 실시간 표시)
 - E12-S3 원클릭 시스템 공유 인텐트(`shareFlightLog()`) 및 PC 실시간 원격 텔레메트리 툴킷(`monitor_flight_logs.ps1`, `pull_navigation_logs.ps1`, `analyze_navigation_log.py`)
 
+### Epic E13 — 차량용 신호 분리 및 한손 파지 손떨림 적응형 보행 녹색 판정 (ADR-021)
+
+- E13-S1 차량용 고소(Overhead) 신호등 고도 분리($Y_{norm} < 0.22$ vs $Y_{norm} \ge 0.22$) 및 보행 신호 녹색 우세 에너지비($G \ge 2R$) 가중치 적용 (`CameraVisionSignalEstimator.kt`)
+- E13-S2 한손 파지 손떨림(Jitter) 허용 오차 대폭 완화($0.08 \rightarrow 0.18$, 뷰파인더 중심 시 최대 $0.25$) 및 정적 기물 손떨림 시 동역학 모션 필터 오기각 방지 (`LocalVlmSignalVerifier.kt`)
+- E13-S3 동일 세션 인접 동적 트랙 연계(`isJitteredSameDynamicTrack`) 및 단일 프레임 블러(`UNKNOWN`) 발생 시 0 리셋 대신 완만한 감쇄 적용 (`CrossingDecisionEngine.kt`)
+- E13-S4 조준선(Reticle) 하단 범위 확장($Y \le 0.70$), 락온 디바운싱 강화(8프레임/270ms) 및 조준 완료 음성 안내 4초 쿨다운 적용 (`CrossingAssistViewModel.kt`, `CrossingAssistUiState.kt`)
+- E13-S5 174개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.6MB) 빌드 검증
+
 
 ## 10. 일일 개발 루틴
 

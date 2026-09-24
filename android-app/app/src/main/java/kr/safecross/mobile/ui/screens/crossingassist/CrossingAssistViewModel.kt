@@ -57,6 +57,7 @@ class CrossingAssistViewModel(
     private val tiltSpeechCooldownMs: Long = 6_000L
     private var reticleOutCount = 0
     private var lastGreenGuidanceTimeMs = 0L
+    private var lastLockOnSpeechTimeMs = 0L
 
     init {
         // 기기 기울기 모니터링 구독 (과도한 반복 발화 억제를 위한 쿨다운 적용)
@@ -166,13 +167,13 @@ class CrossingAssistViewModel(
                     false
                 }
 
-                // 손떨림 방지 조준선 디바운싱: 3프레임(약 100ms) 이내의 일시적 이탈은 조준 상태 유지
+                // 손떨림 방지 조준선 디바운싱: 8프레임(약 270ms) 이내의 일시적 이탈은 조준 상태 유지 (한손 파지 손떨림 완충)
                 val wasInReticle = _uiState.value.isSignalInReticle
                 val isInsideReticle = if (isInsideRaw) {
                     reticleOutCount = 0
                     true
                 } else {
-                    if (wasInReticle && reticleOutCount < 3) {
+                    if (wasInReticle && reticleOutCount < 8) {
                         reticleOutCount++
                         true
                     } else {
@@ -182,14 +183,18 @@ class CrossingAssistViewModel(
                 }
 
                 if (isInsideReticle && !wasInReticle) {
-                    viewModelScope.launch {
-                        _effects.emit(
-                            CrossingAssistEffect.SpeakGuidance(
-                                text = "신호등이 조준되었습니다.",
-                                hapticType = kr.safecross.mobile.guidance.HapticFeedbackType.ORIENTATION_ALIGNED,
-                                queueFlush = false
+                    val now = System.currentTimeMillis()
+                    if (now - lastLockOnSpeechTimeMs >= 4_000L) {
+                        lastLockOnSpeechTimeMs = now
+                        viewModelScope.launch {
+                            _effects.emit(
+                                CrossingAssistEffect.SpeakGuidance(
+                                    text = "신호등이 조준되었습니다.",
+                                    hapticType = kr.safecross.mobile.guidance.HapticFeedbackType.ORIENTATION_ALIGNED,
+                                    queueFlush = false
+                                )
                             )
-                        )
+                        }
                     }
                 }
 

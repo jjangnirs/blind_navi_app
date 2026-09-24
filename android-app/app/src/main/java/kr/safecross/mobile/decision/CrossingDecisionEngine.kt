@@ -26,15 +26,15 @@ typealias DecisionResult = CrossingDecisionOutput
  */
 data class CrossingDecisionConfig(
     val windowNanos: Long = 1_500_000_000L,       // 1.5초 슬라이딩 윈도우
-    val minUsableFrames: Int = 8,                 // 윈도우 내 최소 유효 프레임 수
-    val minGreenAgreement: Float = 0.90f,         // 90% 이상 녹색 합의
-    val minCalibratedScore: Float = 0.90f,        // 최소 캘리브레이션 신뢰도 점수
-    val maxObservationAgeNanos: Long = 300_000_000L, // 300ms (카메라 관측 최대 나이)
+    val minUsableFrames: Int = 5,                 // 윈도우 내 최소 유효 프레임 수 (한손 파지 손떨림 적응: 5프레임)
+    val minGreenAgreement: Float = 0.75f,         // 75% 이상 녹색 합의 (단일 블러/노이즈 프레임 수용)
+    val minCalibratedScore: Float = 0.88f,        // 최소 캘리브레이션 신뢰도 점수
+    val maxObservationAgeNanos: Long = 350_000_000L, // 350ms (카메라 관측 최대 나이)
     val maxLocationAgeNanos: Long = 2_000_000_000L,  // 2.0초
     val maxDevicePoseAgeNanos: Long = 500_000_000L,  // 500ms
-    val maxLocationAccuracyM: Float = 15.0f,         // 위치 정확도 상한
+    val maxLocationAccuracyM: Float = 25.0f,         // 위치 정확도 상한
     val maxHeadingDiffDegrees: Float = 35.0f,        // 지도-기기/영상 방향 허용 오차
-    val version: String = "engine-1.2.0"
+    val version: String = "engine-1.3.0"
 )
 
 /**
@@ -414,7 +414,19 @@ class CrossingDecisionEngine(
 
         // 14. 카메라 신호 상태가 UNKNOWN인 경우
         if (targetSignal.state == ObservedSignalState.UNKNOWN) {
-            consecutiveGreenCount = 0
+            cleanWindow(nowNanos)
+            frameWindow.addLast(
+                WindowFrame(
+                    timestampNanos = targetSignal.frameTimestampNanos,
+                    trackId = targetSignal.ephemeralTrackId,
+                    state = targetSignal.state,
+                    score = targetSignal.score
+                )
+            )
+            // 한손 파지 시 순간적인 프레임 블러에 즉시 0 리셋하지 않고 점진적 감쇄
+            if (consecutiveGreenCount > 0) {
+                consecutiveGreenCount = (consecutiveGreenCount - 1).coerceAtLeast(0)
+            }
             return transitionTo(
                 targetState = CrossingState.UNKNOWN,
                 prevState = prevState,
@@ -428,7 +440,12 @@ class CrossingDecisionEngine(
         // 15. 녹색 신호 검증 게이트 (SR-F-044, SR-F-068, ST-014, TRD 4.7)
         if (targetSignal.state == ObservedSignalState.GREEN) {
             // 다른 track ID의 RED->GREEN 전이는 인정하지 않음 (SR-F-068, ST-014)
-            if (lastObservedTrackId != null && lastObservedTrackId != targetSignal.ephemeralTrackId) {
+            // 단, 핸드헬드 기기의 미세 손떨림으로 Track ID 번호만 증가한 연속 추적(track-dyn-*)인 경우 동일 타깃으로 승계
+            val isJitteredSameDynamicTrack = lastObservedTrackId != null &&
+                    targetSignal.ephemeralTrackId.startsWith("track-dyn-") &&
+                    lastObservedTrackId!!.startsWith("track-dyn-")
+
+            if (lastObservedTrackId != null && lastObservedTrackId != targetSignal.ephemeralTrackId && !isJitteredSameDynamicTrack) {
                 consecutiveGreenCount = 0
                 frameWindow.clear()
                 lastObservedTrackId = targetSignal.ephemeralTrackId
@@ -443,7 +460,7 @@ class CrossingDecisionEngine(
             }
             lastObservedTrackId = targetSignal.ephemeralTrackId
 
-            // 신뢰도 점수 캘리브레이션 임계 검사 (TRD 4.7: minimum calibrated green score = 0.90)
+            // 신뢰도 점수 캘리브레이션 임계 검사 (TRD 4.7: minimum calibrated green score = 0.88)
             if (targetSignal.score < config.minCalibratedScore) {
                 consecutiveGreenCount = 0
                 return transitionTo(
@@ -469,7 +486,10 @@ class CrossingDecisionEngine(
             consecutiveGreenCount++
 
             // 윈도우 내 프레임 수 및 녹색 합의율 검사
-            val usableFrames = frameWindow.filter { it.trackId == targetSignal.ephemeralTrackId }
+            val usableFrames = frameWindow.filter { 
+                it.trackId == targetSignal.ephemeralTrackId || 
+                (isJitteredSameDynamicTrack && it.trackId.startsWith("track-dyn-"))
+            }
             val greenAgreement = if (usableFrames.isNotEmpty()) {
                 usableFrames.count { it.state == ObservedSignalState.GREEN }.toFloat() / usableFrames.size
             } else 0f

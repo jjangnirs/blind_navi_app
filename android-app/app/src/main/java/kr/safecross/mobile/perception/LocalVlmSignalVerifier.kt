@@ -81,12 +81,13 @@ class LocalVlmSignalVerifier(
                 val dist = kotlin.math.hypot(cx2 - cx1, cy2 - cy1)
                 val velocity = (dist / dtSec).toFloat()
 
-                // 핸드헬드 기기의 미세 손떨림(dist <= 0.05f)은 정상 진동으로 수용.
-                // 동일 신호등 기둥 내 상/하단 램프 전환(적색<->녹색)은 X 변위가 극히 작음(|cx2-cx1| <= 0.04f)
-                // 가로로 주행하는 차량(velocity > 0.85f && dist > 0.05f)만 기각하며, 동일 기둥 수직 전환은 정상 수용
-                val isSamePoleVerticalTransition = kotlin.math.abs(cx2 - cx1) <= 0.04f && kotlin.math.abs(cy2 - cy1) <= 0.12f
+                // 핸드헬드 기기의 미세 손떨림(dist <= 0.18f)은 정상 진동으로 수용.
+                // 동일 신호등 기둥 내 상/하단 램프 전환(적색<->녹색)은 X 변위가 극히 작음(|cx2-cx1| <= 0.06f)
+                // 가로로 주행하는 차량(velocity > 2.0f && dist > 0.18f && 수평 이동 우세)만 기각하며, 한손 파지 시 발생하는 진동은 정상 수용
+                val isSamePoleVerticalTransition = kotlin.math.abs(cx2 - cx1) <= 0.06f && kotlin.math.abs(cy2 - cy1) <= 0.16f
+                val isHandheldShake = dist <= 0.18f
 
-                if (!isSamePoleVerticalTransition && dist > 0.05f && velocity > 0.85f) {
+                if (!isSamePoleVerticalTransition && !isHandheldShake && dist > 0.18f && velocity > 1.5f) {
                     val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
                     recordObservation(rejected)
                     lastObservation = rejected
@@ -110,19 +111,19 @@ class LocalVlmSignalVerifier(
             val cy2 = (candidate.box.top + candidate.box.bottom) / 2f
             val centerDist = kotlin.math.hypot(cx2 - cx1, cy2 - cy1)
 
-            // 소형/원거리 박스는 8~10픽셀 손떨림만으로도 IoU가 0.35 미만으로 급락함.
-            // 따라서 소형 박스(width < 0.12 또는 height < 0.15)의 경우
-            // 중심 거리 근접도(centerDist <= 0.08f) 또는 완화된 IoU(>= 0.15f)를 만족하면 동일 Track 유지
+            // 한손 파지 시 손떨림으로 중심 위치가 0.15~0.18까지 흔들릴 수 있음.
+            // 또한 신호등이 중앙 뷰파인더 관심 영역(cx in 0.15..0.85, cy in 0.10..0.75)에 머무는 경우 동일 Track으로 간주.
             val isSmallBox = minOf(candidate.box.width, prev.box.width) < 0.12f ||
                     minOf(candidate.box.height, prev.box.height) < 0.15f
+            val isInCentralViewfinder = cx2 in 0.15f..0.85f && cy2 in 0.10f..0.75f
             val isContinuous = if (isSmallBox) {
-                iou >= 0.15f || centerDist <= 0.08f
+                iou >= 0.10f || centerDist <= 0.18f || (isInCentralViewfinder && centerDist <= 0.25f)
             } else {
-                iou >= 0.35f || centerDist <= 0.06f
+                iou >= 0.20f || centerDist <= 0.16f || (isInCentralViewfinder && centerDist <= 0.22f)
             }
 
             if (!isContinuous) {
-                // 실제 다른 위치로 점프/시선 전환됨 -> 시간 큐 리셋 및 신규 Track 분리!
+                // 실제 다른 위치로 완전히 이탈/시선 전환됨 -> 시간 큐 리셋 및 신규 Track 분리!
                 history.clear()
                 currentTrackId = "track-dyn-${++trackCounter}"
             }
@@ -135,8 +136,11 @@ class LocalVlmSignalVerifier(
         val smoothedState = evaluateTemporalStability()
 
         // 5. Zero False-Green 보장: 녹색 신호가 최근 기록에서 불안정하면 즉시 UNKNOWN으로 안전 강등
+        // 한손 파지 순간 블러 완충: 최근 5프레임 중 3개 이상이 확실한 녹색이면 녹색 유지
         val finalState = if (candidate.state == ObservedSignalState.GREEN && smoothedState != ObservedSignalState.GREEN) {
             ObservedSignalState.UNKNOWN
+        } else if (candidate.state == ObservedSignalState.UNKNOWN && smoothedState == ObservedSignalState.GREEN && history.count { it.state == ObservedSignalState.GREEN } >= 3) {
+            ObservedSignalState.GREEN
         } else {
             smoothedState
         }

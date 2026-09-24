@@ -67,6 +67,11 @@ MVP에 포함한다.
 23. 동일 경로 보행 시 반복적 "경로가 변경되었습니다" 루프 차단 및 경로 이탈 필터 강화 (`RouteProgressEngine`, `NavigationViewModel`, `hasCalibratedInitialStart` 단 1회 가드로 전진 보행 시 출발점 이격 오탐 원천 방지, 25m 이내 유효 GPS 샘플 필터링, 연속 4회/35m 이탈 임계값 상향, 12초 쿨다운)
 24. 보행자 진행방향 위(Heading-Up / Course-Up) 지도 회전 뷰어 (`RealRouteMapView`, 170% 무여백 뷰포트 레이아웃, 나침반 헤딩 연동 0.35초 부드러운 CSS 회전, 진행방향 쉐브론 화살표 마커 $\blacktriangle$, 경로 방위각 자동 폴백, `🧭 진행방향 위` $\leftrightarrow$ `🧭 북쪽 고정` 원클릭 토글)
 25. 실시간 보행 경로 분석 전용 비행 기록기 및 진단 툴링 (`NavigationFlightRecorder`, GPS 품질, 경로 진행 CTE, 나침반 정대, 단계 전환, 재탐색 트리거 사유, 음성 발화 텔레메트리 3MB 순환 기록, 화면 내 실시간 상태 HUD 및 원클릭 공유 버튼, `scripts/monitor_flight_logs.ps1`, `scripts/pull_navigation_logs.ps1`, `scripts/analyze_navigation_log.py`)
+26. 차량용 신호 분리 및 한손 파지 손떨림 적응형 보행 녹색 판정 (`CameraVisionSignalEstimator`, `LocalVlmSignalVerifier`, `CrossingDecisionEngine`, ADR-021):
+    - 차량용 고소(Overhead) 신호등 및 횡단 차로 적색등 분리: 도로 중앙 상공($Y_{norm} < 0.22$) 램프와 보도측 보행등($Y_{norm} \ge 0.22$)의 고도 분리, 단일 원형 차량 적색등의 보행신호 오인 배제, 녹색 우세 에너지비($G \ge 2R$) 가중치 적용으로 반사광/차량등에 의한 보행 녹색 덮어쓰기 원천 차단
+    - 한손 파지 보행자 손떨림(Jitter) 적응형 추적: 바운딩 박스 중심 변위 허용 범위 대폭 완화($0.08 \rightarrow 0.18$, 뷰파인더 중심 시 최대 $0.25$), 손떨림으로 인한 동일 기물 재식별 시 `isJitteredSameDynamicTrack` 계승으로 프레임 리셋 방지
+    - 손떨림 단일 프레임 블러 내성 강화: 단일 `UNKNOWN` 프레임 발생 시 기존의 가혹한 0 리셋 대신 완만한 감쇄 적용, 최근 5프레임 중 3프레임 이상 녹색 시 완충 상태 유지
+    - 조준선(Reticle) UX 최적화: 조준선 하단 범위 확장($Y \le 0.70$), 락온 디바운싱 강화(8프레임/270ms), 조준 안내 음성 4초 쿨다운 적용으로 오디오 채널 독점 방지
 
 MVP에서 제외한다.
 

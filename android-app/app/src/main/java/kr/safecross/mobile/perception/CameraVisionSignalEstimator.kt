@@ -278,34 +278,63 @@ class CameraVisionSignalEstimator(
             }
             primaryRed != null && primaryGreen != null -> {
                 // 동일 기둥 판정: 두 블롭의 X 중심 거리가 폭 허용오차 이내인지 검사
-                val maxColDist = maxOf(primaryGreen.width, primaryRed.width) * 1.8f + 12f
+                val maxColDist = maxOf(primaryGreen.width, primaryRed.width) * 1.8f + 16f
                 val isSamePole = abs(primaryRed.centerX - primaryGreen.centerX) <= maxColDist
 
+                val redNormY = primaryRed.centerY / height
+                val greenNormY = primaryGreen.centerY / height
+
+                // 상단 차량용 신호기(차도 위 가공 설치, 보통 Y < 0.22) vs 보행자 신호기(인도 기둥 눈높이, Y in 0.22..0.70)
+                val isRedOverheadVehicle = redNormY < 0.22f && greenNormY >= 0.22f
+                val isGreenOverheadVehicle = greenNormY < 0.22f && redNormY >= 0.22f
+
+                // 발광 화소수(에너지) 압도도 비교: 능동 발광 중인 보행등이 미세 반사광/원거리 차량등을 압도하는 경우
+                val isGreenOverwhelming = primaryGreen.pixelCount >= primaryRed.pixelCount * 2.0f
+                val isRedOverwhelming = primaryRed.pixelCount >= primaryGreen.pixelCount * 2.0f
+
                 if (!isSamePole) {
-                    // 서로 다른 기둥/배경 신호등: 타깃 중심(조준선)에 유의미하게 더 가까운 대표 신호를 선택
-                    val distRed = abs(primaryRed.centerX - targetCenterX)
-                    val distGreen = abs(primaryGreen.centerX - targetCenterX)
-                    if (distGreen + 20f < distRed) {
-                        // 녹색 신호가 조준 중심에 훨씬 가까움 (배경 좌/우측의 원거리 적색 무시)
+                    if (isRedOverheadVehicle && !isRedOverwhelming) {
+                        // 상단 차도 가로등/차량 적색 신호 배제 -> 인도 보행 녹색 선택
                         val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
                         Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
-                    } else if (distRed + 20f < distGreen) {
-                        // 적색 신호가 조준 중심에 훨씬 가까움
+                    } else if (isGreenOverheadVehicle && !isGreenOverwhelming) {
+                        // 상단 차도 차량 직진 녹색 배제 -> 인도 보행 적색 선택
+                        val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
+                        Triple(ObservedSignalState.RED, b, (0.93f + (primaryRed.pixelCount / 150f) * 0.05f).coerceIn(0.93f, 0.98f))
+                    } else if (isGreenOverwhelming) {
+                        // 녹색 보행 신호 면적이 압도적 (배경 미세 적색 노이즈/원거리 차량등 무시)
+                        val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
+                        Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
+                    } else if (isRedOverwhelming) {
                         val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
                         Triple(ObservedSignalState.RED, b, (0.93f + (primaryRed.pixelCount / 150f) * 0.05f).coerceIn(0.93f, 0.98f))
                     } else {
-                        // 중심 거리가 유사하여 상충 시 Zero False-Green 원칙에 따라 적색 우선
-                        val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
-                        Triple(ObservedSignalState.RED, b, 0.93f)
+                        // 서로 다른 기둥/배경 신호등: 타깃 중심(조준선)에 유의미하게 더 가까운 대표 신호를 선택
+                        val distRed = abs(primaryRed.centerX - targetCenterX)
+                        val distGreen = abs(primaryGreen.centerX - targetCenterX)
+                        if (distGreen + 20f < distRed) {
+                            // 녹색 신호가 조준 중심에 훨씬 가까움 (배경 좌/우측의 원거리 적색 무시)
+                            val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
+                            Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
+                        } else if (distRed + 20f < distGreen) {
+                            // 적색 신호가 조준 중심에 훨씬 가까움
+                            val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
+                            Triple(ObservedSignalState.RED, b, (0.93f + (primaryRed.pixelCount / 150f) * 0.05f).coerceIn(0.93f, 0.98f))
+                        } else {
+                            // 중심 거리가 유사하여 상충 시 Zero False-Green 원칙에 따라 적색 우선
+                            val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
+                            Triple(ObservedSignalState.RED, b, 0.93f)
+                        }
                     }
                 } else {
                     // 동일 기둥 내 상하 공간 관계 검증: 한국 보행신호등은 상단 적색(Y 작음), 하단 녹색(Y 큼)
                     // 태양 반사광(Phantom Light) 대응: 녹색 LED 발광 중 꺼진 상단 적색 렌즈에 햇빛이 비추는 현상 필터링
                     val isGreenBelow = primaryGreen.centerY > primaryRed.centerY
-                    val isGreenActive = isGreenBelow && (
+                    val isGreenActive = (isGreenBelow && (
                         primaryGreen.pixelCount >= primaryRed.pixelCount * 0.80f ||
                         (primaryGreen.avgV >= primaryRed.avgV && primaryGreen.pixelCount >= primaryRed.pixelCount * 0.50f)
-                    )
+                    )) || isGreenOverwhelming
+
                     if (isGreenActive) {
                         // 녹색이 하단에 위치하고 발광 에너지/면적 우위일 때 녹색 인정
                         val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)

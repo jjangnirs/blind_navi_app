@@ -21,7 +21,7 @@ data class CrossingAssistUiState(
         left = 0.20f,
         top = 0.10f,
         right = 0.80f,
-        bottom = 0.60f
+        bottom = 0.70f
     ),
     val debugDiagnosticText: String? = null
 )

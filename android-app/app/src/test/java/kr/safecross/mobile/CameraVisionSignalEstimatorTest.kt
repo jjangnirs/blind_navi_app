@@ -370,5 +370,55 @@ class CameraVisionSignalEstimatorTest {
         assertEquals(ObservedSignalState.GREEN, lastObs.state)
         assertTrue(lastObs.score >= 0.90f)
     }
+
+    @Test
+    fun testOverheadVehicleRedLightDoesNotVetoPedestrianGreenLight() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 차도 위 상단 고공 가공 설치된 차량용 적색 신호등 (y: 25..40 (상단 10~16%), x: 150..170 (차도 중앙))
+        for (y in 25..40) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 240.toByte())
+                buffer.put(offset + 1, 30.toByte())
+                buffer.put(offset + 2, 30.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 2. 인도 보행자 눈높이에 위치한 보행자 녹색 신호등 (y: 70..95 (인도 눈높이 30~40%), x: 145..165)
+        for (y in 70..95) {
+            for (x in 145..165) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 상단 차도 차량 신호의 적색에 의해 보행자 녹색 신호가 가려지거나 방해받지 않고 GREEN으로 판정되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
 }
+
 
