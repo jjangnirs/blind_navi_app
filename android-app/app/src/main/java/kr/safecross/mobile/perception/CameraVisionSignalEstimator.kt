@@ -277,15 +277,44 @@ class CameraVisionSignalEstimator(
                 Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
             }
             primaryRed != null && primaryGreen != null -> {
-                // 상하 공간 관계 검증: 한국 보행신호등은 상단이 적색(Y 작음), 하단이 녹색(Y 큼)
-                if (primaryGreen.pixelCount >= primaryRed.pixelCount * 1.25 && primaryGreen.centerY > primaryRed.centerY) {
-                    // 녹색이 하단에 위치하고 픽셀 우위일 때만 녹색 인정 (Zero False-Green 안전 원칙)
-                    val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
-                    Triple(ObservedSignalState.GREEN, b, 0.95f)
+                // 동일 기둥 판정: 두 블롭의 X 중심 거리가 폭 허용오차 이내인지 검사
+                val maxColDist = maxOf(primaryGreen.width, primaryRed.width) * 1.8f + 12f
+                val isSamePole = abs(primaryRed.centerX - primaryGreen.centerX) <= maxColDist
+
+                if (!isSamePole) {
+                    // 서로 다른 기둥/배경 신호등: 타깃 중심(조준선)에 유의미하게 더 가까운 대표 신호를 선택
+                    val distRed = abs(primaryRed.centerX - targetCenterX)
+                    val distGreen = abs(primaryGreen.centerX - targetCenterX)
+                    if (distGreen + 20f < distRed) {
+                        // 녹색 신호가 조준 중심에 훨씬 가까움 (배경 좌/우측의 원거리 적색 무시)
+                        val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
+                        Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
+                    } else if (distRed + 20f < distGreen) {
+                        // 적색 신호가 조준 중심에 훨씬 가까움
+                        val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
+                        Triple(ObservedSignalState.RED, b, (0.93f + (primaryRed.pixelCount / 150f) * 0.05f).coerceIn(0.93f, 0.98f))
+                    } else {
+                        // 중심 거리가 유사하여 상충 시 Zero False-Green 원칙에 따라 적색 우선
+                        val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
+                        Triple(ObservedSignalState.RED, b, 0.93f)
+                    }
                 } else {
-                    // 상충되거나 공간 불일치 시 적색 우선(Red Precedence)
-                    val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
-                    Triple(ObservedSignalState.RED, b, 0.93f)
+                    // 동일 기둥 내 상하 공간 관계 검증: 한국 보행신호등은 상단 적색(Y 작음), 하단 녹색(Y 큼)
+                    // 태양 반사광(Phantom Light) 대응: 녹색 LED 발광 중 꺼진 상단 적색 렌즈에 햇빛이 비추는 현상 필터링
+                    val isGreenBelow = primaryGreen.centerY > primaryRed.centerY
+                    val isGreenActive = isGreenBelow && (
+                        primaryGreen.pixelCount >= primaryRed.pixelCount * 0.80f ||
+                        (primaryGreen.avgV >= primaryRed.avgV && primaryGreen.pixelCount >= primaryRed.pixelCount * 0.50f)
+                    )
+                    if (isGreenActive) {
+                        // 녹색이 하단에 위치하고 발광 에너지/면적 우위일 때 녹색 인정
+                        val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
+                        Triple(ObservedSignalState.GREEN, b, 0.95f)
+                    } else {
+                        // 상충되거나 공간 불일치(녹색이 상단 등) 시 적색 우선(Red Precedence)
+                        val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
+                        Triple(ObservedSignalState.RED, b, 0.93f)
+                    }
                 }
             }
             else -> Triple(ObservedSignalState.UNKNOWN, targetRoi ?: NormalizedBox(0.45f, 0.20f, 0.55f, 0.40f), 0.35f)

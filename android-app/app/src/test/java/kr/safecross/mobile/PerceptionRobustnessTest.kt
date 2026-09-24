@@ -144,6 +144,38 @@ class PerceptionRobustnessTest {
     }
 
     @Test
+    fun testSamePoleVerticalSignalTransitionPassesMotionFilter() {
+        val dummyBuffer = ByteBuffer.allocateDirect(100)
+
+        // 1. 프레임 1: 상단 적색 보행등 (y: 0.36..0.39, x: 0.49..0.50)
+        val frameRed = SignalObservation(
+            ephemeralTrackId = "sig-pole-1",
+            state = ObservedSignalState.RED,
+            score = 0.95f,
+            box = NormalizedBox(0.49f, 0.36f, 0.50f, 0.39f),
+            frameTimestampNanos = 1_000_000_000L,
+            quality = FrameQuality(1.0f, 1.0f, true),
+            modelVersion = "test"
+        )
+        verifier.verify(frameRed, dummyBuffer, 320, 240)
+
+        // 2. 프레임 2: 33ms 뒤 하단 녹색 보행등 점등 (y: 0.42..0.44, x: 0.49..0.50, Δy = 0.055, Δx = 0.00)
+        val frameGreen = SignalObservation(
+            ephemeralTrackId = "sig-pole-1",
+            state = ObservedSignalState.GREEN,
+            score = 0.95f,
+            box = NormalizedBox(0.49f, 0.42f, 0.50f, 0.44f),
+            frameTimestampNanos = 1_033_000_000L,
+            quality = FrameQuality(1.0f, 1.0f, true),
+            modelVersion = "test"
+        )
+        val result = verifier.verify(frameGreen, dummyBuffer, 320, 240)
+
+        // 동일 기둥 내 상/하단 수직 램프 전환은 주행 차량이 아니므로 REJECTED_DYNAMIC_MOTION으로 거부되지 않아야 함
+        assertFalse(result.verificationReason == "REJECTED_DYNAMIC_MOTION")
+    }
+
+    @Test
     fun testDarkHousingContrastVerificationMethod() {
         val width = 100
         val height = 100

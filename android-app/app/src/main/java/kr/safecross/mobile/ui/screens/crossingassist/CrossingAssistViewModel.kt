@@ -55,6 +55,8 @@ class CrossingAssistViewModel(
     private var lastTiltSpeechTimeMs: Long = 0L
     private var lastSpokenTiltGuidance: TiltGuidance? = null
     private val tiltSpeechCooldownMs: Long = 6_000L
+    private var reticleOutCount = 0
+    private var lastGreenGuidanceTimeMs = 0L
 
     init {
         // 기기 기울기 모니터링 구독 (과도한 반복 발화 억제를 위한 쿨다운 적용)
@@ -156,7 +158,7 @@ class CrossingAssistViewModel(
 
                 // 실제 유효 신호(RED 또는 GREEN)가 명확히 감지된 경우에만 조준 완료(락온)로 인정 (더미 탐색 박스 오조준 방지)
                 val isActualSignalDetected = targetSignal != null && targetSignal.state != kr.safecross.mobile.perception.ObservedSignalState.UNKNOWN
-                val isInsideReticle = if (isActualSignalDetected && targetBox != null) {
+                val isInsideRaw = if (isActualSignalDetected && targetBox != null) {
                     val cx = (targetBox.left + targetBox.right) / 2f
                     val cy = (targetBox.top + targetBox.bottom) / 2f
                     cx in reticle.left..reticle.right && cy in reticle.top..reticle.bottom
@@ -164,7 +166,21 @@ class CrossingAssistViewModel(
                     false
                 }
 
+                // 손떨림 방지 조준선 디바운싱: 3프레임(약 100ms) 이내의 일시적 이탈은 조준 상태 유지
                 val wasInReticle = _uiState.value.isSignalInReticle
+                val isInsideReticle = if (isInsideRaw) {
+                    reticleOutCount = 0
+                    true
+                } else {
+                    if (wasInReticle && reticleOutCount < 3) {
+                        reticleOutCount++
+                        true
+                    } else {
+                        reticleOutCount = 0
+                        false
+                    }
+                }
+
                 if (isInsideReticle && !wasInReticle) {
                     viewModelScope.launch {
                         _effects.emit(
@@ -211,6 +227,9 @@ class CrossingAssistViewModel(
 
                 // 5. 발화 안내 이벤트 전송
                 if (decision.guidanceText != null) {
+                    if (decision.state == CrossingAssistDecisionState.GREEN_ESTIMATE) {
+                        lastGreenGuidanceTimeMs = System.currentTimeMillis()
+                    }
                     val priority = when (decision.state) {
                         CrossingAssistDecisionState.RED_ESTIMATE -> GuidancePriority.SAFETY
                         CrossingAssistDecisionState.GREEN_ESTIMATE -> GuidancePriority.SAFETY
@@ -251,12 +270,16 @@ class CrossingAssistViewModel(
         val decision = guidanceArbiter.enqueue(msg)
         when (decision.action) {
             ArbiterAction.PLAY_IMMEDIATELY, ArbiterAction.PREEMPT_AND_PLAY -> {
+                val now = System.currentTimeMillis()
+                val isRecentGreen = (now - lastGreenGuidanceTimeMs) < 1800L
+                val shouldFlush = (msg.priority == GuidancePriority.SAFETY) && (!isRecentGreen || msg.text.contains("녹색"))
+
                 viewModelScope.launch {
                     _effects.emit(
                         CrossingAssistEffect.SpeakGuidance(
                             text = msg.text,
                             hapticType = msg.hapticType,
-                            queueFlush = msg.priority == GuidancePriority.SAFETY
+                            queueFlush = shouldFlush
                         )
                     )
                 }

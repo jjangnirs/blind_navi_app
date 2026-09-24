@@ -82,8 +82,11 @@ class LocalVlmSignalVerifier(
                 val velocity = (dist / dtSec).toFloat()
 
                 // 핸드헬드 기기의 미세 손떨림(dist <= 0.05f)은 정상 진동으로 수용.
-                // 유의미한 변위(dist > 0.05f)를 가지면서 화면을 고속 횡단(velocity > 0.85f)하는 차량만 기각!
-                if (dist > 0.05f && velocity > 0.85f) {
+                // 동일 신호등 기둥 내 상/하단 램프 전환(적색<->녹색)은 X 변위가 극히 작음(|cx2-cx1| <= 0.04f)
+                // 가로로 주행하는 차량(velocity > 0.85f && dist > 0.05f)만 기각하며, 동일 기둥 수직 전환은 정상 수용
+                val isSamePoleVerticalTransition = kotlin.math.abs(cx2 - cx1) <= 0.04f && kotlin.math.abs(cy2 - cy1) <= 0.12f
+
+                if (!isSamePoleVerticalTransition && dist > 0.05f && velocity > 0.85f) {
                     val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
                     recordObservation(rejected)
                     lastObservation = rejected

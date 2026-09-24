@@ -270,5 +270,105 @@ class CameraVisionSignalEstimatorTest {
         // Zero False-Green 원칙
         assertTrue(firstObs.state != ObservedSignalState.GREEN || firstObs.score >= 0.90f)
     }
+
+    @Test
+    fun testGreenSignalWithSunlightPhantomRedReflectionOnSamePole() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        // 짙은 하우징 및 거리 배경 (V=40)
+        for (i in 0 until width * height) {
+            buffer.put(40.toByte())
+            buffer.put(40.toByte())
+            buffer.put(40.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 상단(y: 40..55, x: 150..170): 한낮 햇빛이 꺼진 적색 렌즈에 반사된 Phantom Light (미약한 적색 반사)
+        for (y in 40..55) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 180.toByte()) // R = 180
+                buffer.put(offset + 1, 40.toByte()) // G = 40
+                buffer.put(offset + 2, 40.toByte()) // B = 40
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 2. 하단(y: 65..85, x: 150..170): 실제로 강하게 발광 중인 보행자 에메랄드 녹색 LED (고휘도)
+        for (y in 65..85) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 20.toByte()) // R = 20
+                buffer.put(offset + 1, 235.toByte()) // G = 235
+                buffer.put(offset + 2, 160.toByte()) // B = 160
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        // 3프레임 투입하여 시간 일관성 필터 통과 확인
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 상단에 약한 햇빛 반사광이 있더라도 하단 실발광 녹색 LED가 정상 인식되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
+
+    @Test
+    fun testCentralGreenSignalIgnoresDistantLeftStrayRedTrafficLight() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 화면 좌측 원거리(y: 40..60, x: 30..50)에 위치한 다른 기둥의 적색 신호등 (타깃 조준선 밖)
+        for (y in 40..60) {
+            for (x in 30..50) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 240.toByte())
+                buffer.put(offset + 1, 30.toByte())
+                buffer.put(offset + 2, 30.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 2. 화면 중앙 타깃 영역(y: 50..70, x: 150..170)에 위치한 보행자 녹색 신호등
+        for (y in 50..70) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 조준 중심에 있는 녹색 신호가 좌측 원거리 다른 기둥의 적색에 의해 방해받지 않고 GREEN으로 판정되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
 }
 
