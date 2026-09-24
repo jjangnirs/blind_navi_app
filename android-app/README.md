@@ -111,6 +111,28 @@ cd android-app
 - **Tier 2 (박스 한정 ROI HSV 정밀 분석)**: 선별된 신호등 박스 내부 영역으로만 스캔을 한정하여 연산량 90% 절감 및 배경 잡음 완전 격리
 - **Tier 3 (기하·동역학·시간 일관성 검증)**: `LocalVlmSignalVerifier`를 통해 최종 검증된 결과만 반환
 
+### 14. 핸드헬드 손떨림 내성 추적 및 카메라 회전 정규화 (`LocalVlmSignalVerifier`, `ImageBufferRotator`)
+- **소형 원거리 신호등 손떨림 방어**: 소형 박스에 대해 단순 IoU 외에 중심점 거리($\text{centerDist} \le 0.08$)를 복합 평가하여 8~12px 미세 떨림 시 불필요한 트랙 ID 리셋 방지
+- **차량 횡단 모션 분리**: 미세 진동($\text{dist} \le 0.05$)은 수용하고 실제 횡단 차량($v > 0.85/\text{sec}, \text{dist} > 0.05$)만 엄격 기각
+- **카메라 버퍼 90도 회전 정규화**: 세로 파지 시 회전된 CameraX 센서 버퍼를 정립(Upright) 상태로 정규화하여 세로 2구 보행신호등 기하 검증 무결성 확보
+- **한국형 에메랄드 청록 LED 파장 확장**: $R=52, G=197, B=202$ 등 청록/시안 고유 파장(Hue 115°~205°) 전 영역 안정 감지
+
+### 15. 온디바이스 비전 지각 비행기록장치 (`PerceptionFlightRecorder`)
+- **무잠금 300프레임 원형 링 버퍼**: 메모리 및 GC 부하 없이 최근 10~15초 분량의 지각 텔레메트리(센서 각도, 바운딩 박스, 색상 확률, 트래커 ID)를 실시간 비동기 로깅
+- **제로-개인정보 유출 (Zero Privacy Leak)**: 원본 카메라 프레임이나 사용자 위경도 좌표, 목적지 정보는 일절 버퍼에 기록하지 않음
+- **이상 징후 자동/수동 진단 덤프**: 장시간 락온 후 미판정, 비정상 색상 전이 등 발생 시 또는 사용자 요청 시 최근 300프레임 진단 로그를 로컬 JSON 파일로 원자적 플러시
+
+### 16. 최근 검색 목적지 및 즐겨찾기(⭐) 영구 저장소 (`RecentDestinationRepository`)
+- **SharedPreferences 기반 JSON 지속성**: 최근 검색/선택한 장소(최대 20건 FIFO) 및 즐겨찾기 세트를 기기 로컬에 영구 저장하여 앱 재실행 후에도 온전히 복원
+- **4단계 동적 추천 큐**: 1) 현재 GPS 기준 전방 테스트 경로 -> 2) 즐겨찾기 등록 목적지(⭐ 상단 고정) -> 3) 최근 검색 목적지 -> 4) 기본 추천 POI 순서로 노출
+- **접근성 별표 토글 버튼**: 각 목적지 카드에 48dp 독립 터치 타깃 별표 버튼을 제공하고 TalkBack 시맨틱 및 음성 낭독 연동
+
+### 17. 멀티밴드 GNSS 최적화 및 횡단보도 접근 감속 방위각 필터 (`LocationSample`, `ProductionLocationSource`, `CrossingApproachEngine`)
+- **시계 기준점(Clock Base) 자동 폴백**: 안드로이드 부팅 시간(`elapsedRealtimeNanos`)과 JVM 나노초(`System.nanoTime`) 불일치로 신선한 야외 GPS가 만료 샘플(`STALE_SAMPLE`)로 오판되던 버그를 절대 시계(`currentTimeMillis - timestampEpochMs`) 폴백으로 해결
+- **Android 12+ Fused Location Provider 연동**: Galaxy S25 Ultra(Snapdragon 8 Elite)의 L1+L5 듀얼 주파수 GNSS 및 PDR 센서 융합 위치를 초당 1회 정밀 수신
+- **보행 감속 적응형 방위각 완화**: 횡단보도 18m 접근 또는 보행 속도 1.2m/s 이하 서행 시 방위각 허용 오차를 110도로 완화하여 연석 정지/서행 중 횡단보도 노드가 Drop되는 플리커 원천 차단
+
+
 
 ## TalkBack 수동 시험 절차
 1. **TalkBack 활성화**: Android 기기 설정 -> 접근성 -> TalkBack 켜기 (또는 볼륨 업+다운 키 3초 길게 누르기).

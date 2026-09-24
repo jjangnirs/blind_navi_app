@@ -59,6 +59,10 @@ MVP에 포함한다.
 16. TalkBack, 큰 터치 영역, 고대비, TTS, 진동 패턴
 17. 네트워크가 끊겼을 때 캐시된 경로·시설 및 온디바이스 AI 사용 (FastAPI 백엔드 프록시 및 외부 HTTPS 터널 지원)
 18. 잘못된 시설 정보 신고와 운영자 검수 흐름
+19. 최근 검색 목적지 및 즐겨찾기(⭐) 영구 저장소 (`RecentDestinationRepository`, SharedPreferences JSON 기반 영구 저장, 앱 재시작 후 지속성 보장, 즐겨찾기 우선 4단계 동적 추천 큐)
+20. 멀티밴드 GNSS 및 야외 정밀 위치 수신 최적화 (`ProductionLocationSource`, Android 12+ Fused Location 연동, Galaxy S25 Ultra 등 L1+L5 듀얼 주파수 지원, 부팅 시계-절대 시계 불일치 자동 폴백)
+21. 횡단보도 정지/감속 구간 방위각 요동 내성 완화 필터 (`CrossingApproachEngine`, 18m 근접 또는 보행 속도 1.2m/s 이하 시 110도 허용으로 연석 접근 시 횡단보도 Drop 원천 방지)
+22. 온디바이스 비전 지각 비행기록장치 (`PerceptionFlightRecorder`, 300프레임 무잠금 원형 링 버퍼 기반 텔레메트리 로깅, 카메라 영상/좌표 유출 없는 제로-프라이버시 아키텍처, 이상 징후 자동/수동 진단 덤프)
 
 MVP에서 제외한다.
 
