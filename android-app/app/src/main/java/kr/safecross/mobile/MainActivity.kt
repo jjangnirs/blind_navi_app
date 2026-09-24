@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         kr.safecross.mobile.perception.PerceptionFlightRecorder.init(applicationContext)
+        kr.safecross.mobile.navigation.NavigationFlightRecorder.init(applicationContext)
         ttsHelper = TtsAnnouncementHelper(this)
         locationSource = ProductionLocationSource(this)
 

@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
@@ -53,6 +54,8 @@ import kr.safecross.mobile.ui.theme.HighContrastYellow
 import kr.safecross.mobile.ui.theme.WarningBannerBackground
 import kr.safecross.mobile.ui.theme.WarningBorder
 import kr.safecross.mobile.ui.screens.route.RealRouteMapView
+import androidx.compose.ui.platform.LocalContext
+import kr.safecross.mobile.navigation.NavigationFlightRecorder
 
 @Composable
 fun NavigationScreen(
@@ -66,8 +69,11 @@ fun NavigationScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
+    val navLogSummary by NavigationFlightRecorder.latestSummary.collectAsState()
 
     LaunchedEffect(route) {
+        NavigationFlightRecorder.init(context)
         viewModel.setRoute(route)
     }
 
@@ -348,7 +354,79 @@ fun NavigationScreen(
                 )
             }
 
-            // 7. 보행 안내 종료 버튼 (최소 64dp)
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 7. 실시간 경로 분석 진단 로그 및 원클릭 공유 버튼
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF1E2638), RoundedCornerShape(12.dp))
+                    .border(1.5.dp, Color(0xFF3B4660), RoundedCornerShape(12.dp))
+                    .padding(12.dp)
+            ) {
+                Text(
+                    text = "📊 실시간 경로 분석 상태",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF81D4FA),
+                        fontSize = 13.sp
+                    )
+                )
+
+                if (navLogSummary.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = navLogSummary,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 12.sp,
+                            color = Color(0xFFE0E0E0),
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    onClick = {
+                        val logs = NavigationFlightRecorder.readRecentLogs(context, 150)
+                        val sendIntent = android.content.Intent().apply {
+                            action = android.content.Intent.ACTION_SEND
+                            putExtra(android.content.Intent.EXTRA_TEXT, logs)
+                            type = "text/plain"
+                        }
+                        val shareIntent = android.content.Intent.createChooser(sendIntent, "경로 분석 진단 로그 공유")
+                        context.startActivity(shareIntent)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF263238),
+                        contentColor = HighContrastWhite
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFF81D4FA)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "경로 분석 진단 로그 공유/저장",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF81D4FA)
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 8. 보행 안내 종료 버튼 (최소 64dp)
             Button(
                 onClick = { viewModel.stopNavigation() },
                 modifier = Modifier

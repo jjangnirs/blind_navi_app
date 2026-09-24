@@ -30,6 +30,8 @@ import kr.safecross.mobile.navigation.engine.GeoMath
 import kr.safecross.mobile.perception.DevicePose
 import kr.safecross.mobile.sensor.DevicePoseTracker
 import kr.safecross.mobile.service.NavigationForegroundService
+import kr.safecross.mobile.navigation.NavigationFlightRecorder
+import java.util.Locale
 
 /**
  * 실시간 보행 내비게이션 ViewModel (TRD 4.8, SR-F-070~076 준수).
@@ -60,6 +62,7 @@ class NavigationViewModel(
     private var locationJob: Job? = null
     private var poseJob: Job? = null
     private var serviceStopJob: Job? = null
+    private var lastPoseLogTimeMs = 0L
 
     // 분기점 사전 알림 추적 (30m, 15m 중복 방지)
     private var lastApproachAnnouncedManeuverIndex = -1
@@ -112,6 +115,10 @@ class NavigationViewModel(
             )
         }
 
+        val originName = route.maneuvers.firstOrNull()?.instruction ?: "출발지"
+        val destinationName = route.maneuvers.lastOrNull()?.instruction ?: "목적지"
+        NavigationFlightRecorder.recordRouteStart(route, originName, destinationName)
+
         speakCurrentStep()
         startLocationTracking()
         startPoseTracking()
@@ -160,6 +167,18 @@ class NavigationViewModel(
             it.copy(
                 isOrientationAligned = orientationPrompt.isAligned,
                 alignmentPromptMessage = orientationPrompt.message
+            )
+        }
+
+        // 경로 분석 비행 기록기 기기 헤딩/자세 기록 (1초 주기 또는 정대 상태 변화 시)
+        if (Math.abs(currentTimeMs - lastPoseLogTimeMs) >= 1000L || orientationPrompt.isAligned != wasAligned) {
+            lastPoseLogTimeMs = currentTimeMs
+            NavigationFlightRecorder.recordPose(
+                headingDeg = heading,
+                pitchDeg = pose.pitchDegrees,
+                targetBearingDeg = targetBearing,
+                isAligned = orientationPrompt.isAligned,
+                promptText = orientationPrompt.message
             )
         }
 
@@ -232,14 +251,42 @@ class NavigationViewModel(
     ) {
         if (_uiState.value.isFinished) return
 
+        // GPS 수신 원격 기록
+        NavigationFlightRecorder.recordGps(
+            lat = sample.lat,
+            lon = sample.lon,
+            accuracyMeters = sample.accuracyMeters,
+            speedMps = sample.speedMps,
+            bearingDegrees = sample.bearingDegrees,
+            signalPercent = sample.signalStrengthPercent,
+            satelliteCount = sample.satelliteCount
+        )
+
         // 1. 경로 진행 엔진 갱신
         val progressEngine = routeProgressEngine
         if (progressEngine != null) {
             val progress = progressEngine.updateProgress(sample)
 
+            // 진행 상태 및 크로스트랙 오차 기록
+            NavigationFlightRecorder.recordProgress(
+                stepIndex = progress.currentManeuverIndex,
+                totalSteps = _uiState.value.route?.maneuvers?.size ?: 0,
+                distanceAlongMeters = progress.distanceAlongRouteMeters,
+                remainingDistanceMeters = progress.remainingDistanceMeters,
+                distanceToNextManeuverMeters = progress.distanceToNextManeuverMeters,
+                crossTrackErrorMeters = progress.crossTrackErrorMeters,
+                isOffRoute = progress.isOffRoute,
+                offRouteCount = progress.offRouteConsecutiveCount
+            )
+
             val wasOffRoute = _uiState.value.isOffRoute
             if (progress.isOffRoute) {
                 if (!wasOffRoute) {
+                    val cteStr = String.format(Locale.US, "%.1f", progress.crossTrackErrorMeters)
+                    NavigationFlightRecorder.recordRerouteTrigger(
+                        reason = "OFF_ROUTE",
+                        detail = "CTE=${cteStr}m, cnt=${progress.offRouteConsecutiveCount}, acc=${sample.accuracyMeters}m"
+                    )
                     viewModelScope.launch {
                         _effects.emit(NavigationEffect.ShowOffRouteAlert("경로를 벗어났습니다. 주변을 확인하세요."))
                     }
@@ -265,6 +312,11 @@ class NavigationViewModel(
                             val distToStart = calculateDistanceMeters(startPoint, kr.safecross.mobile.domain.model.LocationPoint(sample.lat, sample.lon))
                             if (distToStart > 25.0) {
                                 hasCalibratedInitialStart = true
+                                val dStr = String.format(Locale.US, "%.1f", distToStart)
+                                NavigationFlightRecorder.recordRerouteTrigger(
+                                    reason = "INITIAL_DEPARTURE_CALIBRATION",
+                                    detail = "distToStart=${dStr}m > 25.0m"
+                                )
                                 recalculateRouteFromCurrentLocation(sample)
                             }
                         }
@@ -276,6 +328,7 @@ class NavigationViewModel(
             }
 
             if (progress.isFinished) {
+                NavigationFlightRecorder.recordFinish(progress.distanceAlongRouteMeters)
                 _uiState.update {
                     it.copy(
                         isFinished = true,
@@ -322,6 +375,11 @@ class NavigationViewModel(
                 lastApproachStage = 0
                 val newManeuver = progress.currentManeuver
                 if (newManeuver != null) {
+                    NavigationFlightRecorder.recordStepChange(
+                        fromStep = prevManeuverIndex,
+                        toStep = progress.currentManeuverIndex,
+                        instruction = newManeuver.instruction
+                    )
                     val cleaned = BlindGuidanceFormatter.cleanInstruction(newManeuver.instruction)
                     val guidanceText = "${cleaned}. ${_uiState.value.walkingMode.safetyGuidance}"
                     enqueueGuidance(
@@ -355,6 +413,7 @@ class NavigationViewModel(
                             distanceMeters = distToNext,
                             relativeBearingDeg = relativeBearing
                         )
+                        NavigationFlightRecorder.recordApproach(30, distToNext, text)
                         enqueueGuidance(
                             GuidanceMessage(
                                 id = "approach_30m_${progress.currentManeuverIndex}_${currentTimeMs}",
@@ -372,6 +431,7 @@ class NavigationViewModel(
                             distanceMeters = distToNext,
                             relativeBearingDeg = relativeBearing
                         )
+                        NavigationFlightRecorder.recordApproach(15, distToNext, text)
                         enqueueGuidance(
                             GuidanceMessage(
                                 id = "approach_15m_${progress.currentManeuverIndex}_${currentTimeMs}",
@@ -462,6 +522,7 @@ class NavigationViewModel(
         message: GuidanceMessage,
         currentTimeMs: Long = System.currentTimeMillis()
     ) {
+        NavigationFlightRecorder.recordGuidance(message.category, message.priority.name, message.text)
         val decision = guidanceArbiter.enqueue(message, currentTimeMs)
         when (decision.action) {
             ArbiterAction.PLAY_IMMEDIATELY, ArbiterAction.PREEMPT_AND_PLAY -> {
@@ -666,6 +727,7 @@ class NavigationViewModel(
             )
             result.fold(
                 onSuccess = { newRoute ->
+                    NavigationFlightRecorder.recordRerouteSuccess(newRoute.totalDistanceMeters, newRoute.maneuvers.size)
                     routeProgressEngine = RouteProgressEngine(newRoute, offRouteThresholdMeters = 35.0, minConsecutiveOffRoute = 4)
                     hasCalibratedInitialStart = true
                     _uiState.update {
@@ -689,7 +751,9 @@ class NavigationViewModel(
                         now
                     )
                 },
-                onFailure = {}
+                onFailure = { error ->
+                    NavigationFlightRecorder.recordRerouteFailure(error.message ?: "network_or_api_error")
+                }
             )
             isRerouting = false
         }

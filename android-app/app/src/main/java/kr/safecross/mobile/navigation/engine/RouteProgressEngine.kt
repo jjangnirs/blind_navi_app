@@ -17,7 +17,8 @@ data class RouteProgressState(
     val currentManeuver: Maneuver? = null,
     val nextManeuver: Maneuver? = null,
     val distanceToNextManeuverMeters: Double = 0.0,
-    val isFinished: Boolean = false
+    val isFinished: Boolean = false,
+    val offRouteConsecutiveCount: Int = 0
 )
 
 /**
@@ -159,7 +160,8 @@ class RouteProgressEngine(
             currentManeuver = curManeuver,
             nextManeuver = nxtManeuver,
             distanceToNextManeuverMeters = distToNextM,
-            isFinished = false
+            isFinished = false,
+            offRouteConsecutiveCount = offRouteConsecutiveCount
         )
     }
 

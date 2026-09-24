@@ -18,4 +18,4 @@ Write-Host "[CONNECTED] Device detected! Streaming traffic light logs..." -Foreg
 Write-Host "Press Ctrl+C to stop." -ForegroundColor Gray
 Write-Host "----------------------------------------------------------"
 
-adb logcat -v time -s SafeCrossFlight:V SafeCrossNav:V
+adb logcat -v time -s SafeCrossFlight:V SafeCrossNav:V SafeCrossNavFlight:V
