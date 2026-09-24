@@ -49,6 +49,7 @@ class TwoTierHybridSignalEstimator(
                         candidate.copy(
                             state = verifiedResult.verifiedState,
                             score = verifiedResult.confidenceScore,
+                            ephemeralTrackId = verifiedResult.ephemeralTrackId.ifEmpty { candidate.ephemeralTrackId },
                             modelVersion = "two-tier-hybrid-viewfinder-v2.1"
                         )
                     )
@@ -85,6 +86,7 @@ class TwoTierHybridSignalEstimator(
             analyzedSignal.copy(
                 state = verifiedResult.verifiedState,
                 score = verifiedResult.confidenceScore,
+                ephemeralTrackId = verifiedResult.ephemeralTrackId.ifEmpty { analyzedSignal.ephemeralTrackId },
                 modelVersion = "two-tier-hybrid-v2.0"
             )
         )

@@ -24,7 +24,8 @@ class LocalVlmSignalVerifier(
         val verifiedState: ObservedSignalState,
         val confidenceScore: Float,
         val isVerified: Boolean,
-        val verificationReason: String
+        val verificationReason: String,
+        val ephemeralTrackId: String = ""
     )
 
     /**
@@ -44,7 +45,8 @@ class LocalVlmSignalVerifier(
                 verifiedState = candidate.state,
                 confidenceScore = candidate.score,
                 isVerified = true,
-                verificationReason = "PASSTHROUGH_OR_NO_BUFFER"
+                verificationReason = "PASSTHROUGH_OR_NO_BUFFER",
+                ephemeralTrackId = candidate.ephemeralTrackId.ifEmpty { currentTrackId }
             )
         }
 
@@ -62,7 +64,8 @@ class LocalVlmSignalVerifier(
                 verifiedState = ObservedSignalState.UNKNOWN,
                 confidenceScore = 0.25f,
                 isVerified = false,
-                verificationReason = "REJECTED_HORIZONTAL_VEHICLE_LIGHT"
+                verificationReason = "REJECTED_HORIZONTAL_VEHICLE_LIGHT",
+                ephemeralTrackId = currentTrackId
             )
         }
 
@@ -75,11 +78,12 @@ class LocalVlmSignalVerifier(
                 val cy1 = (prev.box.top + prev.box.bottom) / 2f
                 val cx2 = (candidate.box.left + candidate.box.right) / 2f
                 val cy2 = (candidate.box.top + candidate.box.bottom) / 2f
-                val dist = kotlin.math.sqrt((cx2 - cx1) * (cx2 - cx1) + (cy2 - cy1) * (cy2 - cy1))
+                val dist = kotlin.math.hypot(cx2 - cx1, cy2 - cy1)
                 val velocity = (dist / dtSec).toFloat()
 
-                // 초당 화면 폭의 55% 이상 빠르게 이동하는 차량/동적 객체 기각
-                if (velocity > 0.55f) {
+                // 핸드헬드 기기의 미세 손떨림(dist <= 0.05f)은 정상 진동으로 수용.
+                // 유의미한 변위(dist > 0.05f)를 가지면서 화면을 고속 횡단(velocity > 0.85f)하는 차량만 기각!
+                if (dist > 0.05f && velocity > 0.85f) {
                     val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
                     recordObservation(rejected)
                     lastObservation = rejected
@@ -87,17 +91,35 @@ class LocalVlmSignalVerifier(
                         verifiedState = ObservedSignalState.UNKNOWN,
                         confidenceScore = 0.20f,
                         isVerified = false,
-                        verificationReason = "REJECTED_DYNAMIC_MOTION"
+                        verificationReason = "REJECTED_DYNAMIC_MOTION",
+                        ephemeralTrackId = currentTrackId
                     )
                 }
             }
         }
 
-        // 3. IoU 기반 공간 추적 및 Track 일관성 검사 (개선 1단계)
+        // 3. 공간 추적 및 Track 일관성 검사 (IoU + Centroid Proximity 복합 적용)
         if (prev != null && prev.state != ObservedSignalState.UNKNOWN) {
             val iou = computeIoU(candidate.box, prev.box)
-            if (iou < 0.35f) {
-                // 이전 프레임과 위치가 튀었거나 다른 물체로 변경됨 -> 시간 큐 리셋 및 신규 Track 분리!
+            val cx1 = (prev.box.left + prev.box.right) / 2f
+            val cy1 = (prev.box.top + prev.box.bottom) / 2f
+            val cx2 = (candidate.box.left + candidate.box.right) / 2f
+            val cy2 = (candidate.box.top + candidate.box.bottom) / 2f
+            val centerDist = kotlin.math.hypot(cx2 - cx1, cy2 - cy1)
+
+            // 소형/원거리 박스는 8~10픽셀 손떨림만으로도 IoU가 0.35 미만으로 급락함.
+            // 따라서 소형 박스(width < 0.12 또는 height < 0.15)의 경우
+            // 중심 거리 근접도(centerDist <= 0.08f) 또는 완화된 IoU(>= 0.15f)를 만족하면 동일 Track 유지
+            val isSmallBox = minOf(candidate.box.width, prev.box.width) < 0.12f ||
+                    minOf(candidate.box.height, prev.box.height) < 0.15f
+            val isContinuous = if (isSmallBox) {
+                iou >= 0.15f || centerDist <= 0.08f
+            } else {
+                iou >= 0.35f || centerDist <= 0.06f
+            }
+
+            if (!isContinuous) {
+                // 실제 다른 위치로 점프/시선 전환됨 -> 시간 큐 리셋 및 신규 Track 분리!
                 history.clear()
                 currentTrackId = "track-dyn-${++trackCounter}"
             }
@@ -126,7 +148,8 @@ class LocalVlmSignalVerifier(
             verifiedState = finalState,
             confidenceScore = boostedScore,
             isVerified = (finalState != ObservedSignalState.UNKNOWN),
-            verificationReason = "TEMPORAL_GEOMETRIC_VERIFIED"
+            verificationReason = "TEMPORAL_GEOMETRIC_VERIFIED",
+            ephemeralTrackId = currentTrackId
         )
     }
 

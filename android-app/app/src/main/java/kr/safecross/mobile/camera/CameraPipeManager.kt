@@ -83,21 +83,24 @@ class ProductionCameraPipeManager(
                     try {
                         val plane = imageProxy.planes.firstOrNull()
                         val directBuffer = plane?.buffer
-                        val copiedBuffer = if (directBuffer != null && directBuffer.remaining() > 0) {
-                            val cloned = java.nio.ByteBuffer.allocateDirect(directBuffer.remaining())
-                            directBuffer.rewind()
-                            cloned.put(directBuffer)
-                            cloned.flip()
-                            cloned
-                        } else null
+                        val (finalBuffer, finalWidth, finalHeight) = if (directBuffer != null && directBuffer.remaining() > 0) {
+                            ImageBufferRotator.rotateOrCopyRgbaBuffer(
+                                directBuffer,
+                                imageProxy.width,
+                                imageProxy.height,
+                                imageProxy.imageInfo.rotationDegrees
+                            )
+                        } else {
+                            Triple(null, imageProxy.width, imageProxy.height)
+                        }
 
                         val frameRef = FrameRef(
-                            width = imageProxy.width,
-                            height = imageProxy.height,
-                            rotationDegrees = imageProxy.imageInfo.rotationDegrees,
+                            width = finalWidth,
+                            height = finalHeight,
+                            rotationDegrees = 0, // 화면 표시 기준 정립(Upright)으로 정규화됨
                             timestampNanos = System.nanoTime(),
                             sensorTimestampNanos = imageProxy.imageInfo.timestamp,
-                            rgbaBuffer = copiedBuffer
+                            rgbaBuffer = finalBuffer
                         )
                         onFrame(frameRef)
                     } finally {

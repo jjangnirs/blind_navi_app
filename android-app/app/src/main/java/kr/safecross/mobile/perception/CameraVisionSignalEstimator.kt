@@ -2,6 +2,7 @@ package kr.safecross.mobile.perception
 
 import android.content.Context
 import kr.safecross.mobile.camera.FrameRef
+import kr.safecross.mobile.camera.ImageBufferRotator
 import java.nio.ByteBuffer
 import kotlin.math.abs
 import kotlin.math.max
@@ -13,7 +14,7 @@ import kotlin.math.min
  *
  * 개선 사항:
  * 1. HSV 색공간 변환을 통한 조도(명도)와 색조(Hue)/채도(Saturation) 분리
- * 2. 한국 경찰청 보행신호등 규격: 고휘도 적색(0~15°, 345~360°) 및 에메랄드 청록색(145~195°) 정밀 필터링
+ * 2. 한국 경찰청 보행신호등 규격: 고휘도 적색(0~15°, 345~360°) 및 에메랄드 청록색(115~205°) 정밀 필터링
  * 3. 직사광선/역광(백화 현상) 및 그늘/야간(저조도) 적응형 임계값 보정
  * 4. 세로형 보행신호등(상단 적색 / 하단 녹색) 공간 기하 검증 및 차량용 가로 신호등/황색등 원천 차단
  * 5. LocalVlmSignalVerifier를 통한 프레임 시간 일관성 필터링 및 Zero False-Green 보장
@@ -25,10 +26,10 @@ class CameraVisionSignalEstimator(
 ) : PedestrianSignalEstimator {
 
     override suspend fun estimate(frame: FrameRef): List<SignalObservation> {
-        val buffer = frame.rgbaBuffer
+        val rawBuffer = frame.rgbaBuffer
 
         // 테스트 환경이거나 버퍼가 없는 경우 Fallback
-        if (buffer == null) {
+        if (rawBuffer == null) {
             val fallbackState = testFallbackState ?: ObservedSignalState.RED
             val rawObs = SignalObservation(
                 ephemeralTrackId = "track-sig-simulated",
@@ -40,10 +41,22 @@ class CameraVisionSignalEstimator(
                 modelVersion = "vision-adaptive-hsv-v2.0"
             )
             val verified = verifier.verify(rawObs, null, frame.width, frame.height)
-            return listOf(rawObs.copy(state = verified.verifiedState, score = verified.confidenceScore))
+            return listOf(
+                rawObs.copy(
+                    state = verified.verifiedState,
+                    score = verified.confidenceScore,
+                    ephemeralTrackId = verified.ephemeralTrackId.ifEmpty { rawObs.ephemeralTrackId }
+                )
+            )
         }
 
-        return analyzeRgbaFrame(buffer, frame.width, frame.height, frame.timestampNanos, null)
+        val (buffer, width, height) = if (frame.rotationDegrees % 360 != 0) {
+            ImageBufferRotator.rotateOrCopyRgbaBuffer(rawBuffer, frame.width, frame.height, frame.rotationDegrees)
+        } else {
+            Triple(rawBuffer, frame.width, frame.height)
+        }
+
+        return analyzeRgbaFrame(buffer, width, height, frame.timestampNanos, null)
     }
 
     /**
@@ -51,8 +64,8 @@ class CameraVisionSignalEstimator(
      * (2단계 하이브리드 교차 검증 파이프라인용)
      */
     suspend fun estimateWithinRoi(frame: FrameRef, targetRoi: NormalizedBox): List<SignalObservation> {
-        val buffer = frame.rgbaBuffer
-        if (buffer == null) {
+        val rawBuffer = frame.rgbaBuffer
+        if (rawBuffer == null) {
             val fallbackState = testFallbackState ?: ObservedSignalState.RED
             val rawObs = SignalObservation(
                 ephemeralTrackId = "track-sig-roi-sim",
@@ -65,7 +78,14 @@ class CameraVisionSignalEstimator(
             )
             return listOf(rawObs)
         }
-        return analyzeRgbaFrame(buffer, frame.width, frame.height, frame.timestampNanos, targetRoi)
+
+        val (buffer, width, height) = if (frame.rotationDegrees % 360 != 0) {
+            ImageBufferRotator.rotateOrCopyRgbaBuffer(rawBuffer, frame.width, frame.height, frame.rotationDegrees)
+        } else {
+            Triple(rawBuffer, frame.width, frame.height)
+        }
+
+        return analyzeRgbaFrame(buffer, width, height, frame.timestampNanos, targetRoi)
     }
 
     private fun analyzeRgbaFrame(
@@ -178,13 +198,13 @@ class CameraVisionSignalEstimator(
                     }
 
                     // 2. 보행자 녹색 신호등 판정:
-                    // (1) HSV 기반: 한국형 에메랄드/청록색 LED (Hue 140°~195°) 또는 일반 녹색 LED (Hue 115°~195°)
-                    val isGreenHsv = (h in 115.0f..195.0f && s >= 0.35f && v >= 0.25f) ||
-                            // 역광 보정: 녹색 고휘도 LED
-                            (v >= 0.85f && s >= 0.25f && g > r * 1.25 && (g + b) > r * 1.7)
+                    // (1) HSV 기반: 한국형 에메랄드/청록색 LED (Hue 115°~205°)
+                    val isGreenHsv = (h in 115.0f..205.0f && s >= 0.35f && v >= 0.25f) ||
+                            // 역광 보정: 녹색/청록색 고휘도 LED (시안/에메랄드 특성상 B >= G인 파장 수용)
+                            (v >= 0.80f && s >= 0.25f && (g > r * 1.20 || b > r * 1.20) && (g + b) > r * 1.7)
 
-                    // (2) 기존 RGB 임계값과의 OR 결합
-                    val isGreenRgb = (g >= 115) && (g > r * 1.30) && ((g + b) > r * 1.8) && (g - r >= 28) && (r < 120)
+                    // (2) 기존 RGB 임계값과의 OR 결합 (청록색 파장 및 센서 분산 수용)
+                    val isGreenRgb = (g >= 115 || b >= 115) && (g > r * 1.25 || b > r * 1.25) && ((g + b) > r * 1.7) && ((g - r >= 25) || (b - r >= 25)) && (r < 130)
 
                     val isGreen = isGreenHsv || isGreenRgb
                     if (isGreen) {
@@ -237,7 +257,13 @@ class CameraVisionSignalEstimator(
                 modelVersion = "vision-adaptive-hsv-v2.0"
             )
             val verified = verifier.verify(unkObs, buffer, width, height)
-            return listOf(unkObs.copy(state = verified.verifiedState, score = verified.confidenceScore))
+            return listOf(
+                unkObs.copy(
+                    state = verified.verifiedState,
+                    score = verified.confidenceScore,
+                    ephemeralTrackId = verified.ephemeralTrackId.ifEmpty { unkObs.ephemeralTrackId }
+                )
+            )
         }
 
         // 적색과 녹색 판정
@@ -281,7 +307,8 @@ class CameraVisionSignalEstimator(
         return listOf(
             rawObservation.copy(
                 state = verification.verifiedState,
-                score = verification.confidenceScore
+                score = verification.confidenceScore,
+                ephemeralTrackId = verification.ephemeralTrackId.ifEmpty { rawObservation.ephemeralTrackId }
             )
         )
     }

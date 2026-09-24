@@ -277,4 +277,129 @@ class PerceptionRobustnessTest {
         val boxCenterX = (obs.box.left + obs.box.right) / 2f * width
         assertTrue("박스 중심($boxCenterX)이 보행자 신호등 부근이어야 함", boxCenterX in 140f..175f)
     }
+
+    @Test
+    fun testHandheldTremorPreservesTrackContinuityAndAccumulatesGreen() {
+        val dummyBuffer = ByteBuffer.allocateDirect(100)
+        val freshVerifier = LocalVlmSignalVerifier()
+
+        // 15~20m 원거리의 소형 신호등 (폭 0.03, 높이 0.06)
+        val baseBox = NormalizedBox(left = 0.48f, top = 0.25f, right = 0.51f, bottom = 0.31f)
+
+        // 핸드헬드 파지 시 자연스러운 8~12픽셀 손떨림 변위 (Δx = ±0.015, Δy = ±0.008)
+        val jitterOffsets = listOf(
+            Pair(0.000f, 0.000f),
+            Pair(0.015f, 0.005f),
+            Pair(-0.010f, 0.008f),
+            Pair(0.012f, -0.006f),
+            Pair(-0.008f, 0.004f)
+        )
+
+        var lastTrackId = ""
+        var finalVerifiedState = ObservedSignalState.UNKNOWN
+
+        for (i in jitterOffsets.indices) {
+            val (dx, dy) = jitterOffsets[i]
+            val jitteredBox = NormalizedBox(
+                left = baseBox.left + dx,
+                top = baseBox.top + dy,
+                right = baseBox.right + dx,
+                bottom = baseBox.bottom + dy
+            )
+
+            val obs = SignalObservation(
+                ephemeralTrackId = "track-test",
+                state = ObservedSignalState.GREEN,
+                score = 0.95f,
+                box = jitteredBox,
+                frameTimestampNanos = 1_000_000_000L + i * 33_333_333L, // 30 FPS (33ms)
+                quality = FrameQuality(1.0f, 1.0f, true),
+                modelVersion = "test"
+            )
+
+            val res = freshVerifier.verify(obs, dummyBuffer, 480, 640)
+            assertTrue("손떨림 변위는 모션 필터에서 기각되지 않아야 함", res.isVerified || i < 2)
+
+            if (i == 0) {
+                lastTrackId = res.ephemeralTrackId
+            } else {
+                // 손떨림 중에도 동일 Track ID가 유지되어야 함 (IoU 대신 중심 거리 근접도 적용)
+                assertEquals("프레임 $i 에서 Track ID가 흔들림으로 인해 리셋되지 않아야 함", lastTrackId, res.ephemeralTrackId)
+            }
+            finalVerifiedState = res.verifiedState
+        }
+
+        // 5프레임 롤링 윈도우가 손떨림에도 리셋되지 않고 유지되어 최종 GREEN 승인
+        assertEquals(ObservedSignalState.GREEN, finalVerifiedState)
+    }
+
+    @Test
+    fun testKoreanCyanPedestrianSignalHueDetected() = runTest {
+        val width = 100
+        val height = 100
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        // 배경: 어두운 하우징 케이스 (R=30, G=30, B=30)
+        for (i in 0 until width * height) {
+            buffer.put(30.toByte())
+            buffer.put(30.toByte())
+            buffer.put(30.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 2026-09-24 현장 테스트 실측치: 한국형 청록(에메랄드/시안) LED
+        // R=52, G=197, B=202 (Hue: 182°~188°)
+        for (y in 45..55) {
+            for (x in 45..52) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 52.toByte())
+                buffer.put(offset + 1, 197.toByte())
+                buffer.put(offset + 2, 202.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        val observations = estimator.estimate(frame)
+
+        assertEquals(1, observations.size)
+        val obs = observations.first()
+        assertEquals("한국형 청록(시안) LED 신호가 정확히 GREEN으로 인식되어야 함", ObservedSignalState.GREEN, obs.state)
+        assertTrue("신뢰도 점수는 0.90 이상이어야 함", obs.score >= 0.90f)
+    }
+
+    @Test
+    fun testImageBufferRotator90DegreesOrientation() {
+        val srcW = 4
+        val srcH = 2
+        val src = ByteBuffer.allocateDirect(srcW * srcH * 4).order(ByteOrder.nativeOrder())
+
+        // 4x2 버퍼 초기화
+        for (i in 0 until srcW * srcH * 4) {
+            src.put(0.toByte())
+        }
+        // (x=3, y=0) 위치에 백색 픽셀 배치
+        val targetOffset = (0 * srcW + 3) * 4
+        src.put(targetOffset, 255.toByte())
+        src.put(targetOffset + 1, 255.toByte())
+        src.put(targetOffset + 2, 255.toByte())
+        src.put(targetOffset + 3, 255.toByte())
+        src.rewind()
+
+        val (rotated, dstW, dstH) = kr.safecross.mobile.camera.ImageBufferRotator.rotateOrCopyRgbaBuffer(src, srcW, srcH, 90)
+
+        // 90도 회전 시 가로/세로 반전: 2x4
+        assertEquals(2, dstW)
+        assertEquals(4, dstH)
+
+        // 원본 (x=3, y=0) -> 90도 회전 후 (dx = srcH - 1 - y = 1, dy = x = 3)
+        val rotatedOffset = (3 * dstW + 1) * 4
+        val r = rotated.get(rotatedOffset).toInt() and 0xFF
+        val g = rotated.get(rotatedOffset + 1).toInt() and 0xFF
+        val b = rotated.get(rotatedOffset + 2).toInt() and 0xFF
+        assertEquals(255, r)
+        assertEquals(255, g)
+        assertEquals(255, b)
+    }
 }
