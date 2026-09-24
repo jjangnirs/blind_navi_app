@@ -144,6 +144,11 @@ class LocalVlmSignalVerifier(
             (candidate.score * 0.70f).coerceAtLeast(0.30f)
         }
 
+        PerceptionFlightRecorder.record(
+            "VERIFIER",
+            "Track=$currentTrackId Cand=${candidate.state}(${"%.2f".format(candidate.score)}) Smooth=$smoothedState -> Final=$finalState Reason=TEMPORAL_GEOMETRIC_VERIFIED HistSize=${history.size}"
+        )
+
         return VerificationResult(
             verifiedState = finalState,
             confidenceScore = boostedScore,

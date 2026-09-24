@@ -347,7 +347,75 @@ fun CrossingAssistScreen(
                 )
             }
 
+            // [실시간 인지 진단 HUD]
+            if (uiState.debugDiagnosticText != null) {
+                Surface(
+                    color = Color(0xDD000000),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4CAF50)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "🛠️ 실시간 인지 진단 HUD",
+                                color = Color(0xFF81C784),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = uiState.debugDiagnosticText ?: "",
+                            color = Color(0xFFE0E0E0),
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.weight(1f, fill = false))
+
+            // G. 진단 로그 공유 버튼
+            Button(
+                onClick = {
+                    val logs = kr.safecross.mobile.perception.PerceptionFlightRecorder.readRecentLogs(context, 150)
+                    val sendIntent = android.content.Intent().apply {
+                        action = android.content.Intent.ACTION_SEND
+                        putExtra(android.content.Intent.EXTRA_TEXT, logs)
+                        type = "text/plain"
+                    }
+                    val shareIntent = android.content.Intent.createChooser(sendIntent, "신호 인식 진단 로그 공유")
+                    context.startActivity(shareIntent)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF263238),
+                    contentColor = HighContrastWhite
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = Color(0xFF81D4FA)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "신호 인식 진단 로그 공유/저장",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF81D4FA)
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             // F. 대형 "횡단 보조 즉시 종료" 버튼 (최소 64dp, Red, SR-F-049)
             Button(

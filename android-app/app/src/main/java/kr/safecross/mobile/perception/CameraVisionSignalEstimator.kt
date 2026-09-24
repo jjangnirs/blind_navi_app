@@ -301,6 +301,11 @@ class CameraVisionSignalEstimator(
             modelVersion = "vision-adaptive-hsv-v2.0"
         )
 
+        PerceptionFlightRecorder.record(
+            "VISION",
+            "Blobs: R=${validRedBlobs.size} G=${validGreenBlobs.size} -> Detect=$detectedState Score=${"%.2f".format(score)} Box=[${"%.2f".format(box.left)},${"%.2f".format(box.top)},${"%.2f".format(box.right)},${"%.2f".format(box.bottom)}]"
+        )
+
         // LocalVlmSignalVerifier를 통한 시간/공간 일관성 검증
         val verification = verifier.verify(rawObservation, buffer, width, height)
 

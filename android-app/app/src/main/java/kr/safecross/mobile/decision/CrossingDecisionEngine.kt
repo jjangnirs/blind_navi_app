@@ -62,7 +62,8 @@ class CrossingDecisionEngine(
     )
 
     private var currentState: CrossingState = CrossingState.IDLE
-    private var consecutiveGreenCount: Int = 0
+    var consecutiveGreenCount: Int = 0
+        private set
     private var lastObservedTrackId: String? = null
     private var lastMonotonicTimeNanos: Long = 0L
 

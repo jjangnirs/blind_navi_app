@@ -23,6 +23,7 @@ import kr.safecross.mobile.perception.FakeCrosswalkEstimator
 import kr.safecross.mobile.perception.FakeSignalAssociator
 import kr.safecross.mobile.perception.FakeSignalEstimator
 import kr.safecross.mobile.perception.PedestrianSignalEstimator
+import kr.safecross.mobile.perception.PerceptionFlightRecorder
 import kr.safecross.mobile.perception.TargetSignalAssociator
 import kr.safecross.mobile.perception.VerifiedCrossingContext
 import kr.safecross.mobile.sensor.DevicePoseTracker
@@ -186,13 +187,26 @@ class CrossingAssistViewModel(
                         decision.state.description
                 }
 
+                // 진단 HUD 및 Flight Recorder 기록
+                val sigStateStr = targetSignal?.state?.name ?: "NONE"
+                val sigScoreStr = targetSignal?.let { "%.2f".format(it.score) } ?: "0.00"
+                val trackIdStr = targetSignal?.ephemeralTrackId?.takeLast(8) ?: "none"
+                val diagText = "SIG: $sigStateStr ($sigScoreStr) [#$trackIdStr] | G-CNT: ${decisionEngine.consecutiveGreenCount}/5 | TILT: ${if (isTiltOk) "OK" else "WARN"} | RET: ${if (isInsideReticle) "IN" else "OUT"}\nDEC: ${decision.state.name} (${decision.reasonCode ?: "OK"})"
+
+                PerceptionFlightRecorder.updateSummary(diagText)
+                PerceptionFlightRecorder.record(
+                    "FRAME",
+                    "Sig=$sigStateStr($sigScoreStr) Trk=$trackIdStr GCount=${decisionEngine.consecutiveGreenCount} Tilt=$isTiltOk Ret=$isInsideReticle Dec=${decision.state} Reason=${decision.reasonCode}"
+                )
+
                 _uiState.value = _uiState.value.copy(
                     decisionState = decision.state,
                     crosswalkDetected = cwObs.hasCrosswalk,
                     statusMessage = resolvedStatusMessage,
                     detectedSignalBox = if (isActualSignalDetected) targetBox else null,
                     detectedSignalColor = if (isActualSignalDetected) targetSignal?.state else null,
-                    isSignalInReticle = isInsideReticle
+                    isSignalInReticle = isInsideReticle,
+                    debugDiagnosticText = diagText
                 )
 
                 // 5. 발화 안내 이벤트 전송
