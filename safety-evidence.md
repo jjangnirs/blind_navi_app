@@ -202,6 +202,20 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
 - **Android 12+ Fused Location 연동**: 최신 플래그십(Galaxy S25 Ultra)의 Snapdragon 8 Elite 멀티밴드(L1+L5) 정밀 위성 및 IMU 센서 융합 위치를 초당 1회 정밀 수신.
 - **보행 감속 적응형 방위각 완화**: 횡단보도 18m 이내이거나 보행 속도 $1.2\text{ m/s}$ 이하 서행/정지 시 방위각 허용 오차를 $110^\circ$로 완화하여 코앞에서 횡단보도 노드가 Drop되는 플리커링 원천 방지.
 
+### 17) 동일 경로 보행 시 반복 재탐색 루프 차단 및 GPS 난반사 필터 안전성 (ADR 0019)
+- **출발점 재보정 단 1회 가드 (`hasCalibratedInitialStart`)**: 보행 시작 전 최초 1회만 출발점 이격(25m)을 보정하고 전진 보행 중에는 출발점 거리 기반의 재탐색을 원천 차단하여 앞으로 걸어갈 때 7~10초 주기마다 경로가 무한 재탐색되던 버그 완전 해결.
+- **유효 GPS 샘플 정확도 필터링**: GPS 정확도가 25m 이내(`accuracyMeters <= 25.0f`)인 신뢰할 수 있는 GPS 좌표일 때만 이탈 카운트를 누적하여 도심 빌딩/가로수 난반사로 인한 순간 튐 흡수.
+- **이탈 임계 조건 강화 및 쿨다운 안정화**: 연속 이탈 판정 횟수를 4회($\ge 4\text{s}$)로 상향하고 기본 이탈 반경을 35m로 완화, 재탐색 쿨다운 간격을 12초로 상향하여 안정적인 연속 보행 보장.
+
+### 18) 보행 경로 텔레메트리 비행 기록기 (Navigation Flight Recorder) 및 진단 무결성 (ADR 0020)
+- **전용 텔레메트리 3MB 순환 기록**: `Android/data/kr.safecross.mobile/files/logs/navigation_flight.log`에 GPS 품질, 경로 진행 거리, 크로스트랙 오차(CTE), 나침반 정대 편차, 스텝 전환, 재탐색 트리거 사유, 음성 안내 발화 내역을 밀리초 단위로 기록.
+- **실시간 HUD 및 원클릭 공유 버튼**: `NavigationScreen` 화면 하단에 `📊 실시간 경로 분석 상태` 요약 표시 및 `[경로 분석 진단 로그 공유/저장]` 버튼을 제공하여 스마트폰만으로 카카오톡/메모장 즉시 공유 가능.
+- **PC 모니터링 & 분석 스크립트**:
+  - `scripts/monitor_flight_logs.ps1`: `SafeCrossNavFlight` 실시간 Logcat 터미널 스트리밍.
+  - `scripts/pull_navigation_logs.ps1`: USB 연결 시 ADB/MTP를 통해 단말기 로그 파일 PC 자동 추출.
+  - `scripts/analyze_navigation_log.py`: 로그 자동 파싱하여 GPS 정확도, CTE 분포, 재탐색 횟수, 방위각 일치율 요약 리포트 생성.
+
+
 
 
 

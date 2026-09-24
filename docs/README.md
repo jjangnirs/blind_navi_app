@@ -64,6 +64,9 @@ MVP에 포함한다.
 20. 멀티밴드 GNSS 및 야외 정밀 위치 수신 최적화 (`ProductionLocationSource`, Android 12+ Fused Location 연동, Galaxy S25 Ultra 등 L1+L5 듀얼 주파수 지원, 부팅 시계-절대 시계 불일치 자동 폴백)
 21. 횡단보도 정지/감속 구간 방위각 요동 내성 완화 필터 (`CrossingApproachEngine`, 18m 근접 또는 보행 속도 1.2m/s 이하 시 110도 허용으로 연석 접근 시 횡단보도 Drop 원천 방지)
 22. 온디바이스 비전 지각 비행기록장치 (`PerceptionFlightRecorder`, 300프레임 무잠금 원형 링 버퍼 기반 텔레메트리 로깅, 카메라 영상/좌표 유출 없는 제로-프라이버시 아키텍처, 이상 징후 자동/수동 진단 덤프)
+23. 동일 경로 보행 시 반복적 "경로가 변경되었습니다" 루프 차단 및 경로 이탈 필터 강화 (`RouteProgressEngine`, `NavigationViewModel`, `hasCalibratedInitialStart` 단 1회 가드로 전진 보행 시 출발점 이격 오탐 원천 방지, 25m 이내 유효 GPS 샘플 필터링, 연속 4회/35m 이탈 임계값 상향, 12초 쿨다운)
+24. 보행자 진행방향 위(Heading-Up / Course-Up) 지도 회전 뷰어 (`RealRouteMapView`, 170% 무여백 뷰포트 레이아웃, 나침반 헤딩 연동 0.35초 부드러운 CSS 회전, 진행방향 쉐브론 화살표 마커 $\blacktriangle$, 경로 방위각 자동 폴백, `🧭 진행방향 위` $\leftrightarrow$ `🧭 북쪽 고정` 원클릭 토글)
+25. 실시간 보행 경로 분석 전용 비행 기록기 및 진단 툴링 (`NavigationFlightRecorder`, GPS 품질, 경로 진행 CTE, 나침반 정대, 단계 전환, 재탐색 트리거 사유, 음성 발화 텔레메트리 3MB 순환 기록, 화면 내 실시간 상태 HUD 및 원클릭 공유 버튼, `scripts/monitor_flight_logs.ps1`, `scripts/pull_navigation_logs.ps1`, `scripts/analyze_navigation_log.py`)
 
 MVP에서 제외한다.
 

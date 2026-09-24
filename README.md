@@ -51,8 +51,9 @@ MVP에 포함한다.
 11. GPS 정확도와 데이터 최신성 표시
 12. 온디바이스 카메라 기반 2단계 하이브리드 보행신호 추정 파이프라인 (`TwoTierHybridSignalEstimator`):
     - Tier 1: LiteRT 딥러닝 객체 검출 모델(`LiteRtPedestrianSignalEstimator`)의 보행신호등 바운딩 박스 선검출 (미검출 시 배경 초록색과 무관하게 즉시 `UNKNOWN` 강등 차단으로 Zero False-Green 보장)
-    - Tier 2: 신호등 박스 한정 적응형 HSV 정밀 분석 (`CameraVisionSignalEstimator.estimateWithinRoi`, 한국 경찰청 에메랄드/청록색 Green 및 고채도 Red 규격 파장 검출, 다크 하우징 콘트라스트 검증으로 간판/전광판 오탐 배제)
-    - Tier 3: 온디바이스 기하·동역학·시간 일관성 검증기 (`LocalVlmSignalVerifier`, IoU 공간 추적기 및 점프 시 버퍼 리셋, 이동 차량 $v > 0.55/\text{sec}$ 기각 모션 필터, 5프레임 롤링 윈도우)
+    - Tier 2: 신호등 박스 한정 적응형 HSV 정밀 분석 (`CameraVisionSignalEstimator.estimateWithinRoi`, 한국 경찰청 에메랄드/청록색 Green 및 고채도 Red 규격 파장 검출, 다크 하우징 콘트라스트 검증으로 간판/전광판 오탐 배제, 한낮 상단 적색 렌즈 햇빛 반사광(Phantom Light) 및 원거리 이격 신호등 필터링)
+    - Tier 3: 온디바이스 기하·동역학·시간 일관성 검증기 (`LocalVlmSignalVerifier`, IoU 공간 추적기 및 점프 시 버퍼 리셋, 이동 차량 $v > 0.85/\text{sec}$ 기각 모션 필터와 동일 기둥 수직 램프 전환 분리, 5프레임 롤링 윈도우)
+    - 핸드헬드 보정: 조준선(Reticle) 3프레임 유예 디바운싱 및 `GREEN_ESTIMATE` 1.8초 음성 발화 보호
 13. 횡단보도 영역·진행 방향 인식과 목표 보행신호 연결
 14. 여러 프레임·위치·방향·장면 문맥을 함께 확인하는 안전 상태기계
 15. 승인 지역의 공식 실시간 신호정보를 위한 선택적 어댑터와 충돌 차단
@@ -63,6 +64,9 @@ MVP에 포함한다.
 20. 멀티밴드 GNSS 및 야외 정밀 위치 수신 최적화 (`ProductionLocationSource`, Android 12+ Fused Location 연동, Galaxy S25 Ultra 등 L1+L5 듀얼 주파수 지원, 부팅 시계-절대 시계 불일치 자동 폴백)
 21. 횡단보도 정지/감속 구간 방위각 요동 내성 완화 필터 (`CrossingApproachEngine`, 18m 근접 또는 보행 속도 1.2m/s 이하 시 110도 허용으로 연석 접근 시 횡단보도 Drop 원천 방지)
 22. 온디바이스 비전 지각 비행기록장치 (`PerceptionFlightRecorder`, 300프레임 무잠금 원형 링 버퍼 기반 텔레메트리 로깅, 카메라 영상/좌표 유출 없는 제로-프라이버시 아키텍처, 이상 징후 자동/수동 진단 덤프)
+23. 동일 경로 보행 시 반복적 "경로가 변경되었습니다" 루프 차단 및 경로 이탈 필터 강화 (`RouteProgressEngine`, `NavigationViewModel`, `hasCalibratedInitialStart` 단 1회 가드로 전진 보행 시 출발점 이격 오탐 원천 방지, 25m 이내 유효 GPS 샘플 필터링, 연속 4회/35m 이탈 임계값 상향, 12초 쿨다운)
+24. 보행자 진행방향 위(Heading-Up / Course-Up) 지도 회전 뷰어 (`RealRouteMapView`, 170% 무여백 뷰포트 레이아웃, 나침반 헤딩 연동 0.35초 부드러운 CSS 회전, 진행방향 쉐브론 화살표 마커 $\blacktriangle$, 경로 방위각 자동 폴백, `🧭 진행방향 위` $\leftrightarrow$ `🧭 북쪽 고정` 원클릭 토글)
+25. 실시간 보행 경로 분석 전용 비행 기록기 및 진단 툴링 (`NavigationFlightRecorder`, GPS 품질, 경로 진행 CTE, 나침반 정대, 단계 전환, 재탐색 트리거 사유, 음성 발화 텔레메트리 3MB 순환 기록, 화면 내 실시간 상태 HUD 및 원클릭 공유 버튼, `scripts/monitor_flight_logs.ps1`, `scripts/pull_navigation_logs.ps1`, `scripts/analyze_navigation_log.py`)
 
 MVP에서 제외한다.
 

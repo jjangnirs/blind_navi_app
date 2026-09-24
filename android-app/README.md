@@ -139,6 +139,26 @@ cd android-app
 - **손떨림 조준선 디바운싱(Grace Period)**: 보행 중 손떨림으로 1~3프레임(약 100ms) 순간적으로 신호등이 조준선을 벗어나도 누적 중이던 녹색 카운트가 즉시 초기화되지 않도록 보호
 - **녹색 확정 안내 발화 보호**: `GREEN_ESTIMATE` 안내 발화 시작 후 1.8초 동안은 단발성 노이즈에 의해 TTS 음성이 도중에 짤리지 않도록 오디오 큐 강제 플러시 차단
 
+### 19. 동일 경로 보행 시 반복적 "경로가 변경되었습니다" 루프 차단 및 경로 이탈 필터 강화 (`RouteProgressEngine`, `NavigationViewModel`)
+- **출발점 재보정 단 1회 가드 (`hasCalibratedInitialStart`)**: 보행 시작 전 최초 1회에 한해서만 출발지 위치 오차 보정(25m)을 수행하고, 보행이 진행 중일 때는 출발점 거리 기반의 재탐색을 원천 차단하여 앞으로 걸어갈 때 7~10초 주기마다 경로가 무한 재탐색되던 버그 완전 해결
+- **유효 GPS 샘플 정확도 필터링**: GPS 정확도가 25m 이내(`accuracyMeters <= 25.0f`)인 신뢰할 수 있는 GPS 좌표일 때만 이탈 카운트를 누적하여 도심 빌딩/가로수 난반사로 인한 순간 튐 흡수
+- **이탈 임계 조건 강화 및 쿨다운 안정화**: 연속 이탈 판정 횟수를 4회($\ge 4\text{s}$)로 상향하고 기본 이탈 반경을 35m로 완화, 재탐색 쿨다운 간격을 12초로 상향하여 안정적인 연속 보행 보장
+
+### 20. 보행자 진행방향 위(Heading-Up / Course-Up) 지도 회전 뷰어 (`RealRouteMapView`, `NavigationScreen`)
+- **170% 무여백 뷰포트 레이아웃**: 사각형 지도를 $360^\circ$ 회전하더라도 화면 네 귀퉁이에 빈 여백이 보이지 않도록 170% 크기 컨테이너와 중앙 회전축(`transform-origin: 50% 50%`) 적용
+- **부드러운 나침반 연동 CSS 회전**: 기기 헤딩 각도에 연동하여 지도를 반시계 방향(`-headingDeg`)으로 0.35초 부드러운 애니메이션과 함께 회전시켜, 내가 걸어가는 도로가 항상 화면 위쪽($\uparrow$)을 향하도록 배치
+- **진행방향 네비게이션 쉐브론 화살표 ($\blacktriangle$)**: 내 위치 마커 중앙에 고대비 형광 시안/네온블루 쉐브론 화살표를 배치하여 시각적 직관성 확보
+- **정지/초기 방위각 자동 폴백**: 센서 헤딩이 0이거나 정지 상태일 때는 현재 보행 경로 세그먼트의 방위각(`calculateTargetBearing()`)을 자동 폴백하여 경로 방향 정렬 유지
+- **원클릭 모드 토글**: 화면 우하단에 `🧭 진행방향 위` $\leftrightarrow$ `🧭 북쪽 고정` 토글 버튼 제공, `🔍 전체 경로` 탭 시 지도를 $0^\circ$ 정자세로 자동 전환
+
+### 21. 실시간 보행 경로 분석 전용 비행 기록기 (Navigation Flight Recorder) 및 진단 툴링 (`NavigationFlightRecorder`, `scripts/`)
+- **전용 텔레메트리 3MB 순환 기록**: `Android/data/kr.safecross.mobile/files/logs/navigation_flight.log`에 GPS 품질, 경로 진행 거리, 크로스트랙 오차(CTE), 나침반 정대 편차, 스텝 전환, 재탐색 트리거 사유, 음성 안내 발화 내역을 밀리초 단위로 기록
+- **실시간 HUD 및 원클릭 공유 버튼**: `NavigationScreen` 화면 하단에 `📊 실시간 경로 분석 상태` 요약 표시 및 `[경로 분석 진단 로그 공유/저장]` 버튼을 제공하여 스마트폰만으로 카카오톡/메모장 즉시 공유 가능
+- **PC 모니터링 & 분석 스크립트**:
+  - `scripts/monitor_flight_logs.ps1`: `SafeCrossNavFlight` 실시간 Logcat 터미널 스트리밍
+  - `scripts/pull_navigation_logs.ps1`: USB 연결 시 ADB/MTP를 통해 단말기 로그 파일 PC 자동 추출
+  - `scripts/analyze_navigation_log.py`: 로그 자동 파싱하여 GPS 정확도, CTE 분포, 재탐색 횟수, 방위각 일치율 요약 리포트 생성
+
 ## TalkBack 수동 시험 절차
 1. **TalkBack 활성화**: Android 기기 설정 -> 접근성 -> TalkBack 켜기 (또는 볼륨 업+다운 키 3초 길게 누르기).
 2. **목적지 검색 시험**:

@@ -329,6 +329,25 @@ flowchart TD
 - E9-S2 3단계 라우팅 복원력(백엔드 프록시 -> TMAP 클라우드 직접 호출 -> 오프라인 Fallback)
 - E9-S3 최신 디버그 APK (`app-debug.apk`, 43.1MB) 빌드 및 147개 단위 테스트 100% 검증 통과
 
+### Epic E10 — 카메라 안정화, 최근/즐겨찾기 검색 기록 및 야외 GNSS 시각 보정
+
+- E10-S1 CameraX 프레임 회전 정규화(`imageProxy.imageInfo.rotationDegrees`) 및 센서-비전 좌표계 통합
+- E10-S2 손떨림 보정 IOU 스무딩 및 한국형 청록색(Cyan LED) 분광 대역(`Hue 150°~195°`) 가중치 보정
+- E10-S3 룸(Room) 기반 최근 검색어(`RecentDestinationDao`) 및 즐겨찾기(`FavoriteDestinationDao`) 비동기 영속화
+- E10-S4 갤럭시 S25 울트라 등 플래그십 기기 야외 GNSS 하드웨어 클록 동기화 및 25m 정확도 안전 필터링
+
+### Epic E11 — 20m 출발점 경로 재탐색 루프 차단 및 진행방향 우선(Heading-Up) 170% 광각 지도 뷰어
+
+- E11-S1 초기 출발점 20m 반경 GPS 드리프트 발생 시 재탐색 무한 반복 방지 가드(`hasCalibratedInitialStart`, 4회 연속/35m 이탈 임계치, 12초 쿨다운)
+- E11-S2 진행방향 기준 상단 정렬(Course-Up / Heading-Up) 실시간 회전 지도 뷰어(`RealRouteMapView.kt` CSS 3D 트랜스폼 및 170% 오버사이즈 캔버스)
+- E11-S3 나침반 센서 기반 방향 지시자 셰브론(Directional Chevron) 및 원터치 북쪽 고정(North-Up) / 진행방향(Heading-Up) 모드 전환 FAB 버튼
+
+### Epic E12 — 온디바이스 항법 블랙박스(Navigation Flight Recorder) 및 실시간 분석 HUD
+
+- E12-S1 온디바이스 JSONL 항법 블랙박스 레코더(`NavigationFlightRecorder.kt`) 탑재 (GPS 수신 품질, 이탈 오차 거리, bearing, 재탐색 트리거 원인 스냅샷)
+- E12-S2 보행 내비게이션 상단 실시간 경로 분석 HUD 칩(`RouteDevBadge`: 거리 오차, 신뢰도, 카운트 실시간 표시)
+- E12-S3 원클릭 시스템 공유 인텐트(`shareFlightLog()`) 및 PC 실시간 원격 텔레메트리 툴킷(`monitor_flight_logs.ps1`, `pull_navigation_logs.ps1`, `analyze_navigation_log.py`)
+
 
 ## 10. 일일 개발 루틴
 
