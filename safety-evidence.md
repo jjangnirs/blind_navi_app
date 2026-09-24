@@ -282,6 +282,20 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `CameraVisionSignalEstimatorTest.testPedestrianGreenNotVetoedBySideRoadRed`: 측면 차도 적색등 존재 시 녹색 보행 신호 정상 유지 검증 (100% PASS).
   - 총 182개 안드로이드 단위 테스트 전체 통과 (100% PASS).
 
+### 23. 도심 협곡 GPS 수신율 보정 및 지도 흔들림(Pan/Rotation 충돌 및 4.5° 불감대) 안정화 (ADR-025)
+- **도심 다중경로 반사(Multipath) GPS 수신율 현실화 (`LocationSample`)**:
+  - 도심 고층 빌딩 또는 차양막 통과 시 오차 반경 35m~50m로 일시 확대되는 물리 현상 발생 시, 계단식 계산식이 25%로 급락하던 문제를 지수 평활화 곡선으로 보정.
+  - S25 Ultra 75~84개 위성 정상 수신 환경에서 50~55%(보통) 수준을 안정 표출하여 사용자의 하드웨어 고장 오인 차단.
+- **지도 위치 패닝(Pan) 1.5m 디바운싱 (`RealRouteMapView`)**:
+  - 90ms 헤딩 센서 갱신 시 Leaflet의 300ms `map.panTo` 애니메이션이 초당 11회 인터럽트 충돌하던 현상을 제거하기 위해, 이전 패닝 위치 대비 1.5m 이상 이동 시에만 패닝하도록 분리. 지도 화면 미세 떨림 0% 달성.
+- **지도 회전 불감대(Deadband) 4.5° 상향 (`RealRouteMapView`)**:
+  - 보행 시 인체 손/팔의 자연스러운 좌우 진자 흔들림($\pm 4.5^\circ$)을 완전히 흡수하여 매 발걸음마다 지도가 출렁거리지 않고 도로 진행 방향으로 단단히 고정.
+- **보행 속도 임계값 완화(0.65 m/s) (`NavigationViewModel`)**:
+  - 완만한 보행 속도에서도 흔들리는 나침반 대신 GPS 진행 궤적에 지도가 안정 고정되도록 결합 속도 조정.
+- **단위 테스트 및 안전성 검증**:
+  - `NavigationViewModelTest.testWalkingGpsCourseFusesWithCompassHeading` (100% PASS).
+  - 총 182개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
 
 
 

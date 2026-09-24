@@ -383,6 +383,14 @@ flowchart TD
 - E16-S5 가공 차량 신호기 고도 임계값($Y < 0.12f$) 최적화 및 2D 거리 비교로 배경 우측 적색등에 의한 Zero False-Green 오작동 차단
 - E16-S6 182개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.1MB) 빌드 및 기기 MTP 전송 검증
 
+### Epic E17 — 도심 협곡 GPS 수신율 보정 및 지도 흔들림(Pan/Rotation 충돌 및 4.5° 불감대) 안정화 (ADR-025)
+
+- E17-S1 `LocationSample` 도심 건물 다중경로 반사(Multipath) 오차(35m~50m) 발생 시 GPS 신호 강도 계산식 평활화 (기존 35% 급락 해소 및 50~55% 보통 수준 안정 표출)
+- E17-S2 `RealRouteMapView` 지도 위치 패닝(Pan) 1.5m 디바운싱 적용으로 90ms 센서 갱신에 의한 `map.panTo` 무한 인터럽트 충돌 및 지도 미세 떨림 완전 제거
+- E17-S3 `RealRouteMapView` 지도 회전 불감대(Deadband) 4.5° 상향으로 보행 시 손/팔 진자 흔들림($\pm 4.5^\circ$) 완벽 흡수 및 직진 도로 고정
+- E17-S4 `NavigationViewModel` 보행 속도 임계값 완화(0.65 m/s)로 완만한 보행 중에도 GPS 진행 궤적에 지도가 안정 고정되도록 개선
+- E17-S5 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug-0925-v25.apk`, 41.5MB) 빌드 및 기기 MTP 전송 검증
+
 
 ## 10. 일일 개발 루틴
 
