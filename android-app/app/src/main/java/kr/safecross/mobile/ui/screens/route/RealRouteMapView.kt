@@ -435,6 +435,7 @@ private fun buildRouteMapHtml(
         var currentContinuousArrowAngle = $initialHeading;
         var hasInitializedMapAngle = false;
         var hasInitializedArrowAngle = false;
+        var lastPannedLatLng = null;
 
         var map = null;
         var routePolyline = null;
@@ -574,8 +575,8 @@ private fun buildRouteMapHtml(
                 if (delta > 180) delta -= 360;
                 if (delta < -180) delta += 360;
 
-                // 2.5도 미만의 미세 손떨림 및 발걸음 진자 운동은 필터링하여 지도 고정 유지
-                if (Math.abs(delta) < 2.5) {
+                // 4.5도 미만의 미세 손떨림 및 발걸음 진자 운동은 필터링하여 지도 고정 유지 (보행 진자 흔들림 완벽 차단)
+                if (Math.abs(delta) < 4.5) {
                     return;
                 }
                 currentContinuousMapAngle += delta;
@@ -703,7 +704,21 @@ private fun buildRouteMapHtml(
             applyMapRotation(currentHeading, isHeadingUp);
 
             if (isHeadingUp || autoCenter) {
-                map.panTo(latLng, { animate: true, duration: 0.3 });
+                var shouldPan = false;
+                if (!lastPannedLatLng) {
+                    shouldPan = true;
+                } else {
+                    var dLat = (lat - lastPannedLatLng[0]) * 111000;
+                    var dLon = (lon - lastPannedLatLng[1]) * 111000 * Math.cos(lat * Math.PI / 180);
+                    var distM = Math.sqrt(dLat * dLat + dLon * dLon);
+                    if (distM >= 1.5) {
+                        shouldPan = true;
+                    }
+                }
+                if (shouldPan) {
+                    lastPannedLatLng = [lat, lon];
+                    map.panTo(latLng, { animate: true, duration: 0.35 });
+                }
             }
         }
 

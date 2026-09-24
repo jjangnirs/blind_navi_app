@@ -69,9 +69,10 @@ fun calculateSignalStrengthPercent(accuracyMeters: Float, satelliteCount: Int = 
         accuracyMeters <= 8.0f -> 90
         accuracyMeters <= 12.0f -> 80
         accuracyMeters <= 16.0f -> 70
-        accuracyMeters <= 22.0f -> 55
-        accuracyMeters <= 35.0f -> 40
-        accuracyMeters <= 50.0f -> 25
+        accuracyMeters <= 22.0f -> 60
+        accuracyMeters <= 35.0f -> 50
+        accuracyMeters <= 50.0f -> 40
+        accuracyMeters <= 75.0f -> 25
         else -> 10
     }
     val satBonus = (satelliteCount * 1).coerceAtMost(10)

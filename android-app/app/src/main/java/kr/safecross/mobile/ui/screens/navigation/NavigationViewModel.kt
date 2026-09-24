@@ -158,9 +158,9 @@ class NavigationViewModel(
     fun processDevicePose(pose: DevicePose, currentTimeMs: Long = System.currentTimeMillis()) {
         val heading = pose.headingDegrees
 
-        // 1. 보행 중(속도 >= 0.8m/s) GPS 이동 궤적(Course) 65% + 나침반 35% 상보 필터 융합 (팔 흔들림/발걸음 진자 운동 억제)
+        // 1. 보행 중(속도 >= 0.65m/s) GPS 이동 궤적(Course) 65% + 나침반 35% 상보 필터 융합 (팔 흔들림/발걸음 진자 운동 억제)
         val gpsBrg = lastValidGpsBearing
-        val effectiveHeading: Float = if (lastSpeedMps >= 0.8f && gpsBrg != null) {
+        val effectiveHeading: Float = if (lastSpeedMps >= 0.65f && gpsBrg != null) {
             val deltaGps = ((gpsBrg - heading + 540.0) % 360.0) - 180.0
             if (kotlin.math.abs(deltaGps) <= 80.0) {
                 ((heading + (deltaGps * 0.65) + 360.0) % 360.0).toFloat()
