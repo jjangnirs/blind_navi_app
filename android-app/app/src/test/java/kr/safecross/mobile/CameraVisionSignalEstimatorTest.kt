@@ -468,6 +468,157 @@ class CameraVisionSignalEstimatorTest {
         assertEquals(ObservedSignalState.GREEN, lastObs.state)
         assertTrue(lastObs.score >= 0.90f)
     }
+
+    @Test
+    fun testGreenCountdownDigitsRecognizedAsGreen() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 보행자 신호등 위치에 2자리 숫자 카운트다운 타이머(예: "19") 주입
+        // 십의 자리 "1": y: 60..80, x: 150..155 (너비 6, 높이 21)
+        for (y in 60..80) {
+            for (x in 150..155) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        // 일의 자리 "9": y: 60..80, x: 159..168 (너비 10, 높이 21, 사이 공백 4px)
+        for (y in 60..80) {
+            for (x in 159..168) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 2자리 숫자가 Morphological Clustering에 의해 하나의 통합된 녹색 신호로 정상 인식되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+        // 박스가 두 숫자를 모두 감싸야 함 (x: 150/320=0.468 ~ 168/320=0.525)
+        assertTrue(lastObs.box.left <= 152f / width)
+        assertTrue(lastObs.box.right >= 165f / width)
+    }
+
+    @Test
+    fun testSpatialTrackingLockPreventsBoxJump() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 상단 보행자 신호등 (y: 50..65, x: 155..165)
+        for (y in 50..65) {
+            for (x in 155..165) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        // 2. 하단 다른 녹색 광원/반사체 (y: 110..125, x: 157..167)
+        for (y in 110..125) {
+            for (x in 157..167) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 2D 공간 추적 락에 의해 상단 보행 신호등(cy < 0.35)에 안정적으로 고정되어야 하며,
+        // 하단 광원(cy > 0.45)으로 점프하지 않아야 함
+        val cy = (lastObs.box.top + lastObs.box.bottom) / 2f
+        assertTrue("Expected cy < 0.35f (upper signal locked), but was $cy", cy < 0.35f)
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+    }
+
+    @Test
+    fun testPedestrianGreenNotVetoedBySideRoadRed() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 보행자 녹색 신호 (y: 55..75, x: 155..168, Y ≈ 0.27)
+        for (y in 55..75) {
+            for (x in 155..168) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 우측 배경 도로 적색 광원 (y: 65..80, x: 178..190, Y ≈ 0.30, 중심에서 우측으로 20px 이상 이격)
+        for (y in 65..80) {
+            for (x in 178..190) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 240.toByte())
+                buffer.put(offset + 1, 30.toByte())
+                buffer.put(offset + 2, 30.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 정면 보행자 녹색 신호가 우측 배경 적색등에 의해 기각되지 않고 GREEN으로 판정되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
 }
 
 

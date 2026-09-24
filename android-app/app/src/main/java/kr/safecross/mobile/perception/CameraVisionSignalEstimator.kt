@@ -25,6 +25,12 @@ class CameraVisionSignalEstimator(
     val verifier: LocalVlmSignalVerifier = LocalVlmSignalVerifier()
 ) : PedestrianSignalEstimator {
 
+    // 2차원 공간 추적 락(Spatial Tracking Lock-on) 및 시간 평활화(EMA) 상태
+    private var lastLockedCenterNorm: Pair<Float, Float>? = null // (normCenterX, normCenterY)
+    private var lastLockedState: ObservedSignalState = ObservedSignalState.UNKNOWN
+    private var lastLockedTimestampNanos: Long = 0L
+    private var lastSmoothedBox: NormalizedBox? = null
+
     override suspend fun estimate(frame: FrameRef): List<SignalObservation> {
         val rawBuffer = frame.rgbaBuffer
 
@@ -220,7 +226,10 @@ class CameraVisionSignalEstimator(
 
         // 개별 연결 요소(Connected-Component Blob) 분리 식별 (서로 다른 신호등 혼선 방지)
         val redBlobs = findBlobs(grid, vGrid, gridW, gridH, 1, startX, startY, step)
-        val greenBlobs = findBlobs(grid, vGrid, gridW, gridH, 2, startX, startY, step)
+        val rawGreenBlobs = findBlobs(grid, vGrid, gridW, gridH, 2, startX, startY, step)
+
+        // 숫자형 잔여시간 표시기(초록색 숫자 카운트다운) 획/분절 병합
+        val greenBlobs = clusterDigitBlobs(rawGreenBlobs)
 
         val minClusterPixels = if (targetRoi != null) 4 else 8
 
@@ -233,17 +242,36 @@ class CameraVisionSignalEstimator(
         }
 
         // 녹색 유효 블롭 필터링 (가로수/간판 배제 및 다크 하우징 검증)
+        // 2자리 숫자형 잔여시간 표시기(W <= H * 1.65)를 정상 수용하도록 임계값 최적화
         val validGreenBlobs = greenBlobs.filter { blob ->
             if (blob.pixelCount < minClusterPixels) return@filter false
-            val isHorizontalVehicle = (blob.width > blob.height * 1.35f) && (blob.width >= 12)
+            val isHorizontalVehicle = (blob.width > blob.height * 1.65f) && (blob.width >= 18)
             if (isHorizontalVehicle) return@filter false
             verifyDarkHousingContrast(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, blob.avgV)
         }
 
-        // 타깃 중심(또는 화면 중앙)에 가장 가까운 유효 블롭을 대표 신호로 선택
-        val targetCenterX = if (targetRoi != null) (startX + endX) / 2f else width / 2f
-        val primaryRed = validRedBlobs.minByOrNull { abs(it.centerX - targetCenterX) }
-        val primaryGreen = validGreenBlobs.minByOrNull { abs(it.centerX - targetCenterX) }
+        // 타깃 참조점 결정:
+        // 이전 프레임에서 신호가 안정적으로 잠금(Lock-on)되어 있고 시간차가 800ms 이내이면 이전 위치를 최우선 추적
+        val nowNanos = timestampNanos
+        val isTrackActive = lastLockedCenterNorm != null && (nowNanos - lastLockedTimestampNanos) in 0L..800_000_000L
+
+        val defaultTargetX = if (targetRoi != null) (startX + endX) / 2f else width * 0.50f
+        val defaultTargetY = if (targetRoi != null) (startY + endY) / 2f else height * 0.35f // 조준 뷰파인더 중심(top: 0.10, bottom: 0.60 -> center 0.35)
+
+        val refTargetX = if (isTrackActive) lastLockedCenterNorm!!.first * width else defaultTargetX
+        val refTargetY = if (isTrackActive) lastLockedCenterNorm!!.second * height else defaultTargetY
+
+        // 2차원 공간 거리 기반 대표 블롭 선택 (수직 이탈 가중치 1.4배 부여로 상/하단 텔레포트 요동 방지)
+        fun scoreBlob(blob: ColorBlob): Float {
+            val dx = (blob.centerX - refTargetX) / width
+            val dy = (blob.centerY - refTargetY) / height
+            val dist = kotlin.math.hypot(dx, dy * 1.4f)
+            val energyBonus = (minOf(blob.pixelCount, 60) / 60f) * 0.05f
+            return dist - energyBonus
+        }
+
+        val primaryRed = validRedBlobs.minByOrNull { scoreBlob(it) }
+        val primaryGreen = validGreenBlobs.minByOrNull { scoreBlob(it) }
 
         if (primaryRed == null && primaryGreen == null) {
             val defaultBox = targetRoi ?: NormalizedBox(left = 0.45f, top = 0.20f, right = 0.55f, bottom = 0.40f)
@@ -289,8 +317,10 @@ class CameraVisionSignalEstimator(
                 val greenNormY = primaryGreen.centerY / height
 
                 // 상단 차량용 신호기(차도 위 가공 설치) vs 보행자/차로 하단
-                val isRedOverheadVehicle = redNormY < 0.25f && greenNormY >= 0.25f
-                val isGreenOverheadVehicle = greenNormY < 0.25f && redNormY >= 0.25f
+                // 차량 가공 신호기는 화면 최상단(Y < 0.12f)에 설치되어 차도 위를 지나감.
+                // Y >= 0.16f는 전방 10~25m 보행자 신호등의 정상 가시 고도이므로 차량 신호로 오인하지 않음.
+                val isRedOverheadVehicle = redNormY < 0.12f && greenNormY >= 0.16f
+                val isGreenOverheadVehicle = greenNormY < 0.12f && redNormY >= 0.16f
 
                 // 가로형 차량 신호등 (수평 배치: 좌측 적색, 우측 녹색, 거의 동일한 수평선상)
                 val isHorizontalPair = abs(primaryRed.centerY - primaryGreen.centerY) <= maxOf(primaryGreen.height, primaryRed.height) * 1.3f + 10f
@@ -329,14 +359,20 @@ class CameraVisionSignalEstimator(
                         val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
                         Triple(ObservedSignalState.RED, b, (0.93f + (primaryRed.pixelCount / 150f) * 0.05f).coerceIn(0.93f, 0.98f))
                     } else {
-                        // 서로 다른 기둥/배경 신호등: 타깃 중심(조준선)에 유의미하게 더 가까운 대표 신호를 선택
-                        val distRed = abs(primaryRed.centerX - targetCenterX)
-                        val distGreen = abs(primaryGreen.centerX - targetCenterX)
-                        if (distGreen + 20f < distRed) {
+                        // 서로 다른 기둥/배경 신호등: 타깃 조준선 및 이전 잠금 위치에 유의미하게 더 가까운 대표 신호를 선택
+                        val distRed = kotlin.math.hypot((primaryRed.centerX - refTargetX) / width, (primaryRed.centerY - refTargetY) / height)
+                        val distGreen = kotlin.math.hypot((primaryGreen.centerX - refTargetX) / width, (primaryGreen.centerY - refTargetY) / height)
+
+                        // 이미 녹색 신호로 추적 잠금 중이거나 녹색이 타깃에 유의미하게 더 가까울 때 녹색 유지
+                        if (isTrackActive && lastLockedState == ObservedSignalState.GREEN && distGreen <= distRed + 0.08f) {
+                            // 녹색 추적 유지 (배경 원거리 적색등/차량등 간섭 차단)
+                            val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
+                            Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
+                        } else if (distGreen + 0.04f < distRed) {
                             // 녹색 신호가 조준 중심에 훨씬 가까움 (배경 좌/우측의 원거리 적색 무시)
                             val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
                             Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
-                        } else if (distRed + 20f < distGreen) {
+                        } else if (distRed + 0.04f < distGreen) {
                             // 적색 신호가 조준 중심에 훨씬 가까움
                             val b = calculateBox(primaryRed.minX, primaryRed.maxX, primaryRed.minY, primaryRed.maxY, width, height)
                             Triple(ObservedSignalState.RED, b, (0.93f + (primaryRed.pixelCount / 150f) * 0.05f).coerceIn(0.93f, 0.98f))
@@ -369,11 +405,35 @@ class CameraVisionSignalEstimator(
             else -> Triple(ObservedSignalState.UNKNOWN, targetRoi ?: NormalizedBox(0.45f, 0.20f, 0.55f, 0.40f), 0.35f)
         }
 
+        // Bounding Box 시간 평활화 (Exponential Moving Average, α=0.70)
+        val smoothedBox = if (lastSmoothedBox != null && isTrackActive && detectedState == lastLockedState) {
+            val prev = lastSmoothedBox!!
+            NormalizedBox(
+                left = prev.left * 0.30f + box.left * 0.70f,
+                top = prev.top * 0.30f + box.top * 0.70f,
+                right = prev.right * 0.30f + box.right * 0.70f,
+                bottom = prev.bottom * 0.30f + box.bottom * 0.70f
+            )
+        } else {
+            box
+        }
+
+        if (detectedState == ObservedSignalState.GREEN || detectedState == ObservedSignalState.RED) {
+            val cxNorm = (smoothedBox.left + smoothedBox.right) / 2f
+            val cyNorm = (smoothedBox.top + smoothedBox.bottom) / 2f
+            lastLockedCenterNorm = Pair(cxNorm, cyNorm)
+            lastLockedTimestampNanos = timestampNanos
+            lastLockedState = detectedState
+            lastSmoothedBox = smoothedBox
+        } else {
+            lastSmoothedBox = null
+        }
+
         val rawObservation = SignalObservation(
             ephemeralTrackId = "track-sig-live",
             state = detectedState,
             score = score,
-            box = box,
+            box = smoothedBox,
             frameTimestampNanos = timestampNanos,
             quality = FrameQuality(lighting = 0.88f, blur = 0.90f, isUsable = true),
             modelVersion = "vision-adaptive-hsv-v2.0"
@@ -506,6 +566,57 @@ class CameraVisionSignalEstimator(
         }
         return blobs
     }
+
+    /**
+     * 녹색 디지털 숫자/카운트다운 타이머(7-segment, 도트 매트릭스 LED) 획 병합 (Morphological Digit Clustering)
+     * 십의 자리/일의 자리 및 세그먼트 선이 분절되어 개별 블롭으로 쪼개진 경우, 동일 신호등 하우징 내 수평 인접 녹색 블롭들을
+     * 단일 카운트다운 타이머 블롭으로 안전하게 통합하여 면적 부족 탈락 및 플래핑을 방지합니다.
+     */
+    private fun clusterDigitBlobs(blobs: List<ColorBlob>): List<ColorBlob> {
+        if (blobs.size <= 1) return blobs
+        val merged = BooleanArray(blobs.size)
+        val result = mutableListOf<ColorBlob>()
+
+        for (i in blobs.indices) {
+            if (merged[i]) continue
+            var current = blobs[i]
+            for (j in i + 1 until blobs.size) {
+                if (merged[j]) continue
+                val other = blobs[j]
+                // 수직 정렬 및 겹침 확인 (두 숫자의 높이 및 Y 중심이 일치)
+                val overlapY = min(current.maxY, other.maxY) - max(current.minY, other.minY)
+                val minH = min(current.height, other.height)
+                val isVerticallyAligned = overlapY >= minH * 0.35f || abs(current.centerY - other.centerY) <= minH * 0.50f
+
+                // 수평 간격 확인 (숫자 간의 틈새: 최대 글자 높이의 0.9배 + 10px 이내)
+                val hGap = maxOf(0, maxOf(current.minX, other.minX) - minOf(current.maxX, other.maxX))
+                val maxAllowedGap = maxOf(current.height, other.height) * 0.90f + 10f
+                val isHorizontallyAdjacent = hGap <= maxAllowedGap
+
+                // 결합 시 종횡비 검증 (2자리 숫자는 가로가 세로의 1.65배 이하)
+                val combW = maxOf(current.maxX, other.maxX) - minOf(current.minX, other.minX) + 1
+                val combH = maxOf(current.maxY, other.maxY) - minOf(current.minY, other.minY) + 1
+                val isPlausibleDigits = combW <= combH * 1.65f
+
+                if (isVerticallyAligned && isHorizontallyAdjacent && isPlausibleDigits) {
+                    merged[j] = true
+                    current = ColorBlob(
+                        minX = minOf(current.minX, other.minX),
+                        maxX = maxOf(current.maxX, other.maxX),
+                        minY = minOf(current.minY, other.minY),
+                        maxY = maxOf(current.maxY, other.maxY),
+                        pixelCount = current.pixelCount + other.pixelCount,
+                        sumX = current.sumX + other.sumX,
+                        sumY = current.sumY + other.sumY,
+                        sumV = current.sumV + other.sumV
+                    )
+                }
+            }
+            result.add(current)
+        }
+        return result
+    }
+
 
     /**
      * 신호등 발광 램프 주변에 짙은 색상의 하우징 케이스(차광판/외곽 테두리)가 존재하는지 콘트라스트를 검증합니다.

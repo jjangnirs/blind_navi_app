@@ -265,6 +265,23 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `CameraVisionSignalEstimatorTest.testLowerRoadwayRedDoesNotVetoPedestrianGreen`: 하단 차량 브레이크등 존재 시 상단 녹색 신호 정상 판정 통과.
   - 총 178개 안드로이드 단위 테스트 전체 통과 (100% PASS).
 
+### 22) 숫자형 잔여시간 표시기(초록색 숫자) 클러스터링 및 2D 공간 추적 락(Spatial Tracking Lock-on) (ADR 0024)
+- **2차원 공간 추적 락(Spatial Tracking Lock-on) 및 시간 평활화(EMA)**:
+  - 1차원 $X$축 중심 거리 의존도를 제거하고, 최근 800ms 이내 잠금된 신호 중심($X, Y$)에 대한 2D 유클리드 거리 및 수직 이탈 가중치(1.4배) 기반 후보 평가를 도입하여 한손 파지 손떨림 시 화면 높이 15% 이상 순간이동하던 텔레포트 요동(30초간 106회 발생)을 원천 차단.
+  - Bounding Box에 지수 이동 평균(EMA, $\alpha=0.70$)을 적용하여 화면 떨림 없는 안정적인 조준 프레임 보장.
+- **숫자형 잔여시간 표시기 모폴로지 클러스터링 (Morphological Digit Clustering)**:
+  - `clusterDigitBlobs`: 십의 자리/일의 자리 및 세그먼트 선으로 분절된 녹색 획들을 수직 정렬($\Delta Y \le 0.50 H$) 및 수평 근접($\text{hGap} \le 0.90 H + 10\text{px}$) 조건 기반으로 단일 카운트다운 타이머 블롭으로 병합.
+  - 최소 화소수 필터 탈락을 방지하고, 2자리 숫자가 하나의 통합 박스로 검출되도록 보장.
+- **차량용 가로 신호등 필터 및 가공 신호기 임계값 최적화**:
+  - `isHorizontalVehicle`: 2자리 숫자 카운트다운 타이머($W/H \approx 1.1 \sim 1.5$)를 정상 수용하도록 임계값을 `(blob.width > blob.height * 1.65f) && (blob.width >= 18)`로 정밀화.
+  - 가공 차량 신호기 판정 고도를 최상단 차도 영역($Y < 0.12f$)으로 상향 조정하여 전방 10~25m 보행 신호등 고도($Y \in 0.16f..0.35f$) 오판정 원천 차단.
+  - 2D 정규화 거리 및 녹색 추적 잠금 유지권을 통해 우측 차도 원거리 적색등 간섭에 의한 오판정 차단.
+- **단위 테스트 및 안전성 검증**:
+  - `CameraVisionSignalEstimatorTest.testGreenCountdownDigitsRecognizedAsGreen`: 2자리 숫자 카운트다운 타이머("19") 단일 녹색 신호 인식 검증 (100% PASS).
+  - `CameraVisionSignalEstimatorTest.testSpatialTrackingLockPreventsBoxJump`: 상단 보행 신호등과 하단 광원 공존 시 상단 신호 2D 추적 락 고정 검증 (100% PASS).
+  - `CameraVisionSignalEstimatorTest.testPedestrianGreenNotVetoedBySideRoadRed`: 측면 차도 적색등 존재 시 녹색 보행 신호 정상 유지 검증 (100% PASS).
+  - 총 182개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
 
 
 

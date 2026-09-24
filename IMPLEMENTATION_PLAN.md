@@ -374,6 +374,15 @@ flowchart TD
 - E15-S5 `TwoTierHybridSignalEstimator` 단일 `LocalVlmSignalVerifier` 공유 및 중앙 뷰파인더 손떨림 허용 오차(`0.35f`) 확장
 - E15-S6 178개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.5MB) 빌드 검증
 
+### Epic E16 — 숫자형 잔여시간 표시기(초록색 숫자) 클러스터링 및 2D 공간 추적 락(Spatial Tracking Lock-on) (ADR-024)
+
+- E16-S1 2차원 공간 추적 락(`lastLockedCenterNorm`, 수직 가중치 1.4배 2D 유클리드 거리) 도입으로 한손 파지 시 조준 박스 상/하단 텔레포트 요동(30초간 106회) 원천 차단
+- E16-S2 Bounding Box 지수 이동 평균(EMA, $\alpha=0.70$) 시간 평활화를 통한 프레임 간 조준 박스 떨림 완충
+- E16-S3 디지털 잔여시간 표시기 획 분절 병합 알고리즘(`clusterDigitBlobs`) 구현 및 2자리 카운트다운 타이머 화소수 부족 탈락 방지
+- E16-S4 2자리 숫자형 잔여시간 표시기($W \le 1.65 H$) 수용을 위한 차량 신호 필터 임계값 정밀화
+- E16-S5 가공 차량 신호기 고도 임계값($Y < 0.12f$) 최적화 및 2D 거리 비교로 배경 우측 적색등에 의한 Zero False-Green 오작동 차단
+- E16-S6 182개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.1MB) 빌드 및 기기 MTP 전송 검증
+
 
 ## 10. 일일 개발 루틴
 
