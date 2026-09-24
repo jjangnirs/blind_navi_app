@@ -21,6 +21,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import kr.safecross.mobile.accessibility.TtsAnnouncementHelper
+import kr.safecross.mobile.data.repository.SharedPrefsRecentDestinationRepository
 import kr.safecross.mobile.data.repository.TmapRouteRepository
 import kr.safecross.mobile.domain.model.LocationPoint
 import kr.safecross.mobile.location.ProductionLocationSource
@@ -52,7 +53,9 @@ class MainActivity : ComponentActivity() {
         locationSource = ProductionLocationSource(this)
 
         val onboardingViewModel = OnboardingViewModel()
-        val destinationViewModel = DestinationViewModel()
+        val destinationViewModel = DestinationViewModel(
+            recentRepository = SharedPrefsRecentDestinationRepository(this)
+        )
         val routeSummaryViewModel = RouteSummaryViewModel(routeRepository)
         val navigationViewModel = NavigationViewModel(locationSource = locationSource, routeRepository = routeRepository)
         val settingsViewModel = SettingsViewModel()

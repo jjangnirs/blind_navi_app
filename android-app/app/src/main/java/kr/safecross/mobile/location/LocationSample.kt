@@ -25,12 +25,20 @@ data class LocationSample(
 ) {
     /**
      * 지정된 단조 시간([currentElapsedNanos]) 기준 샘플 경과 시간(초).
+     * System.nanoTime()과 Android Location의 elapsedRealtimeNanos(SystemClock 기준) 간
+     * 클록 베이스 불일치(음수이거나 60초 초과) 발생 시 실제 수신 시각(wall-clock)으로 안전하게 폴백합니다.
      */
-    fun ageSeconds(currentElapsedNanos: Long): Double {
+    fun ageSeconds(currentElapsedNanos: Long = 0L): Double {
+        val nowMs = System.currentTimeMillis()
+        val wallDiffSec = (nowMs - timestampEpochMs).coerceAtLeast(0L) / 1000.0
+
         if (elapsedRealtimeNanos <= 0L || currentElapsedNanos <= 0L) {
-            return 0.0
+            return wallDiffSec
         }
-        val diffNanos = (currentElapsedNanos - elapsedRealtimeNanos).coerceAtLeast(0L)
+        val diffNanos = currentElapsedNanos - elapsedRealtimeNanos
+        if (diffNanos < 0L || diffNanos > 60_000_000_000L) {
+            return wallDiffSec
+        }
         return diffNanos / 1_000_000_000.0
     }
 

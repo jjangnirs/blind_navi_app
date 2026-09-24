@@ -73,8 +73,14 @@ class CrossingApproachEngine(
 
                 if (userBearing != null && facilityBearing != null) {
                     val diff = GeoMath.bearingDifference(userBearing.toDouble(), facilityBearing)
-                    // 반대편 도로이거나 방위각 차이가 60도 초과 시 무시
-                    if (diff > maxBearingDiffDegrees) {
+                    // 보행자가 서행(speed < 1.2m/s)하거나 횡단보도 18m 이내로 근접한 경우,
+                    // 정지/서행 중 GPS 방위각 회전 노이즈로 횡단보도가 누락되지 않도록 방위각 필터 완화
+                    val speed = sample.speedMps ?: 0.0f
+                    val isNearOrSlow = dist <= 18.0 || speed < 1.2f
+                    val effectiveMaxBearingDiff = if (isNearOrSlow) 90.0 else maxBearingDiffDegrees
+
+                    // 반대편 도로이거나 방위각 차이 초과 시 무시
+                    if (diff > effectiveMaxBearingDiff) {
                         continue
                     }
                 }

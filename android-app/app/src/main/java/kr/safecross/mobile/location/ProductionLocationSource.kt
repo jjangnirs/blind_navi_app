@@ -145,7 +145,26 @@ class ProductionLocationSource(
                 }
             }
 
-            // 3. Network Provider (Wi-Fi/기지국) 보조 등록
+            // 3. Android 12+ Fused Provider (S25 Ultra 다중 위성 L1+L5 + Wi-Fi RTT + 관성 센서 융합)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasFine) {
+                try {
+                    if (locationManager.isProviderEnabled(LocationManager.FUSED_PROVIDER)) {
+                        val fusedRequest = LocationRequest.Builder(minTimeMs)
+                            .setQuality(LocationRequest.QUALITY_HIGH_ACCURACY)
+                            .setMinUpdateDistanceMeters(minDistanceM)
+                            .setMinUpdateIntervalMillis(minTimeMs / 2)
+                            .build()
+                        locationManager.requestLocationUpdates(
+                            LocationManager.FUSED_PROVIDER,
+                            fusedRequest,
+                            ContextCompat.getMainExecutor(context),
+                            locationListener
+                        )
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // 4. Network Provider (Wi-Fi/기지국) 보조 등록
             if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
@@ -155,15 +174,18 @@ class ProductionLocationSource(
                 )
             }
 
-            // 4. 최근 위치(Last Known Location): 15초 이내의 신선한 샘플만 방출 (오래된 샘플로 인한 Stale 경고 방지)
+            // 5. 최근 위치(Last Known Location): 15초 이내의 신선한 샘플만 방출 (오래된 샘플로 인한 Stale 경고 방지)
             val nowRealtime = SystemClock.elapsedRealtimeNanos()
             val nowWall = System.currentTimeMillis()
 
+            val lastFused = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasFine) {
+                try { locationManager.getLastKnownLocation(LocationManager.FUSED_PROVIDER) } catch (_: Exception) { null }
+            } else null
             val lastGps = if (hasFine) locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER) else null
             val lastNetwork = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
             val lastPassive = if (hasFine) locationManager.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER) else null
 
-            val candidates = listOfNotNull(lastGps, lastNetwork, lastPassive)
+            val candidates = listOfNotNull(lastFused, lastGps, lastNetwork, lastPassive)
             val bestLast = candidates.maxByOrNull { it.time }
 
             // 15초 이내의 유효한 최근 위치일 때만 초기 샘플 방출

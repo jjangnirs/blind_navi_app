@@ -395,7 +395,8 @@ fun DestinationScreen(
                     DestinationCardItem(
                         item = item,
                         currentLocation = currentGps,
-                        onClick = { viewModel.selectDestination(item) }
+                        onClick = { viewModel.selectDestination(item) },
+                        onToggleFavorite = { viewModel.toggleFavorite(item) }
                     )
                 }
             }
@@ -407,7 +408,8 @@ fun DestinationScreen(
 private fun DestinationCardItem(
     item: DestinationItem,
     currentLocation: LocationPoint? = null,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onToggleFavorite: () -> Unit = {}
 ) {
     // 현재 위치와의 거리 산출
     val distanceMeters = currentLocation?.let { calculateDistanceMeters(it, item.location) }
@@ -422,69 +424,96 @@ private fun DestinationCardItem(
             .heightIn(min = 64.dp)
             .background(CardBackground, RoundedCornerShape(12.dp))
             .border(BorderStroke(1.dp, Color(0xFF444444)), RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(16.dp)
-            .semantics(mergeDescendants = true) {
-                role = Role.Button
-                val distDesc = distanceText?.let { ", 현재 위치에서 $it" } ?: ""
-                contentDescription = "목적지 ${item.name}. 주소: ${item.address}$distDesc. ${if (item.isFavorite) "즐겨찾기 항목." else ""} 선택하려면 두 번 탭하세요."
-            },
+            .padding(start = 16.dp, top = 6.dp, bottom = 6.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = if (item.isFavorite) Icons.Default.Star else Icons.Default.Place,
-            contentDescription = null,
-            tint = if (item.isFavorite) HighContrastYellow else TextSecondary,
-            modifier = Modifier.size(32.dp)
-        )
-        Spacer(modifier = Modifier.width(16.dp))
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.Center
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onClick)
+                .padding(vertical = 10.dp)
+                .semantics(mergeDescendants = true) {
+                    role = Role.Button
+                    val distDesc = distanceText?.let { ", 현재 위치에서 $it" } ?: ""
+                    contentDescription = "목적지 ${item.name}. 주소: ${item.address}$distDesc. ${if (item.isFavorite) "즐겨찾기 항목." else ""} 선택하려면 두 번 탭하세요."
+                },
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Icon(
+                imageVector = Icons.Default.Place,
+                contentDescription = null,
+                tint = if (item.isFavorite) HighContrastYellow else TextSecondary,
+                modifier = Modifier.size(32.dp)
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
             ) {
-                Text(
-                    text = item.name,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
-                        color = HighContrastWhite
-                    ),
-                    modifier = Modifier.weight(1f, fill = false)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = item.name,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = HighContrastWhite
+                        ),
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
 
-                // 거리 뱃지
-                if (distanceText != null) {
-                    val badgeColor = if (isWalkable) Color(0xFF00E676) else Color(0xFFFF5252)
-                    Row(
-                        modifier = Modifier
-                            .background(badgeColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
-                            .border(1.dp, badgeColor, RoundedCornerShape(6.dp))
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (isWalkable) "🚶 $distanceText" else "⚠️ $distanceText (초과)",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = badgeColor,
-                                fontSize = 11.sp
+                    // 거리 뱃지
+                    if (distanceText != null) {
+                        val badgeColor = if (isWalkable) Color(0xFF00E676) else Color(0xFFFF5252)
+                        Row(
+                            modifier = Modifier
+                                .background(badgeColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                                .border(1.dp, badgeColor, RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (isWalkable) "🚶 $distanceText" else "⚠️ $distanceText (초과)",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = badgeColor,
+                                    fontSize = 11.sp
+                                )
                             )
-                        )
+                        }
                     }
                 }
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = item.address,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 14.sp,
-                    color = TextSecondary
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = item.address,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 14.sp,
+                        color = TextSecondary
+                    )
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        // 즐겨찾기 별 토글 버튼 (터치 타깃 최소 48dp 보장)
+        IconButton(
+            onClick = onToggleFavorite,
+            modifier = Modifier
+                .size(48.dp)
+                .semantics {
+                    role = Role.Button
+                    contentDescription = if (item.isFavorite) "${item.name} 즐겨찾기 해제" else "${item.name} 즐겨찾기 등록"
+                }
+        ) {
+            Icon(
+                imageVector = Icons.Default.Star,
+                contentDescription = null,
+                tint = if (item.isFavorite) HighContrastYellow else Color(0xFF666666),
+                modifier = Modifier.size(28.dp)
             )
         }
     }
