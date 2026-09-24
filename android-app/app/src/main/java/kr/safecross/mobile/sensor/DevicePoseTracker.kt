@@ -54,6 +54,11 @@ class ProductionDevicePoseTracker(
     private var isTracking = false
     private val rotationMatrix = FloatArray(9)
     private val orientationValues = FloatArray(3)
+    private var smoothedHeadingCos = 0.0
+    private var smoothedHeadingSin = 0.0
+    private var hasInitializedHeading = false
+    private var lastPoseEmitTimeMs = 0L
+    private val headingAlpha = 0.25 // 원형 저주파 통과 필터(EMA) 가중치 (손떨림 및 보행 진자 흡수)
 
     override fun startTracking() {
         if (!isTracking && sensorManager != null) {
@@ -75,6 +80,7 @@ class ProductionDevicePoseTracker(
         if (isTracking && sensorManager != null) {
             sensorManager.unregisterListener(this)
             isTracking = false
+            hasInitializedHeading = false
         }
     }
 
@@ -87,9 +93,23 @@ class ProductionDevicePoseTracker(
                     SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                     SensorManager.getOrientation(rotationMatrix, orientationValues)
 
-                    // orientationValues[0]: Azimuth (-PI ~ +PI) -> 0.0 ~ 360.0 도
+                    // 원형 단위 벡터(sin/cos) 기반 저주파 통과 필터(Circular EMA) 적용
                     val azimuthRad = orientationValues[0].toDouble()
-                    val heading = ((Math.toDegrees(azimuthRad) + 360.0) % 360.0).toFloat()
+                    val curCos = kotlin.math.cos(azimuthRad)
+                    val curSin = kotlin.math.sin(azimuthRad)
+
+                    val smoothedHeading: Float
+                    if (!hasInitializedHeading) {
+                        smoothedHeadingCos = curCos
+                        smoothedHeadingSin = curSin
+                        hasInitializedHeading = true
+                        smoothedHeading = ((Math.toDegrees(azimuthRad) + 360.0) % 360.0).toFloat()
+                    } else {
+                        smoothedHeadingCos = (1.0 - headingAlpha) * smoothedHeadingCos + headingAlpha * curCos
+                        smoothedHeadingSin = (1.0 - headingAlpha) * smoothedHeadingSin + headingAlpha * curSin
+                        val smoothedRad = kotlin.math.atan2(smoothedHeadingSin, smoothedHeadingCos)
+                        smoothedHeading = ((Math.toDegrees(smoothedRad) + 360.0) % 360.0).toFloat()
+                    }
 
                     // 후면 카메라 시선 벡터 (기기 좌표계 (0, 0, -1)^T)의 월드 좌표계 z성분 (-R[8]):
                     // 카메라가 지평선을 바라보면 vz = 0, 하늘은 vz > 0, 바닥은 vz < 0.
@@ -100,9 +120,17 @@ class ProductionDevicePoseTracker(
                     val vxZ = rotationMatrix[6].toDouble().coerceIn(-1.0, 1.0)
                     val roll = Math.toDegrees(kotlin.math.asin(vxZ)).toFloat()
 
-                    val pose = DevicePose(pitchDegrees = pitch, rollDegrees = roll, headingDegrees = heading)
-                    _currentPose.value = pose
-                    _tiltGuidance.value = evaluateGuidance(pitch, roll, _tiltGuidance.value)
+                    // 초당 약 12.5회(80ms)로 UI 스로틀링하되, 신체 회전(12도 이상)은 즉시 방출하여 반응성 극대화
+                    val nowMs = System.currentTimeMillis()
+                    val lastHeading = _currentPose.value.headingDegrees
+                    val deltaHeading = kotlin.math.abs(((smoothedHeading - lastHeading + 540.0) % 360.0) - 180.0)
+
+                    if (nowMs - lastPoseEmitTimeMs >= 80L || deltaHeading >= 12.0) {
+                        lastPoseEmitTimeMs = nowMs
+                        val pose = DevicePose(pitchDegrees = pitch, rollDegrees = roll, headingDegrees = smoothedHeading)
+                        _currentPose.value = pose
+                        _tiltGuidance.value = evaluateGuidance(pitch, roll, _tiltGuidance.value)
+                    }
                 } catch (_: Exception) {}
             }
             Sensor.TYPE_ACCELEROMETER -> {

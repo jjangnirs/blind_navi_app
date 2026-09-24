@@ -255,5 +255,45 @@ class NavigationViewModelTest {
 
         job.cancel()
     }
+
+    @Test
+    fun `walking speed blends GPS course with compass heading to suppress arm sway`() = runTest(testDispatcher) {
+        val route = fakeRepository.getPedestrianRoute(
+            origin = LocationPoint(35.1595, 126.8526),
+            destination = LocationPoint(35.1610, 126.8550)
+        ).getOrThrow()
+
+        viewModel.setRoute(route)
+        advanceUntilIdle()
+
+        // 1. 보행 중 GPS 샘플 수신 (속도 1.2 m/s, GPS 진행 궤적 90도)
+        val movingSample = kr.safecross.mobile.location.LocationSample(
+            lat = 35.1595,
+            lon = 126.8526,
+            accuracyMeters = 3.0f,
+            speedMps = 1.2f,
+            bearingDegrees = 90.0f,
+            elapsedRealtimeNanos = System.nanoTime()
+        )
+        viewModel.processLocationSample(movingSample)
+        advanceUntilIdle()
+
+        // 2. 보행 중 팔 흔들림으로 나침반 헤딩이 110도로 흔들린 센서 포즈 유입
+        val swayPose = kr.safecross.mobile.perception.DevicePose(
+            pitchDegrees = -30f,
+            rollDegrees = 0f,
+            headingDegrees = 110.0f
+        )
+        viewModel.processDevicePose(swayPose)
+        advanceUntilIdle()
+
+        // 3. 상보 필터(GPS 65% + 나침반 35%)로 융합되어 110도에서 90도 방향으로 당겨져야 함
+        // delta = 90 - 110 = -20, fused = 110 + (-20 * 0.65) = 97.0도
+        val currentHeading = viewModel.uiState.value.currentHeadingDegrees
+        assertTrue(
+            "융합된 헤딩($currentHeading)은 순수 나침반(110도)보다 GPS 진행 방향(90도)에 더 가까워야 함",
+            currentHeading in 95.0f..100.0f
+        )
+    }
 }
 

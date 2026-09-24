@@ -166,6 +166,19 @@ cd android-app
 - **Track ID 승계(Inheritance) 및 슬라이딩 윈도우 완충**: 손떨림으로 Track ID가 증가하더라도 누적 카운트를 보존하고, 5프레임 중 75% 이상 녹색 합의 시 `GREEN_ESTIMATE` 정상 승인
 - **조준선 디바운싱(8프레임/270ms) 및 조준 발화 쿨다운(4초)**: 손떨림 중 조준 풀림 및 조준 반복 음성이 녹색 신호 음성 안내를 간섭하지 않도록 방어
 
+### 23. 진행방향 지도(Heading-Up) 360도 랩어라운드 풍차 회전 차단 및 보행 손떨림 감쇠 안정화 (`RealRouteMapView`, `DevicePoseTracker`, `NavigationViewModel`, `NavigationScreen`)
+- **최단 각도 누적 언래핑 회전(Shortest Angular Path Unwrapping)**:
+  - 북쪽 경계($358^\circ \leftrightarrow 2^\circ$) 진입 시 CSS `transform: rotate(-Xdeg)`의 수치 선형 보간으로 인해 발생하는 $356^\circ$ 역회전(풍차 스핀)을 연속 누적 각도 연산($\Delta\theta = ((\text{targetRot} - \text{currentAngle} + 540) \pmod{360}) - 180$; `currentAngle += \Delta\theta`)으로 완벽 해결
+- **보행 보폭 및 미세 손떨림 $2.5^\circ$ 데드밴드(Deadband)**:
+  - $|\Delta\theta| < 2.5^\circ$ 미만의 보폭 좌우 흔들림 및 잔떨림 무시 필터를 적용하여 불필요한 연속 렌더링 부하 방지
+  - CSS transition 속도를 `0.35s`에서 `0.20s ease-out`으로 최적화하여 60Hz 렌더링 스래싱 및 반응 지연 해소
+- **원형 벡터 EMA 저역통과 필터(Circular Low-Pass EMA)**:
+  - 회전/지자기 센서 60Hz 신호를 단위원 벡터($\cos\theta, \sin\theta$) 공간에서 $\alpha=0.25$ 가중치로 스무딩하여 0°/360° 경계 불연속 제거 및 80ms(12.5Hz) 적응형 스로틀링
+- **보행 속도 연동 GPS 궤적(65%) + 나침반(35%) 상보 융합(Complementary Fusion)**:
+  - 보행 속도 $0.8\text{ m/s}$ 이상 전진 보행 시 GPS 진행 방향 벡터를 65% 비중으로 상보 결합하여, 한손 보행 중 팔 흔들림에 의해 폰이 좌우로 흔들려도 지도가 진행 차로 축에 안정적으로 고정
+- **진북(North 0.0°) Falsy 오판 버그 수정**:
+  - `NavigationScreen`에서 `currentHeadingDegrees != 0f` 조건으로 인해 0.0° 진북일 때 가상 베어링으로 튀는 버그 제거
+
 ## TalkBack 수동 시험 절차
 1. **TalkBack 활성화**: Android 기기 설정 -> 접근성 -> TalkBack 켜기 (또는 볼륨 업+다운 키 3초 길게 누르기).
 2. **목적지 검색 시험**:

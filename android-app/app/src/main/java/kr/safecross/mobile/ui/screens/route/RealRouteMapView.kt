@@ -243,7 +243,7 @@ private fun buildRouteMapHtml(
             left: -35%;
             top: -35%;
             transform-origin: 50% 50%;
-            transition: transform 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+            transition: transform 0.20s ease-out;
         }
 
         /* 컨트롤 버튼 플로팅 패널 */
@@ -358,7 +358,7 @@ private fun buildRouteMapHtml(
             left: 5px;
             z-index: 3;
             pointer-events: none;
-            transition: transform 0.25s ease-out;
+            transition: transform 0.20s ease-out;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -431,6 +431,10 @@ private fun buildRouteMapHtml(
         var isOffRoute = $initialOffRoute;
         var currentHeading = $initialHeading;
         var isHeadingUp = $initialHeadingUp;
+        var currentContinuousMapAngle = -$initialHeading;
+        var currentContinuousArrowAngle = $initialHeading;
+        var hasInitializedMapAngle = false;
+        var hasInitializedArrowAngle = false;
 
         var map = null;
         var routePolyline = null;
@@ -553,16 +557,40 @@ private fun buildRouteMapHtml(
             updateHeadingButtonUi();
         }
 
-        // 지도 회전 적용 함수
+        // 지도 회전 적용 함수: 최단 각도 누적(Unwrap) 및 2.5도 불감대(Deadband) 필터 적용 (360도 풍차 회전 및 잔떨림 원천 방지)
         function applyMapRotation(headingDeg, headingUp) {
             var mapEl = document.getElementById('map');
             if (!mapEl) return;
             if (headingUp) {
-                // 진행방향(Heading)이 화면 상단(위쪽)을 향하도록 지도 자체를 -headingDeg 회전
-                mapEl.style.transform = "rotate(" + (-headingDeg) + "deg)";
+                var targetRot = -headingDeg;
+                if (!hasInitializedMapAngle) {
+                    currentContinuousMapAngle = targetRot;
+                    hasInitializedMapAngle = true;
+                    mapEl.style.transform = "rotate(" + currentContinuousMapAngle + "deg)";
+                    return;
+                }
+                // -180 ~ +180 범위의 최단 회전 각도차(delta) 산출
+                var delta = (targetRot - currentContinuousMapAngle) % 360;
+                if (delta > 180) delta -= 360;
+                if (delta < -180) delta += 360;
+
+                // 2.5도 미만의 미세 손떨림 및 발걸음 진자 운동은 필터링하여 지도 고정 유지
+                if (Math.abs(delta) < 2.5) {
+                    return;
+                }
+                currentContinuousMapAngle += delta;
+                mapEl.style.transform = "rotate(" + currentContinuousMapAngle + "deg)";
             } else {
-                // 북쪽 고정(North-Up)
-                mapEl.style.transform = "rotate(0deg)";
+                // 북쪽 고정(North-Up) 시 0도로 최단각 복귀
+                if (hasInitializedMapAngle) {
+                    var delta = (0 - currentContinuousMapAngle) % 360;
+                    if (delta > 180) delta -= 360;
+                    if (delta < -180) delta += 360;
+                    currentContinuousMapAngle += delta;
+                    mapEl.style.transform = "rotate(" + currentContinuousMapAngle + "deg)";
+                } else {
+                    mapEl.style.transform = "rotate(0deg)";
+                }
             }
         }
 
@@ -605,7 +633,17 @@ private fun buildRouteMapHtml(
             if (!el) return;
             var arrow = el.querySelector('.user-loc-arrow');
             if (arrow) {
-                arrow.style.transform = "rotate(" + headingDeg + "deg)";
+                if (!hasInitializedArrowAngle) {
+                    currentContinuousArrowAngle = headingDeg;
+                    hasInitializedArrowAngle = true;
+                    arrow.style.transform = "rotate(" + currentContinuousArrowAngle + "deg)";
+                    return;
+                }
+                var delta = (headingDeg - currentContinuousArrowAngle) % 360;
+                if (delta > 180) delta -= 360;
+                if (delta < -180) delta += 360;
+                currentContinuousArrowAngle += delta;
+                arrow.style.transform = "rotate(" + currentContinuousArrowAngle + "deg)";
             }
         }
 

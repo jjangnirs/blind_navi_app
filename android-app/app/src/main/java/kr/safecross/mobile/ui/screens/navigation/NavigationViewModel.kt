@@ -69,6 +69,12 @@ class NavigationViewModel(
     private var lastApproachStage = 0
     private var lastAlignmentTimeMs = 0L
 
+    // 헤딩 및 GPS 보행 융합 추적 (보행 시 팔 흔들림 억제 및 UI 스로틀링)
+    private var lastValidGpsBearing: Float? = null
+    private var lastSpeedMps: Float = 0f
+    private var lastHeadingUiUpdateTimeMs = 0L
+    private var lastUiHeading = 0f
+
     init {
         serviceStopJob = viewModelScope.launch {
             NavigationForegroundService.stopEventFlow.collect {
@@ -151,14 +157,34 @@ class NavigationViewModel(
      */
     fun processDevicePose(pose: DevicePose, currentTimeMs: Long = System.currentTimeMillis()) {
         val heading = pose.headingDegrees
-        _uiState.update { it.copy(currentHeadingDegrees = heading) }
+
+        // 1. 보행 중(속도 >= 0.8m/s) GPS 이동 궤적(Course) 65% + 나침반 35% 상보 필터 융합 (팔 흔들림/발걸음 진자 운동 억제)
+        val gpsBrg = lastValidGpsBearing
+        val effectiveHeading: Float = if (lastSpeedMps >= 0.8f && gpsBrg != null) {
+            val deltaGps = ((gpsBrg - heading + 540.0) % 360.0) - 180.0
+            if (kotlin.math.abs(deltaGps) <= 80.0) {
+                ((heading + (deltaGps * 0.65) + 360.0) % 360.0).toFloat()
+            } else {
+                heading
+            }
+        } else {
+            heading
+        }
+
+        // 2. UI 갱신 주기 스로틀링 (초당 약 11회/90ms, 8도 이상 급격한 회전은 즉각 반영)
+        val deltaUi = kotlin.math.abs(((effectiveHeading - lastUiHeading + 540.0) % 360.0) - 180.0)
+        if (currentTimeMs - lastHeadingUiUpdateTimeMs >= 90L || deltaUi >= 8.0) {
+            lastHeadingUiUpdateTimeMs = currentTimeMs
+            lastUiHeading = effectiveHeading
+            _uiState.update { it.copy(currentHeadingDegrees = effectiveHeading) }
+        }
 
         val route = _uiState.value.route ?: return
         if (_uiState.value.isFinished) return
 
         val targetBearing = calculateTargetBearing() ?: return
         val orientationPrompt = BlindGuidanceFormatter.evaluateOrientation(
-            currentHeadingDeg = heading.toDouble(),
+            currentHeadingDeg = effectiveHeading.toDouble(),
             targetBearingDeg = targetBearing
         )
 
@@ -174,7 +200,7 @@ class NavigationViewModel(
         if (Math.abs(currentTimeMs - lastPoseLogTimeMs) >= 1000L || orientationPrompt.isAligned != wasAligned) {
             lastPoseLogTimeMs = currentTimeMs
             NavigationFlightRecorder.recordPose(
-                headingDeg = heading,
+                headingDeg = effectiveHeading,
                 pitchDeg = pose.pitchDegrees,
                 targetBearingDeg = targetBearing,
                 isAligned = orientationPrompt.isAligned,
@@ -251,7 +277,14 @@ class NavigationViewModel(
     ) {
         if (_uiState.value.isFinished) return
 
-        // GPS 수신 원격 기록
+        // GPS 수신 원격 기록 및 이동 속도/방위각 갱신
+        if (sample.speedMps != null) {
+            lastSpeedMps = sample.speedMps
+        }
+        if (sample.bearingDegrees != null && sample.speedMps != null && sample.speedMps >= 0.75f && sample.accuracyMeters <= 25.0f) {
+            lastValidGpsBearing = sample.bearingDegrees
+        }
+
         NavigationFlightRecorder.recordGps(
             lat = sample.lat,
             lon = sample.lon,

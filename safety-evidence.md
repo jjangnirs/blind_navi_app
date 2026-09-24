@@ -230,6 +230,24 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `CameraVisionSignalEstimatorTest.testOverheadVehicleRedLightDoesNotVetoPedestrianGreenLight`: 상공 차량용 적색등 존재 하에서도 보행등 녹색 판정 정상 통과 (100% PASS).
   - `CrossingDecisionEngineTest.testHandheldDynamicTrackJitterAccumulatesGreen`: 한손 파지 손떨림 트랙 전이 시 녹색 프레임 누적 및 최종 GREEN 승인 통과 (100% PASS).
 
+### 20) 진행방향 지도(Heading-Up) 360도 랩어라운드 풍차 회전 차단 및 보행 손떨림 감쇠 안정화 (ADR 0022)
+- **최단 각도 회전(Shortest Angular Path Unwrapping)**:
+  - 북쪽 경계($358^\circ \leftrightarrow 2^\circ$) 횡단 시 CSS `transform: rotate(-Xdeg)`의 단순 수치 보간($-358^\circ \rightarrow -2^\circ$)으로 인해 지도가 반시계 방향으로 $356^\circ$ 역회전(풍차 스핀)하던 결함을 누적 연속 각도 연산($\Delta\theta = ((\text{targetRot} - \text{currentAngle} + 540) \pmod{360}) - 180$; `currentAngle += \Delta\theta`)으로 완벽 해결. 지도 회전 변위가 항상 $|\Delta\theta| \le 180^\circ$ 최단 경로로만 회전.
+- **보행 보폭 손떨림 데드밴드(Deadband) 및 CSS 전환 가속**:
+  - $2.5^\circ$ 미만의 미세 흔들림 및 보폭 좌우 요동 무시 필터 적용.
+  - CSS transition을 `0.35s cubic-bezier`에서 `0.20s ease-out`으로 최적화하여 렌더링 지연 제거.
+- **원형 벡터 EMA 저역통과 필터(Circular EMA Low-Pass Filter)**:
+  - `DevicePoseTracker`의 지자기/회전 벡터 센서 샘플($\sim 60\text{Hz}$)을 단위원 삼각함수($\cos\theta, \sin\theta$) 공간에서 $\alpha=0.25$ 가중치로 스무딩하여 $0^\circ/360^\circ$ 불연속면을 제거하고 고주파 떨림 억제.
+  - 80ms(12.5Hz) 적응형 스로틀링 및 $12^\circ$ 이상 물리적 급회전 시 즉각 방출.
+- **GPS 이동 궤적(Course over Ground) + 나침반 상보 융합(Complementary Fusion)**:
+  - 보행 속도 $0.8\text{ m/s}$ 이상 전진 보행 시 진행방향 각도에 GPS Course 65% + Compass 35% 상보 결합 필터를 적용하여, 손을 흔들며 걸을 때 스마트폰이 $\pm 10^\circ$ 이상 요동쳐도 지도가 실제 이동하는 도로 축에 안정적으로 고정되도록 구현.
+  - 정지/서행 시 나침반 $100\%$로 자동 전환하여 제자리 회전 시 방향 탐색 보장.
+- **진북(North 0.0°) Falsy 비교 버그 수정**:
+  - `NavigationScreen`에서 `!= 0f` 검사로 인해 정확한 진북($0.0^\circ$)을 무효값으로 오판하고 가상 베어링으로 튕기던 오류를 제거.
+- **단위 테스트 및 안전성 검증**:
+  - `NavigationViewModelTest.testWalkingGpsCourseFusesWithCompassHeading`: $1.2\text{ m/s}$ 보행 시 GPS 궤적과 나침반 각도의 $65:35$ 상보 융합 무결성 검증 (100% PASS).
+  - 총 175개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
 
 
 

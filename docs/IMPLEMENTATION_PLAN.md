@@ -356,6 +356,15 @@ flowchart TD
 - E13-S4 조준선(Reticle) 하단 범위 확장($Y \le 0.70$), 락온 디바운싱 강화(8프레임/270ms) 및 조준 완료 음성 안내 4초 쿨다운 적용 (`CrossingAssistViewModel.kt`, `CrossingAssistUiState.kt`)
 - E13-S5 174개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.6MB) 빌드 검증
 
+### Epic E14 — 진행방향 지도(Heading-Up) 360도 랩어라운드 풍차 회전 차단 및 보행 손떨림 감쇠 안정화 (ADR-022)
+
+- E14-S1 북쪽 경계($358^\circ \leftrightarrow 2^\circ$) 최단 각도 누적 언래핑($\Delta\theta \in [-180^\circ, 180^\circ]$)을 통한 360도 역회전(풍차 스핀) 원천 차단 (`RealRouteMapView.kt`)
+- E14-S2 $2.5^\circ$ 데드밴드(Deadband) 필터 및 CSS 트랜지션 단축(`0.20s ease-out`)을 통한 보폭 스웨이 및 미세 손떨림 억제 (`RealRouteMapView.kt`)
+- E14-S3 단위원 삼각함수 벡터 공간($\cos\theta, \sin\theta$) 원형 EMA 저역통과 필터($\alpha=0.25$) 및 12.5Hz 적응형 스로틀링 (`DevicePoseTracker.kt`)
+- E14-S4 보행 속도($\ge 0.8\text{ m/s}$) 기반 GPS 이동 궤적(65%) + 나침반(35%) 상보 융합 필터 및 정지 시 나침반 자동 전환 (`NavigationViewModel.kt`)
+- E14-S5 진북($0.0^\circ$) Falsy 오판 버그 수정 (`NavigationScreen.kt`)
+- E14-S6 175개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.6MB) 빌드 검증
+
 
 ## 10. 일일 개발 루틴
 

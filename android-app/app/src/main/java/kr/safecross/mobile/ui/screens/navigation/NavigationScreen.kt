@@ -225,11 +225,7 @@ fun NavigationScreen(
             }
 
             // 3-2. 맞게 가고 있는지 실시간으로 확인하는 정밀 세부 지도 카드 (진행방향 위로 연동)
-            val currentHeading = if (uiState.currentHeadingDegrees != 0f) {
-                uiState.currentHeadingDegrees
-            } else {
-                viewModel.calculateTargetBearing()?.toFloat() ?: 0f
-            }
+            val currentHeading = uiState.currentHeadingDegrees
 
             DetailedNavigationMapCard(
                 route = route,

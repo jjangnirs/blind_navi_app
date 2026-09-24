@@ -72,6 +72,11 @@ MVP에 포함한다.
     - 한손 파지 보행자 손떨림(Jitter) 적응형 추적: 바운딩 박스 중심 변위 허용 범위 대폭 완화($0.08 \rightarrow 0.18$, 뷰파인더 중심 시 최대 $0.25$), 손떨림으로 인한 동일 기물 재식별 시 `isJitteredSameDynamicTrack` 계승으로 프레임 리셋 방지
     - 손떨림 단일 프레임 블러 내성 강화: 단일 `UNKNOWN` 프레임 발생 시 기존의 가혹한 0 리셋 대신 완만한 감쇄 적용, 최근 5프레임 중 3프레임 이상 녹색 시 완충 상태 유지
     - 조준선(Reticle) UX 최적화: 조준선 하단 범위 확장($Y \le 0.70$), 락온 디바운싱 강화(8프레임/270ms), 조준 안내 음성 4초 쿨다운 적용으로 오디오 채널 독점 방지
+27. 진행방향(Heading-Up) 지도 회전 360도 풍차 회전 차단 및 손떨림 저감 안정화 (`RealRouteMapView`, `ProductionDevicePoseTracker`, `NavigationViewModel`, ADR-022):
+    - 최단 각도 누적(Shortest Angular Path Unwrap): 북쪽(0°/360°) 경계 횡단 시 CSS 360도 반대 급회전 버그 원천 차단 및 최단 방향(오차 $\le 180^\circ$) 부드러운 회전 보장
+    - 2.5도 불감대(Deadband) 필터: 미세 손떨림 및 발걸음 진자 운동에 의한 지도 파르르 떨림 방지
+    - 원형 저주파 통과 필터(Circular EMA Low-Pass, $\alpha = 0.25$) 및 12.5Hz 적응형 스로틀링: 센서 잡음 완충 및 UI 렌더링 부하 80% 절감
+    - 보행 속도($\ge 0.8\text{ m/s}$) 연동 GPS Course(65%) + Compass(35%) 상보 융합: 보행 중 팔 스윙에도 진행 도로 방향 중심 안정 유지
 
 MVP에서 제외한다.
 
