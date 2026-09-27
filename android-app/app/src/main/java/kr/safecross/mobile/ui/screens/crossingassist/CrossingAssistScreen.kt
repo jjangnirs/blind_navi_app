@@ -255,23 +255,46 @@ fun CrossingAssistScreen(
                         }
                     }
 
-                    // 3. 실시간 신호등 감지 상태 플로팅 뱃지 (우측 상단)
-                    if (uiState.detectedSignalColor != null && uiState.detectedSignalColor != kr.safecross.mobile.perception.ObservedSignalState.UNKNOWN) {
-                        val isRed = uiState.detectedSignalColor == kr.safecross.mobile.perception.ObservedSignalState.RED
+                    // 3. 실시간 신호등 감지 상태 플로팅 뱃지 (우측 상단, 음성 안내와 100% 동기화)
+                    val badgeText = when (uiState.decisionState) {
+                        CrossingAssistDecisionState.GREEN_ESTIMATE -> "🟢 녹색 신호 (보행 가능)"
+                        CrossingAssistDecisionState.GREEN_CANDIDATE -> "🟡 녹색 확인 중..."
+                        CrossingAssistDecisionState.RED_ESTIMATE -> "🔴 적색 신호 (대기)"
+                        CrossingAssistDecisionState.UNKNOWN -> {
+                            if (!uiState.tiltGuidance.isSuitable) "⚠️ 각도 조정 필요"
+                            else if (uiState.detectedSignalColor == kr.safecross.mobile.perception.ObservedSignalState.RED) "🔴 적색 확인 중..."
+                            else "⚪ 신호 탐색 중"
+                        }
+                        else -> null
+                    }
+                    val badgeBorderColor = when (uiState.decisionState) {
+                        CrossingAssistDecisionState.GREEN_ESTIMATE -> Color(0xFF00E676)
+                        CrossingAssistDecisionState.GREEN_CANDIDATE -> Color(0xFFFFD600)
+                        CrossingAssistDecisionState.RED_ESTIMATE -> Color(0xFFFF1744)
+                        else -> Color(0xFFFF9800)
+                    }
+                    val badgeTextColor = when (uiState.decisionState) {
+                        CrossingAssistDecisionState.GREEN_ESTIMATE -> Color(0xFF00E676)
+                        CrossingAssistDecisionState.GREEN_CANDIDATE -> Color(0xFFFFD600)
+                        CrossingAssistDecisionState.RED_ESTIMATE -> Color(0xFFFF5252)
+                        else -> Color(0xFFFFCC80)
+                    }
+
+                    if (badgeText != null) {
                         Row(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(8.dp)
                                 .background(Color(0xEE1A1A1A), RoundedCornerShape(8.dp))
-                                .border(1.5.dp, if (isRed) Color(0xFFFF1744) else Color(0xFF00E676), RoundedCornerShape(8.dp))
+                                .border(1.5.dp, badgeBorderColor, RoundedCornerShape(8.dp))
                                 .padding(horizontal = 10.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (isRed) "🔴 적색 감지" else "🟢 녹색 감지",
+                                text = badgeText,
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = if (isRed) Color(0xFFFF5252) else Color(0xFF00E676),
+                                    color = badgeTextColor,
                                     fontSize = 13.sp
                                 )
                             )

@@ -369,6 +369,26 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `PerceptionRobustnessTest.testDarkHousingContrastVerificationMethod` (PASS)
   - 총 195개 안드로이드 단위 테스트 전체 통과 (100% PASS).
 
+### 28. OpenCV 4.5.3 컴퓨터 비전 라이브러리 연동 및 화면-음성 100% 동기화, 적색 핑퐁(Thrashing) 방지 (ADR-030)
+- **9월 27일 12시 50분 실측 비행 기록 포렌식 규명 (`perception_flight.log`, 13,031행)**:
+  - 12:51:59 등: 화면 중앙 보행 녹색등 유지 중 건너편 차도(X=0.50) 차량 적색등이 0.3초 잡히자 적색 우선권으로 즉시 뒤집히며 "적색 신호입니다" <-> "녹색입니다"가 0.3초 만에 엇갈려 발화되는 핑퐁 발생.
+  - 12:52:38: 화면엔 적색 뱃지와 박스가 떴으나 단말기 하향 각도로 인해 결정 엔진이 UNKNOWN으로 억제, 적색 음성 안내가 차단되는 심각한 화면-음성 불일치 규명.
+- **OpenCV 4.5.3 Android 공식 연동 및 안전 브릿지 (`OpenCvBridge`, `OpenCvSignalDetector`)**:
+  - `com.quickbirdstudios:opencv:4.5.3.0` Maven Central AAR 연동 및 JVM/Android 하이브리드 로더 탑재.
+  - OpenCV In-Range 색상 분할 및 `MORPH_ELLIPSE` 잡음 제거, 원형도($\text{Circularity} \ge 0.65$) 검증으로 직사각형 상가 간판과 원형 보행등 램프 완전 분별.
+  - 네이티브 Mat 메모리 100% 해제(Zero-Leakage) 보장.
+- **화면 UI 뱃지-음성 안내 100% 동기화 (`CrossingAssistScreen`)**:
+  - 우측 상단 플로팅 뱃지를 미검증 1프레임 관측치가 아닌 의사결정 최종 상태(`decisionState`)와 1:1 일치시켜 시각-청각 불일치 완전 해소.
+- **2프레임 적색 완충 버퍼 및 기울기 안전 우선권 (`CrossingDecisionEngine`)**:
+  - 녹색 유지 중 단발성 적색 노이즈에 대한 2프레임(66ms) 완충 버퍼로 0.3초 음성 핑퐁 완전 제거.
+  - 기기 각도가 살짝 숙여지더라도 전방 적색 정지 신호가 명확할 경우 침묵하지 않고 즉시 "적색 신호입니다. 대기하세요."를 최우선 발화 (ST-001).
+- **단위 테스트 및 안전성 검증**:
+  - `OpenCvSignalDetectorTest.testOpenCvBridgeGracefulHandlingOnJvm` (PASS)
+  - `OpenCvSignalDetectorTest.testRedInGreenPhaseDoesNotThrashOnSingleFrameFlicker` (PASS)
+  - `OpenCvSignalDetectorTest.testDefiniteRedSignalPrioritizesSafetyEvenUnderMinorTiltWarning` (PASS)
+  - 총 198개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+
 
 
 

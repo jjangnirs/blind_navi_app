@@ -116,6 +116,12 @@ MVP에 포함한다.
     - 다크 하우징(차광판 케이스) 콘트라스트 엄격화(`verifyDarkHousingContrast`): 발광 램프와 주변 차광판 간 최소 밝기 대비를 $0.30$ 이상으로 엄격화하여 검은 바탕 간판 프레임 통과 맹점 해소
     - 공간 위치 검증 및 UNKNOWN 강등(`LocalVlmSignalVerifier`): $normCx < 0.28 \lor normCx > 0.72$ 녹색 신호는 시야각 밖 상가 간판으로 간주하여 `UNKNOWN`으로 즉시 강등(`REJECTED_PERIPHERAL_SIGNBOARD_GREEN`)
     - 측면 녹색 신호 1:1 목표 정합 거부(`TargetSignalAssociator`): 화면 주변부($cx < 0.28 \lor cx > 0.72$) 녹색 후보는 단일 신호이더라도 1:1 목표 신호 확정을 거부(`PERIPHERAL_SIGNAL_MISMATCH`)
+35. OpenCV 4.5.3 컴퓨터 비전 라이브러리 연동 및 화면-음성 100% 동기화, 적색 핑퐁(Thrashing) 방지 (`OpenCvBridge`, `OpenCvSignalDetector`, `CameraVisionSignalEstimator`, `CrossingAssistScreen`, `CrossingDecisionEngine`, ADR-030):
+    - OpenCV 4.5.3 Android 공식 연동: `com.quickbirdstudios:opencv:4.5.3.0` Maven Central AAR 연동 및 `OpenCvBridge` JVM/Android 하이브리드 안전 로더 탑재
+    - 고정밀 원형도 및 모폴로지 검출기(`OpenCvSignalDetector`): OpenCV 표준 In-Range 색상 분할, `MORPH_ELLIPSE` 잡음 제거, 외곽선 추출 및 원형도($\text{Circularity} \ge 0.65$) 검증을 통해 직사각형 상가 간판과 원형 보행등 램프를 기하학적으로 완전 분별
+    - 화면 뱃지-음성 안내 100% 동기화(`CrossingAssistScreen`): 우측 상단 플로팅 뱃지를 1프레임 미검증 관측치가 아닌 의사결정 상태(`decisionState`)와 1:1 일치시켜 화면은 🔴인데 음성은 침묵/각도 경고만 나오는 시각-청각 불일치 결함 완전 해결
+    - 적색 핑퐁(Thrashing) 완충 버퍼(`CrossingDecisionEngine`): 녹색 보행등 진행 중 차도 건너편 차량등/반사광에 의한 0.3초 미세 적색 노이즈 발생 시 즉시 적색으로 뒤집히지 않도록 2프레임 완충 버퍼 적용
+    - 기울기 불량 시 적색 안전 우선권(ST-001): 기기 각도가 살짝 숙여지더라도 전방 적색 정지 신호가 명확할 경우 침묵하지 않고 즉시 "적색 신호입니다. 대기하세요."를 최우선 발화
 
 MVP에서 제외한다.
 

@@ -131,6 +131,34 @@ class CameraVisionSignalEstimator(
             return emptyList()
         }
 
+        // [OpenCV 하이브리드 비전 엔진] 네이티브 OpenCV 가용 시 원형도 및 모폴로지 정밀 분석 (ADR-030)
+        if (OpenCvBridge.isInitialized) {
+            val cvResult = OpenCvSignalDetector.detectInRoi(buffer, width, height, startX, endX, startY, endY)
+            if (cvResult != null && cvResult.isCircleVerified) {
+                val rawObs = SignalObservation(
+                    ephemeralTrackId = "track-opencv-1",
+                    state = cvResult.state,
+                    score = cvResult.score,
+                    box = cvResult.box,
+                    frameTimestampNanos = timestampNanos,
+                    quality = FrameQuality(lighting = 0.92f, blur = 0.95f, isUsable = true),
+                    modelVersion = "opencv-contour-v4.5"
+                )
+                val verified = verifier.verify(rawObs, buffer, width, height)
+                PerceptionFlightRecorder.record(
+                    "OPENCV",
+                    "State=${cvResult.state} Score=${cvResult.score} Box=[${cvResult.box.left},${cvResult.box.top},${cvResult.box.right},${cvResult.box.bottom}] Circ=${cvResult.circularity} Area=${cvResult.pixelArea}"
+                )
+                return listOf(
+                    rawObs.copy(
+                        state = verified.verifiedState,
+                        score = verified.confidenceScore,
+                        ephemeralTrackId = verified.ephemeralTrackId.ifEmpty { rawObs.ephemeralTrackId }
+                    )
+                )
+            }
+        }
+
         val step = if (targetRoi != null) 1 else 2 // ROI 내부에서는 1픽셀 전수 샘플링으로 20m+ 원거리 3x4px 램프 포착
         val gridW = (endX - startX + step - 1) / step
         val gridH = (endY - startY + step - 1) / step

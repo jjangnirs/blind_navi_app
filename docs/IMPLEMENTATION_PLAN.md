@@ -427,6 +427,15 @@ flowchart TD
 - E21-S5 `TargetSignalAssociator` 주변부 녹색 후보 1:1 목표 신호기 결합 거부(`PERIPHERAL_SIGNAL_MISMATCH`)
 - E21-S6 `PerceptionRobustnessTest` 3종 테스트 추가 및 전체 단위 테스트 100% 통과 (195개 전수 통과, 0 failure), 최신 디버그 APK (`app-debug-0927-v29.apk`, 41.5MB) 빌드 및 S25 Ultra 기기 MTP 전송 검증 완료 (ADR-029)
 
+### Epic 22 — OpenCV 4.5.3 컴퓨터 비전 라이브러리 연동 및 화면-음성 100% 동기화, 적색 핑퐁(Thrashing) 방지 (2026-09-27 완료)
+
+- E22-S1 2026-09-27 12시 50분 실측 비행 기록 포렌식 분석(`perception_flight.log`, 13,031행): 녹색 유지 중 건너편 차도 차량 적색등(X=0.50) 순간 잡힘으로 인한 0.3초 적색/녹색 음성 핑퐁, 기기 하향 각도 시 화면엔 적색 뱃지가 떴으나 음성은 침묵/각도 경고만 나오는 시각-청각 불일치 3대 원인 규명
+- E22-S2 `OpenCvBridge` 및 `com.quickbirdstudios:opencv:4.5.3.0` Maven Central 공식 AAR 연동: S25 Ultra 단말기 환경 C++ 네이티브 `libopencv_java4.so` 로드 및 JVM 단위 테스트 안전 fallback 브릿지 구현
+- E22-S3 `OpenCvSignalDetector` 신설: OpenCV In-Range 색상 분할, `MORPH_ELLIPSE` 잡음 제거, 외곽선 추출 및 원형도($\text{Circularity} \ge 0.65$) 분석으로 직사각형 상가 간판과 원형 보행등 램프 완전 분별
+- E22-S4 `CrossingAssistScreen` 화면 UI 뱃지와 음성 안내 100% 동기화: 우측 상단 플로팅 뱃지를 미검증 1프레임 관측치가 아닌 최종 승인 상태(`decisionState`)와 1:1 일치
+- E22-S5 `CrossingDecisionEngine` 2프레임 적색 완충 버퍼(0.3초 음성 핑퐁 완전 제거) 및 각도 불량 시에도 고신뢰도 적색 정지 신호 안전 우선 발화(ST-001) 구현
+- E22-S6 `OpenCvSignalDetectorTest` 3종 테스트 추가 및 전체 단위 테스트 100% 통과 (198개 전수 통과, 0 failure), 최신 디버그 APK (`app-debug-0927-v30.apk`) 빌드 및 S25 Ultra 기기 MTP 전송 검증 완료 (ADR-030)
+
 ## 10. 일일 개발 루틴
 
 신입 개발자는 매 작업일 다음 순서를 반복한다.

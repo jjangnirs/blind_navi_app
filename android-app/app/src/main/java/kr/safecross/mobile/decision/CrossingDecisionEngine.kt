@@ -64,6 +64,7 @@ class CrossingDecisionEngine(
     private var currentState: CrossingState = CrossingState.IDLE
     var consecutiveGreenCount: Int = 0
         private set
+    private var consecutiveRedInGreenPhase: Int = 0
     private var lastObservedTrackId: String? = null
     private var lastMonotonicTimeNanos: Long = 0L
 
@@ -85,6 +86,7 @@ class CrossingDecisionEngine(
     fun reset() {
         currentState = CrossingState.IDLE
         consecutiveGreenCount = 0
+        consecutiveRedInGreenPhase = 0
         lastObservedTrackId = null
         lastMonotonicTimeNanos = 0L
         frameWindow.clear()
@@ -196,16 +198,20 @@ class CrossingDecisionEngine(
         }
 
         // 6. 기기 기울기 및 센서 자세 게이트 (SR-F-045, ST-006, TRD 4.6)
+        val candidateSignal = input.association?.targetSignal
         if (!input.isTiltSuitable) {
-            consecutiveGreenCount = 0
-            return transitionTo(
-                targetState = CrossingState.UNKNOWN,
-                prevState = prevState,
-                nowNanos = nowNanos,
-                reasonCode = "POOR_DEVICE_TILT",
-                guidanceText = "스마트폰을 올바른 각도로 들어주세요.",
-                hapticType = HapticFeedbackType.UNKNOWN_CAUTION
-            )
+            val isDefiniteRed = candidateSignal != null && candidateSignal.state == ObservedSignalState.RED && candidateSignal.score >= 0.90f
+            if (!isDefiniteRed) {
+                consecutiveGreenCount = 0
+                return transitionTo(
+                    targetState = CrossingState.UNKNOWN,
+                    prevState = prevState,
+                    nowNanos = nowNanos,
+                    reasonCode = "POOR_DEVICE_TILT",
+                    guidanceText = "스마트폰을 올바른 각도로 들어주세요.",
+                    hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+                )
+            }
         }
         if (input.devicePose != null) {
             // IMU 자세 센서 신선도 검사 (SR-F-045, TRD 4.6, 2.0초 이내 필수)
@@ -225,15 +231,18 @@ class CrossingDecisionEngine(
             }
             // pose tilt check (자연스러운 횡단보도 하향 촬영 각도 -38도 ~ +55도 허용)
             if (abs(input.devicePose.rollDegrees) > 35f || input.devicePose.pitchDegrees < -38f || input.devicePose.pitchDegrees > 55f) {
-                consecutiveGreenCount = 0
-                return transitionTo(
-                    targetState = CrossingState.UNKNOWN,
-                    prevState = prevState,
-                    nowNanos = nowNanos,
-                    reasonCode = "POOR_DEVICE_TILT",
-                    guidanceText = "스마트폰을 올바른 각도로 들어주세요.",
-                    hapticType = HapticFeedbackType.UNKNOWN_CAUTION
-                )
+                val isDefiniteRed = candidateSignal != null && candidateSignal.state == ObservedSignalState.RED && candidateSignal.score >= 0.90f
+                if (!isDefiniteRed) {
+                    consecutiveGreenCount = 0
+                    return transitionTo(
+                        targetState = CrossingState.UNKNOWN,
+                        prevState = prevState,
+                        nowNanos = nowNanos,
+                        reasonCode = "POOR_DEVICE_TILT",
+                        guidanceText = "스마트폰을 올바른 각도로 들어주세요.",
+                        hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+                    )
+                }
             }
         }
 
@@ -399,6 +408,23 @@ class CrossingDecisionEngine(
 
         // 13. 적색 신호 우선권 (Red Precedence, SR-F-068, ST-001, ST-002)
         if (targetSignal.state == ObservedSignalState.RED || official?.state == OfficialSignalState.RED) {
+            // 녹색 보행 신호 진행 중(GREEN_ESTIMATE) 단발성 노이즈(0.1초 미만 차량등 반사)로 인한 핑퐁 발화 방지 (ADR-030)
+            if (prevState == CrossingState.GREEN_ESTIMATE && official?.state != OfficialSignalState.RED) {
+                consecutiveRedInGreenPhase++
+                if (consecutiveRedInGreenPhase < 2) {
+                    // 1프레임 미세 적색 노이즈: 녹색 누적 카운트를 감쇄하되 즉각적인 적색 반전 핑퐁을 1프레임 완충
+                    consecutiveGreenCount = (consecutiveGreenCount - 2).coerceAtLeast(0)
+                    return transitionTo(
+                        targetState = CrossingState.GREEN_ESTIMATE,
+                        prevState = prevState,
+                        nowNanos = nowNanos,
+                        reasonCode = "GREEN_ESTIMATE_CONFIRMED",
+                        guidanceText = null,
+                        hapticType = null
+                    )
+                }
+            }
+            consecutiveRedInGreenPhase = 0
             consecutiveGreenCount = 0
             lastObservedTrackId = targetSignal.ephemeralTrackId
             frameWindow.clear()
@@ -410,6 +436,8 @@ class CrossingDecisionEngine(
                 guidanceText = if (prevState != CrossingState.RED_ESTIMATE) "적색 신호입니다. 대기하세요." else null,
                 hapticType = if (prevState != CrossingState.RED_ESTIMATE) HapticFeedbackType.RED_STOP else null
             )
+        } else {
+            consecutiveRedInGreenPhase = 0
         }
 
         // 14. 카메라 신호 상태가 UNKNOWN인 경우

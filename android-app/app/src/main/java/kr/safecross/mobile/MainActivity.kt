@@ -51,6 +51,8 @@ class MainActivity : ComponentActivity() {
         // 보행 중 절전 모드로 화면 꺼짐 및 센서/카메라 중단 방지
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // OpenCV 네이티브 컴퓨터 비전 라이브러리 초기화 (ADR-030)
+        kr.safecross.mobile.perception.OpenCvBridge.init()
         kr.safecross.mobile.perception.PerceptionFlightRecorder.init(applicationContext)
         kr.safecross.mobile.navigation.NavigationFlightRecorder.init(applicationContext)
         ttsHelper = TtsAnnouncementHelper(this)
