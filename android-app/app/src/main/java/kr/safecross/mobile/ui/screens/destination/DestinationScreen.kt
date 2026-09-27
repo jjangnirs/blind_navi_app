@@ -18,7 +18,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Search
@@ -64,11 +66,17 @@ fun DestinationScreen(
     voiceAnnouncer: VoiceAnnouncer?,
     onNavigateToRouteSummary: (DestinationItem) -> Unit,
     onNavigateToSettings: () -> Unit,
+    onExitApp: () -> Unit = {},
     modifier: Modifier = Modifier,
     currentGps: LocationPoint? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scrollState = rememberScrollState()
+
+    // 시스템 뒤로가기 버튼 누를 시 안전하게 앱 종료
+    BackHandler {
+        onExitApp()
+    }
 
     // Android 음성 인식 (SpeechRecognizer Intent) 런처
     val voiceLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -139,21 +147,43 @@ fun DestinationScreen(
                         color = HighContrastYellow
                     )
                 )
-                IconButton(
-                    onClick = { viewModel.openSettings() },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .semantics {
-                            role = Role.Button
-                            contentDescription = "앱 환경설정 화면으로 이동합니다."
-                        }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = null,
-                        tint = HighContrastWhite,
-                        modifier = Modifier.size(32.dp)
-                    )
+                    IconButton(
+                        onClick = { viewModel.openSettings() },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = "앱 환경설정 화면으로 이동합니다."
+                            }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null,
+                            tint = HighContrastWhite,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onExitApp,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = "SafeCross 앱 사용을 완전히 종료합니다."
+                            }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = null,
+                            tint = Color(0xFFFF5252),
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
                 }
             }
 
@@ -400,6 +430,43 @@ fun DestinationScreen(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 앱 사용 종료 버튼 (최소 64dp, 고대비 레드 테두리 및 배경)
+            Button(
+                onClick = onExitApp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 64.dp)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "SafeCross 앱 사용을 완전히 종료하고 앱을 닫습니다."
+                    },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFB71C1C),
+                    contentColor = HighContrastWhite
+                ),
+                border = BorderStroke(2.dp, Color(0xFFFF5252))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = HighContrastWhite,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "앱 사용 종료",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 20.sp
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

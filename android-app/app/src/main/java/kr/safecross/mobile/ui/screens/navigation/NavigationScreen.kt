@@ -17,7 +17,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
@@ -65,12 +67,18 @@ fun NavigationScreen(
     onStopNavigation: () -> Unit,
     modifier: Modifier = Modifier,
     hapticFeedbackHelper: kr.safecross.mobile.accessibility.HapticFeedbackHelper? = null,
-    onOpenCrossingAssist: () -> Unit = {}
+    onOpenCrossingAssist: () -> Unit = {},
+    onExitApp: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scrollState = rememberScrollState()
     val context = LocalContext.current
     val navLogSummary by NavigationFlightRecorder.latestSummary.collectAsState()
+
+    // 시스템 뒤로가기 누를 시 보행 안내 안전 종료
+    BackHandler {
+        viewModel.stopNavigation()
+    }
 
     LaunchedEffect(route) {
         NavigationFlightRecorder.init(context)
@@ -422,7 +430,7 @@ fun NavigationScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // 8. 보행 안내 종료 버튼 (최소 64dp)
+            // 8. 보행 안내 종료 및 앱 사용 완전 종료 버튼 (각 최소 64dp 고대비)
             Button(
                 onClick = { viewModel.stopNavigation() },
                 modifier = Modifier
@@ -430,7 +438,7 @@ fun NavigationScreen(
                     .heightIn(min = 64.dp)
                     .semantics {
                         role = Role.Button
-                        contentDescription = "보행 내비게이션을 즉시 종료하고 메인 화면으로 돌아갑니다."
+                        contentDescription = "보행 내비게이션을 즉시 종료하고 메인 목적지 화면으로 돌아갑니다."
                     },
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -438,11 +446,52 @@ fun NavigationScreen(
                     contentColor = HighContrastWhite
                 )
             ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = HighContrastWhite,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "보행 안내 종료",
-                    style = MaterialTheme.typography.titleLarge.copy(
+                    text = "보행 안내 종료 (메인 화면으로)",
+                    style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 20.sp
+                        fontSize = 18.sp
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = onExitApp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 64.dp)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "보행 내비게이션과 SafeCross 앱 사용을 완전히 종료합니다."
+                    },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF8B0000),
+                    contentColor = HighContrastWhite
+                ),
+                border = BorderStroke(2.dp, Color(0xFFFF5252))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = HighContrastWhite,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "앱 사용 완전 종료",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp
                     )
                 )
             }

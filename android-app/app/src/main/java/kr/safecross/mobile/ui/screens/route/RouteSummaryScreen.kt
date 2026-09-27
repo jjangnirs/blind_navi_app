@@ -1,5 +1,6 @@
 package kr.safecross.mobile.ui.screens.route
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -78,6 +79,11 @@ fun RouteSummaryScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    // 시스템 뒤로가기 시 경로 및 고지문 리셋
+    BackHandler {
+        onNavigateBack()
+    }
 
     // ViewModel의 Effect를 수신하여 TTS 음성 낭독 및 화면 전이 수행
     LaunchedEffect(Unit) {

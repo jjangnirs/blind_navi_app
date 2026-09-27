@@ -716,6 +716,7 @@ class NavigationViewModel(
     }
 
     fun stopNavigation() {
+        if (_uiState.value.isFinished) return
         _uiState.update { it.copy(isFinished = true, walkingMode = WalkingMode.IDLE) }
         guidanceArbiter.stopAll()
         stopLocationTracking()

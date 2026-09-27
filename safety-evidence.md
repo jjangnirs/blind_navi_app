@@ -314,6 +314,25 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `GuidanceArbiterTest.testGreenGuidancePreemptsCurrentlySpeakingUnknownGuidanceAndPurgesStaleQueue` (100% PASS).
   - 총 185개 안드로이드 단위 테스트 전체 통과 (100% PASS).
 
+### 25) 절전 모드 화면 꺼짐 방지, TMAP 고지문 무한 반복 루프 해소 및 원터치 앱 종료 파이프라인 (ADR 0027)
+- **절전 모드 화면 꺼짐 방지 (`MainActivity`, `FLAG_KEEP_SCREEN_ON`)**:
+  - 시각장애인이 보행 중 화면 터치를 하지 않더라도 15~30초 만에 안드로이드 OS 절전 모드로 진입하여 화면이 꺼지는 현상을 방지.
+  - 전면 실행 중 화면 켜짐을 100% 유지하여 카메라 프레임 분석, IMU/나침반 자세 추적, 멀티밴드 GPS 수신 및 실시간 음성 안내가 단절 없이 동작하도록 안전성 보장.
+- **TMAP 접근성 고지문 무한 반복 발화 원천 차단 (`RouteSummaryViewModel`)**:
+  - `hasSpokenDisclaimer` 발화 래치를 도입하여 경로 진입 시 최초 1회만 고지문을 낭독하도록 제한.
+  - TMAP 도로망 노드 스냅 오차로 인해 발생하던 매초 거리 15m 초과 오인 및 `loadRoute` 무한 재호출 루프를 `lastRequestedOriginGps` 비교(30m 임계치) 및 `isSilentUpdate = true`로 완전 차단.
+  - `MainActivity`에서 현재 화면이 `Screen.RouteSummary.route`일 때만 GPS 변동에 따른 재탐색을 수행하도록 가드 추가.
+- **시각장애인 특화 대형 고대비 앱 사용 종료 버튼 및 `BackHandler` (`DestinationScreen`, `NavigationScreen`)**:
+  - `DestinationScreen` 및 `NavigationScreen`에 최소 64dp, 적색 고대비 '앱 사용 종료' 버튼을 배치하여 시각장애인이 복잡한 시스템 제스처 없이 원터치로 앱을 완전히 닫을 수 있도록 지원.
+  - `BackHandler` 시스템 뒤로가기 연동으로 메인 화면에서 직관적인 앱 종료 지원.
+  - `NavigationViewModel.stopNavigation`에 멱등성 가드(`if (_uiState.value.isFinished) return`)를 추가하여 중복 이벤트 루프 및 재진입 결함 방지.
+  - `onStopNavigation` 시 `clearRoute()` 및 백스택 `popUpTo` singleTop 적용으로 잔여 상태 및 중복 화면 완전 청소.
+- **단위 테스트 및 안전성 검증**:
+  - `RouteSummaryViewModelTest.loadRoute does not re-emit SpeakDisclaimer on subsequent loads or gps updates` (100% PASS).
+  - `RouteSummaryViewModelTest.clearRoute resets state and disclaimer latch` (100% PASS).
+  - 총 187개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+
 
 
 

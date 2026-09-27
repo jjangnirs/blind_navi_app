@@ -400,6 +400,15 @@ flowchart TD
 - E18-S5 `GuidanceArbiter` 녹색 신호 인입 시 현재 발화 중인 비녹색(적색, UNKNOWN 등) 전체 음성 즉시 선점 중단(`PREEMPT_AND_PLAY`) 및 대기 큐의 지연된 낡은 신호 메시지 일괄 영구 폐기
 - E18-S6 전체 단위 테스트 100% 통과 (185개 전수 통과) 및 최신 릴리스 디버그 APK (`app-debug-0927-v26.apk`, 41.5MB) 빌드 및 S25 Ultra 기기 MTP 전송 검증
 
+### Epic 19 — 절전 모드 화면 꺼짐 방지, TMAP 고지문 무한 반복 해소 및 원터치 앱 종료 파이프라인 (2026-09-27 완료)
+
+- E19-S1 `MainActivity`에 `FLAG_KEEP_SCREEN_ON` 윈도우 플래그를 적용하여 보행 중 터치가 없어도 안드로이드 OS 절전 모드로 진입하지 않고 카메라/센서/음성 안내가 100% 영속 유지되도록 구현
+- E19-S2 `RouteSummaryViewModel`에 `hasSpokenDisclaimer` 발화 래치 및 `isSilentUpdate` 플래그 도입으로 GPS 미세 변동 시 TMAP 면책 고지문 무한 반복 발화 버그 원천 차단
+- E19-S3 TMAP 경로 스냅 노드와 GPS 원점 간의 영구 재탐색 루프를 방지하기 위해 `lastRequestedOriginGps` 기반 거리 비교(임계치 30m) 적용
+- E19-S4 `DestinationScreen` 및 `NavigationScreen`에 시각장애인 접근성 표준을 준수하는 대형 고대비 '앱 사용 종료' 버튼(최소 64dp, Red) 배치 및 `BackHandler` 시스템 뒤로가기 종료 파이프라인 완성
+- E19-S5 `NavigationViewModel.stopNavigation`에 멱등성 가드(`isFinished`)를 추가하여 중복 이벤트 루프 제거, 백스택 클린업(`popUpTo` singleTop) 적용
+- E19-S6 전체 단위 테스트 100% 통과 (187개 전수 통과, 0 failure) 및 최신 릴리스 디버그 APK (`app-debug-0927-v27.apk`, 41.5MB) 빌드 및 S25 Ultra 기기 MTP 전송 검증 완료 (ADR-027)
+
 
 
 ## 10. 일일 개발 루틴

@@ -99,6 +99,12 @@ MVP에 포함한다.
     - 2D 공간 락 탈취 방지(`isLockHijack`): 녹색 신호 추적 중 하단 도로($Y > 0.48$)나 중심 이격 거리 0.12 이상 점프한 측면 원거리 적색등에 의한 타깃 기준점 탈취 차단
     - 순간 신뢰도 저하 시 점진적 감쇄(Graceful Decay): 신뢰도 저하 시 0으로 즉시 초기화하지 않고 1프레임 점진 감쇄하여 프레임 누적 연속성 보존
     - 음성 안내 즉시 선점 및 대기 큐 정화: 녹색 보행 신호 인입 시 적색/UNKNOWN/일반 횡단안내 등 모든 비녹색 발화를 즉시 중단하고 녹색 안내를 즉시 선점 재생(`PREEMPT_AND_PLAY`)하며, 대기 큐의 낡은 신호 안내를 일괄 영구 폐기
+32. 절전 모드 화면 꺼짐 방지, TMAP 고지문 무한 반복 해소 및 원터치 앱 종료 파이프라인 (`MainActivity`, `RouteSummaryViewModel`, `DestinationScreen`, `NavigationScreen`, ADR-027):
+    - 절전 모드 화면 꺼짐 방지(`FLAG_KEEP_SCREEN_ON`): 보행 중 화면 터치가 없어도 안드로이드 OS 절전 모드로 진입하지 않고 카메라·센서·GPS·음성 안내가 100% 영속 유지되도록 구현
+    - TMAP 면책 고지문 1회성 발화 보장(`hasSpokenDisclaimer`) 및 무음 갱신(`isSilentUpdate`): GPS 미세 이동에 따른 자동 재탐색 시 장문의 TMAP 고지문이 무한 반복 발화되는 버그 원천 차단
+    - TMAP 스냅 노드 오차 비교 방지(`lastRequestedOriginGps`): 도로 노드 스냅 오차로 인한 매초 무한 재탐색 루프를 차단하고 실질 GPS 이동(30m 이상) 시에만 재탐색하도록 개선
+    - 원터치 대형 고대비 앱 사용 종료 버튼(최소 64dp, Red): `DestinationScreen` 및 `NavigationScreen`에 명시적인 종료 버튼 배치 및 Android 시스템 뒤로가기(`BackHandler`) 종료 연동
+    - 네비게이션 종료 멱등성 및 백스택 클린업: `stopNavigation()` 중복 호출 차단 가드 및 `popUpTo` singleTop 적용으로 안전한 화면 복귀 보장
 
 MVP에서 제외한다.
 
