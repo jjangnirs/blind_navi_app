@@ -164,4 +164,39 @@ class OpenCvSignalDetectorTest {
         assertEquals("명확한 적색 신호는 각도 경고보다 우선하여 적색 정지를 안내해야 함", CrossingState.RED_ESTIMATE, output.state)
         assertEquals("적색 신호입니다. 대기하세요.", output.guidanceText)
     }
+
+    @Test
+    fun testDefiniteRedSignalMaintainsSafetyAtDownwardPitchMinus60Degrees() {
+        val engine = CrossingDecisionEngine(minConsecutiveGreenFrames = 3)
+        val crossing = VerifiedCrossingContext("CW-TEST-1", 0.0f, isFieldVerified = true)
+        val crosswalk = CrosswalkObservation(true, null, null, 0f, 0.9f, 0.9f)
+        // 13:45 실측 로그 상황: 한손 파지 대기 중 Pitch = -59.4도
+        val pose = DevicePose(pitchDegrees = -59.4f, rollDegrees = 0f, headingDegrees = 0f)
+
+        val redSignal = SignalObservation(
+            ephemeralTrackId = "track-red-1",
+            state = ObservedSignalState.RED,
+            score = 0.85f,
+            box = NormalizedBox(0.42f, 0.15f, 0.44f, 0.18f),
+            frameTimestampNanos = 100_000_000L,
+            quality = FrameQuality(1.0f, 1.0f, true)
+        )
+        val assoc = TargetSignalAssociation(true, redSignal, "SINGLE_TARGET_CONFIRMED", 0.85f)
+
+        val output = engine.evaluate(
+            CrossingDecisionInput(
+                crossingContext = crossing,
+                crosswalk = crosswalk,
+                association = assoc,
+                location = null,
+                devicePose = pose,
+                officialSignal = null,
+                isTiltSuitable = false,
+                monotonicTimeNanos = 100_000_000L
+            )
+        )
+
+        assertEquals("한손 파지 하향 각도(-59.4도)에서도 명확한 적색 신호는 RED_ESTIMATE를 유지해야 함", CrossingState.RED_ESTIMATE, output.state)
+        assertEquals("적색 신호입니다. 대기하세요.", output.guidanceText)
+    }
 }

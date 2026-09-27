@@ -199,19 +199,18 @@ class CrossingDecisionEngine(
 
         // 6. 기기 기울기 및 센서 자세 게이트 (SR-F-045, ST-006, TRD 4.6)
         val candidateSignal = input.association?.targetSignal
-        if (!input.isTiltSuitable) {
-            val isDefiniteRed = candidateSignal != null && candidateSignal.state == ObservedSignalState.RED && candidateSignal.score >= 0.90f
-            if (!isDefiniteRed) {
-                consecutiveGreenCount = 0
-                return transitionTo(
-                    targetState = CrossingState.UNKNOWN,
-                    prevState = prevState,
-                    nowNanos = nowNanos,
-                    reasonCode = "POOR_DEVICE_TILT",
-                    guidanceText = "스마트폰을 올바른 각도로 들어주세요.",
-                    hapticType = HapticFeedbackType.UNKNOWN_CAUTION
-                )
-            }
+        val isDefiniteRed = candidateSignal != null && candidateSignal.state == ObservedSignalState.RED && candidateSignal.score >= 0.75f
+
+        if (!input.isTiltSuitable && !isDefiniteRed) {
+            consecutiveGreenCount = 0
+            return transitionTo(
+                targetState = CrossingState.UNKNOWN,
+                prevState = prevState,
+                nowNanos = nowNanos,
+                reasonCode = "POOR_DEVICE_TILT",
+                guidanceText = "스마트폰을 올바른 각도로 들어주세요.",
+                hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+            )
         }
         if (input.devicePose != null) {
             // IMU 자세 센서 신선도 검사 (SR-F-045, TRD 4.6, 2.0초 이내 필수)
@@ -229,9 +228,9 @@ class CrossingDecisionEngine(
                     )
                 }
             }
-            // pose tilt check (자연스러운 횡단보도 하향 촬영 각도 -38도 ~ +55도 허용)
-            if (abs(input.devicePose.rollDegrees) > 35f || input.devicePose.pitchDegrees < -38f || input.devicePose.pitchDegrees > 55f) {
-                val isDefiniteRed = candidateSignal != null && candidateSignal.state == ObservedSignalState.RED && candidateSignal.score >= 0.90f
+            // pose tilt check (자연스러운 횡단보도 하향 대기 각도 -65도 ~ +55도 허용, ADR-031)
+            val minPitch = if (isDefiniteRed) -65f else -45f
+            if (abs(input.devicePose.rollDegrees) > 35f || input.devicePose.pitchDegrees < minPitch || input.devicePose.pitchDegrees > 55f) {
                 if (!isDefiniteRed) {
                     consecutiveGreenCount = 0
                     return transitionTo(

@@ -170,6 +170,16 @@ class LocalVlmSignalVerifier(
             } else {
                 (candidate.score * 0.85f).coerceAtLeast(0.70f)
             }
+        } else if (finalState == ObservedSignalState.RED) {
+            // 시간적 평활화로 적색이 보존된 경우: 순간적인 블러나 하향 각도에서도 신뢰도를 0.94 이상으로 유지하여
+            // LOW_CALIBRATED_SCORE 및 POOR_DEVICE_TILT 강등 방지 (ADR-031)
+            val redCount = history.count { it.state == ObservedSignalState.RED }
+            val redRatio = if (history.isNotEmpty()) redCount.toFloat() / history.size else 0f
+            if (redRatio >= 0.60f) {
+                (0.94f + redRatio * 0.05f).coerceIn(0.94f, 0.99f)
+            } else {
+                (candidate.score * 0.90f).coerceAtLeast(0.75f)
+            }
         } else {
             (candidate.score * 0.70f).coerceAtLeast(0.30f)
         }

@@ -233,11 +233,13 @@ fun CrossingAssistScreen(
                         detectedSignalColor = uiState.detectedSignalColor
                     )
 
-                    // 2. 신호등 검출 위치 바운딩 박스 오버레이
+                    // 2. 신호등 검출 위치 바운딩 박스 오버레이 (의사결정 확정 여부에 따른 시각적 동기화)
                     val box = uiState.detectedSignalBox
                     val signalColor = uiState.detectedSignalColor
                     if (box != null && (signalColor == kr.safecross.mobile.perception.ObservedSignalState.RED || signalColor == kr.safecross.mobile.perception.ObservedSignalState.GREEN)) {
-                        val color = if (signalColor == kr.safecross.mobile.perception.ObservedSignalState.RED) Color(0xFFFF1744) else Color(0xFF00E676)
+                        val isDecisionConfirmed = uiState.decisionState == CrossingAssistDecisionState.RED_ESTIMATE || uiState.decisionState == CrossingAssistDecisionState.GREEN_ESTIMATE
+                        val rawColor = if (signalColor == kr.safecross.mobile.perception.ObservedSignalState.RED) Color(0xFFFF1744) else Color(0xFF00E676)
+                        val color = if (isDecisionConfirmed) rawColor else rawColor.copy(alpha = 0.45f)
                         androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                             val w = size.width
                             val h = size.height
@@ -250,7 +252,7 @@ fun CrossingAssistScreen(
                                 color = color,
                                 topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
                                 size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
-                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f)
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = if (isDecisionConfirmed) 4.5f else 2.5f)
                             )
                         }
                     }
@@ -261,9 +263,14 @@ fun CrossingAssistScreen(
                         CrossingAssistDecisionState.GREEN_CANDIDATE -> "🟡 녹색 확인 중..."
                         CrossingAssistDecisionState.RED_ESTIMATE -> "🔴 적색 신호 (대기)"
                         CrossingAssistDecisionState.UNKNOWN -> {
-                            if (!uiState.tiltGuidance.isSuitable) "⚠️ 각도 조정 필요"
-                            else if (uiState.detectedSignalColor == kr.safecross.mobile.perception.ObservedSignalState.RED) "🔴 적색 확인 중..."
-                            else "⚪ 신호 탐색 중"
+                            if (uiState.detectedSignalColor == kr.safecross.mobile.perception.ObservedSignalState.RED) {
+                                if (!uiState.tiltGuidance.isSuitable) "🔴 적색 확인 중 (각도 낮음)"
+                                else "🔴 적색 확인 중..."
+                            } else if (!uiState.tiltGuidance.isSuitable) {
+                                "⚠️ 각도 조정 필요"
+                            } else {
+                                "⚪ 신호 탐색 중"
+                            }
                         }
                         else -> null
                     }
