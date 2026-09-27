@@ -270,5 +270,405 @@ class CameraVisionSignalEstimatorTest {
         // Zero False-Green 원칙
         assertTrue(firstObs.state != ObservedSignalState.GREEN || firstObs.score >= 0.90f)
     }
+
+    @Test
+    fun testGreenSignalWithSunlightPhantomRedReflectionOnSamePole() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        // 짙은 하우징 및 거리 배경 (V=40)
+        for (i in 0 until width * height) {
+            buffer.put(40.toByte())
+            buffer.put(40.toByte())
+            buffer.put(40.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 상단(y: 40..55, x: 150..170): 한낮 햇빛이 꺼진 적색 렌즈에 반사된 Phantom Light (미약한 적색 반사)
+        for (y in 40..55) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 180.toByte()) // R = 180
+                buffer.put(offset + 1, 40.toByte()) // G = 40
+                buffer.put(offset + 2, 40.toByte()) // B = 40
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 2. 하단(y: 65..85, x: 150..170): 실제로 강하게 발광 중인 보행자 에메랄드 녹색 LED (고휘도)
+        for (y in 65..85) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 20.toByte()) // R = 20
+                buffer.put(offset + 1, 235.toByte()) // G = 235
+                buffer.put(offset + 2, 160.toByte()) // B = 160
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        // 3프레임 투입하여 시간 일관성 필터 통과 확인
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 상단에 약한 햇빛 반사광이 있더라도 하단 실발광 녹색 LED가 정상 인식되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
+
+    @Test
+    fun testCentralGreenSignalIgnoresDistantLeftStrayRedTrafficLight() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 화면 좌측 원거리(y: 40..60, x: 30..50)에 위치한 다른 기둥의 적색 신호등 (타깃 조준선 밖)
+        for (y in 40..60) {
+            for (x in 30..50) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 240.toByte())
+                buffer.put(offset + 1, 30.toByte())
+                buffer.put(offset + 2, 30.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 2. 화면 중앙 타깃 영역(y: 50..70, x: 150..170)에 위치한 보행자 녹색 신호등
+        for (y in 50..70) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 조준 중심에 있는 녹색 신호가 좌측 원거리 다른 기둥의 적색에 의해 방해받지 않고 GREEN으로 판정되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
+
+    @Test
+    fun testOverheadVehicleRedLightDoesNotVetoPedestrianGreenLight() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 차도 위 상단 고공 가공 설치된 차량용 적색 신호등 (y: 25..40 (상단 10~16%), x: 150..170 (차도 중앙))
+        for (y in 25..40) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 240.toByte())
+                buffer.put(offset + 1, 30.toByte())
+                buffer.put(offset + 2, 30.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 2. 인도 보행자 눈높이에 위치한 보행자 녹색 신호등 (y: 70..95 (인도 눈높이 30~40%), x: 145..165)
+        for (y in 70..95) {
+            for (x in 145..165) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 상단 차도 차량 신호의 적색에 의해 보행자 녹색 신호가 가려지거나 방해받지 않고 GREEN으로 판정되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
+
+    @Test
+    fun testLowerRoadwayRedDoesNotVetoPedestrianGreen() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 신호등 높이에 위치한 녹색 보행/차량 신호등 (y: 80..105, x: 150..170)
+        for (y in 80..105) {
+            for (x in 150..170) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 2. 도로 하단에 위치한 차량 브레이크등/후미등 반사체 (y: 150..165, x: 152..168, 수직 50px 아래)
+        for (y in 150..165) {
+            for (x in 152..168) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 240.toByte())
+                buffer.put(offset + 1, 30.toByte())
+                buffer.put(offset + 2, 30.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 도로 하단 차량 브레이크등/후미등에 의해 상단 녹색 신호가 기각되지 않고 GREEN으로 판정되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
+
+    @Test
+    fun testGreenCountdownDigitsRecognizedAsGreen() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 보행자 신호등 위치에 2자리 숫자 카운트다운 타이머(예: "19") 주입
+        // 십의 자리 "1": y: 60..80, x: 150..155 (너비 6, 높이 21)
+        for (y in 60..80) {
+            for (x in 150..155) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        // 일의 자리 "9": y: 60..80, x: 159..168 (너비 10, 높이 21, 사이 공백 4px)
+        for (y in 60..80) {
+            for (x in 159..168) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 2자리 숫자가 Morphological Clustering에 의해 하나의 통합된 녹색 신호로 정상 인식되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+        // 박스가 두 숫자를 모두 감싸야 함 (x: 150/320=0.468 ~ 168/320=0.525)
+        assertTrue(lastObs.box.left <= 152f / width)
+        assertTrue(lastObs.box.right >= 165f / width)
+    }
+
+    @Test
+    fun testSpatialTrackingLockPreventsBoxJump() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 1. 상단 보행자 신호등 (y: 50..65, x: 155..165)
+        for (y in 50..65) {
+            for (x in 155..165) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        // 2. 하단 다른 녹색 광원/반사체 (y: 110..125, x: 157..167)
+        for (y in 110..125) {
+            for (x in 157..167) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 2D 공간 추적 락에 의해 상단 보행 신호등(cy < 0.35)에 안정적으로 고정되어야 하며,
+        // 하단 광원(cy > 0.45)으로 점프하지 않아야 함
+        val cy = (lastObs.box.top + lastObs.box.bottom) / 2f
+        assertTrue("Expected cy < 0.35f (upper signal locked), but was $cy", cy < 0.35f)
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+    }
+
+    @Test
+    fun testPedestrianGreenNotVetoedBySideRoadRed() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 보행자 녹색 신호 (y: 55..75, x: 155..168, Y ≈ 0.27)
+        for (y in 55..75) {
+            for (x in 155..168) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 우측 배경 도로 적색 광원 (y: 65..80, x: 178..190, Y ≈ 0.30, 중심에서 우측으로 20px 이상 이격)
+        for (y in 65..80) {
+            for (x in 178..190) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 240.toByte())
+                buffer.put(offset + 1, 30.toByte())
+                buffer.put(offset + 2, 30.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 정면 보행자 녹색 신호가 우측 배경 적색등에 의해 기각되지 않고 GREEN으로 판정되어야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue(lastObs.score >= 0.90f)
+    }
+
+    @Test
+    fun testPedestrianGreenNotVetoedByLowerRoadwayHugeVehicleTailLight() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 보행자 녹색 신호 (y: 60..75, x: 155..165, 약 165 화소)
+        for (y in 60..75) {
+            for (x in 155..165) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 하단 차로 대형 차량 브레이크등 (y: 130..155, x: 90..115, 25x25 = 625 화소, 3배 이상 압도적인 적색)
+        for (y in 130..155) {
+            for (x in 90..115) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 250.toByte())
+                buffer.put(offset + 1, 20.toByte())
+                buffer.put(offset + 2, 20.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 하단 차로 차량 브레이크등이 아무리 커도(isRedOverwhelming이어도) 보행자 녹색 신호를 기각하지 않고 GREEN을 유지해야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue("Verified score should remain >= 0.90f", lastObs.score >= 0.90f)
+    }
 }
+
+
 

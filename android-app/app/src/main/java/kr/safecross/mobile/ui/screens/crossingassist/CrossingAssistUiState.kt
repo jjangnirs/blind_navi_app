@@ -15,7 +15,15 @@ data class CrossingAssistUiState(
     val isTerminated: Boolean = false,
     val statusMessage: String = "카메라를 횡단보도 전방으로 향해주세요.",
     val detectedSignalBox: kr.safecross.mobile.perception.NormalizedBox? = null,
-    val detectedSignalColor: kr.safecross.mobile.perception.ObservedSignalState? = null
+    val detectedSignalColor: kr.safecross.mobile.perception.ObservedSignalState? = null,
+    val isSignalInReticle: Boolean = false,
+    val reticleBox: kr.safecross.mobile.perception.NormalizedBox = kr.safecross.mobile.perception.NormalizedBox(
+        left = 0.30f,
+        top = 0.12f,
+        right = 0.70f,
+        bottom = 0.65f
+    ),
+    val debugDiagnosticText: String? = null
 )
 
 sealed interface CrossingAssistEffect {

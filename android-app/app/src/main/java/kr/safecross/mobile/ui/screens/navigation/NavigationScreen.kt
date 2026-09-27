@@ -17,7 +17,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
@@ -53,6 +56,8 @@ import kr.safecross.mobile.ui.theme.HighContrastYellow
 import kr.safecross.mobile.ui.theme.WarningBannerBackground
 import kr.safecross.mobile.ui.theme.WarningBorder
 import kr.safecross.mobile.ui.screens.route.RealRouteMapView
+import androidx.compose.ui.platform.LocalContext
+import kr.safecross.mobile.navigation.NavigationFlightRecorder
 
 @Composable
 fun NavigationScreen(
@@ -62,12 +67,21 @@ fun NavigationScreen(
     onStopNavigation: () -> Unit,
     modifier: Modifier = Modifier,
     hapticFeedbackHelper: kr.safecross.mobile.accessibility.HapticFeedbackHelper? = null,
-    onOpenCrossingAssist: () -> Unit = {}
+    onOpenCrossingAssist: () -> Unit = {},
+    onExitApp: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
+    val navLogSummary by NavigationFlightRecorder.latestSummary.collectAsState()
+
+    // 시스템 뒤로가기 누를 시 보행 안내 안전 종료
+    BackHandler {
+        viewModel.stopNavigation()
+    }
 
     LaunchedEffect(route) {
+        NavigationFlightRecorder.init(context)
         viewModel.setRoute(route)
     }
 
@@ -218,12 +232,16 @@ fun NavigationScreen(
                 }
             }
 
-            // 3-2. 맞게 가고 있는지 실시간으로 확인하는 정밀 세부 지도 카드
+            // 3-2. 맞게 가고 있는지 실시간으로 확인하는 정밀 세부 지도 카드 (진행방향 위로 연동)
+            val currentHeading = uiState.currentHeadingDegrees
+
             DetailedNavigationMapCard(
                 route = route,
                 currentLocation = uiState.currentLocation,
                 currentManeuverIndex = uiState.currentManeuverIndex,
-                isOffRoute = uiState.isOffRoute
+                isOffRoute = uiState.isOffRoute,
+                headingDegrees = currentHeading,
+                isHeadingUp = true
             )
 
             // 4. 보행 단계 진행 번호 및 안전 지침 안내
@@ -340,7 +358,79 @@ fun NavigationScreen(
                 )
             }
 
-            // 7. 보행 안내 종료 버튼 (최소 64dp)
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 7. 실시간 경로 분석 진단 로그 및 원클릭 공유 버튼
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF1E2638), RoundedCornerShape(12.dp))
+                    .border(1.5.dp, Color(0xFF3B4660), RoundedCornerShape(12.dp))
+                    .padding(12.dp)
+            ) {
+                Text(
+                    text = "📊 실시간 경로 분석 상태",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF81D4FA),
+                        fontSize = 13.sp
+                    )
+                )
+
+                if (navLogSummary.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = navLogSummary,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 12.sp,
+                            color = Color(0xFFE0E0E0),
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    onClick = {
+                        val logs = NavigationFlightRecorder.readRecentLogs(context, 150)
+                        val sendIntent = android.content.Intent().apply {
+                            action = android.content.Intent.ACTION_SEND
+                            putExtra(android.content.Intent.EXTRA_TEXT, logs)
+                            type = "text/plain"
+                        }
+                        val shareIntent = android.content.Intent.createChooser(sendIntent, "경로 분석 진단 로그 공유")
+                        context.startActivity(shareIntent)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF263238),
+                        contentColor = HighContrastWhite
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFF81D4FA)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "경로 분석 진단 로그 공유/저장",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF81D4FA)
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 8. 보행 안내 종료 및 앱 사용 완전 종료 버튼 (각 최소 64dp 고대비)
             Button(
                 onClick = { viewModel.stopNavigation() },
                 modifier = Modifier
@@ -348,7 +438,7 @@ fun NavigationScreen(
                     .heightIn(min = 64.dp)
                     .semantics {
                         role = Role.Button
-                        contentDescription = "보행 내비게이션을 즉시 종료하고 메인 화면으로 돌아갑니다."
+                        contentDescription = "보행 내비게이션을 즉시 종료하고 메인 목적지 화면으로 돌아갑니다."
                     },
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -356,11 +446,52 @@ fun NavigationScreen(
                     contentColor = HighContrastWhite
                 )
             ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = HighContrastWhite,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "보행 안내 종료",
-                    style = MaterialTheme.typography.titleLarge.copy(
+                    text = "보행 안내 종료 (메인 화면으로)",
+                    style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 20.sp
+                        fontSize = 18.sp
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = onExitApp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 64.dp)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "보행 내비게이션과 SafeCross 앱 사용을 완전히 종료합니다."
+                    },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF8B0000),
+                    contentColor = HighContrastWhite
+                ),
+                border = BorderStroke(2.dp, Color(0xFFFF5252))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = HighContrastWhite,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "앱 사용 완전 종료",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp
                     )
                 )
             }
@@ -437,6 +568,8 @@ fun DetailedNavigationMapCard(
     currentLocation: kr.safecross.mobile.domain.model.LocationPoint?,
     currentManeuverIndex: Int,
     isOffRoute: Boolean,
+    headingDegrees: Float = 0f,
+    isHeadingUp: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val originName = route.maneuvers.firstOrNull()?.instruction ?: "출발지"
@@ -489,7 +622,7 @@ fun DetailedNavigationMapCard(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // 고정밀 국토교통부 VWorld 세부 지도 뷰어
+        // 고정밀 국토교통부 VWorld 세부 지도 뷰어 (진행방향 위로 회전 연동)
         RealRouteMapView(
             route = route,
             originName = originName,
@@ -497,6 +630,8 @@ fun DetailedNavigationMapCard(
             currentLocation = currentLocation,
             currentManeuverIndex = currentManeuverIndex,
             isOffRoute = isOffRoute,
+            headingDegrees = headingDegrees,
+            isHeadingUp = isHeadingUp,
             showLiveTrackingControls = true,
             modifier = Modifier
                 .fillMaxWidth()
@@ -511,7 +646,7 @@ fun DetailedNavigationMapCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "📍 파란 원: 현재 내 위치 | 🟢/🔴: 출발/도착 | 🟠: 횡단보도",
+                text = "🧭 진행방향 위로 회전 | 📍 내 위치 | 🟢/🔴 출발/도착",
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontSize = 11.sp,
                     color = Color(0xFFB0BEC5)

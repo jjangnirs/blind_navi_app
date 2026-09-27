@@ -21,6 +21,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import kr.safecross.mobile.accessibility.TtsAnnouncementHelper
+import kr.safecross.mobile.data.repository.SharedPrefsRecentDestinationRepository
 import kr.safecross.mobile.data.repository.TmapRouteRepository
 import kr.safecross.mobile.domain.model.LocationPoint
 import kr.safecross.mobile.location.ProductionLocationSource
@@ -47,11 +48,20 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 보행 중 절전 모드로 화면 꺼짐 및 센서/카메라 중단 방지
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // OpenCV 네이티브 컴퓨터 비전 라이브러리 초기화 (ADR-030)
+        kr.safecross.mobile.perception.OpenCvBridge.init()
+        kr.safecross.mobile.perception.PerceptionFlightRecorder.init(applicationContext)
+        kr.safecross.mobile.navigation.NavigationFlightRecorder.init(applicationContext)
         ttsHelper = TtsAnnouncementHelper(this)
         locationSource = ProductionLocationSource(this)
 
         val onboardingViewModel = OnboardingViewModel()
-        val destinationViewModel = DestinationViewModel()
+        val destinationViewModel = DestinationViewModel(
+            recentRepository = SharedPrefsRecentDestinationRepository(this)
+        )
         val routeSummaryViewModel = RouteSummaryViewModel(routeRepository)
         val navigationViewModel = NavigationViewModel(locationSource = locationSource, routeRepository = routeRepository)
         val settingsViewModel = SettingsViewModel()
@@ -131,11 +141,14 @@ class MainActivity : ComponentActivity() {
                                         signalPercent = sample.signalStrengthPercent,
                                         accuracyMeters = sample.accuracyMeters
                                     )
-                                    // 경로 요약 화면에 진입한 상태에서 GPS가 갱신되어 초기 위치와 다를 경우 경로 즉시 자동 재탐색
-                                    routeSummaryViewModel.updateOriginIfGpsMoved(
-                                        newGps = LocationPoint(sample.lat, sample.lon),
-                                        newAddress = resolvedAddr
-                                    )
+                                    // 경로 요약 화면(RouteSummary)에 머물러 있는 상태에서만 실시간 GPS 이동에 따른 재탐색 실행
+                                    val currentScreenRoute = navController.currentBackStackEntry?.destination?.route
+                                    if (currentScreenRoute == Screen.RouteSummary.route) {
+                                        routeSummaryViewModel.updateOriginIfGpsMoved(
+                                            newGps = LocationPoint(sample.lat, sample.lon),
+                                            newAddress = resolvedAddr
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -200,6 +213,7 @@ fun SafeCrossNavHost(
 
         // 2. Destination Screen
         composable(Screen.Destination.route) {
+            val context = androidx.compose.ui.platform.LocalContext.current
             DestinationScreen(
                 viewModel = destinationViewModel,
                 voiceAnnouncer = ttsHelper,
@@ -220,6 +234,11 @@ fun SafeCrossNavHost(
                 },
                 onNavigateToSettings = {
                     navController.navigate(Screen.Settings.route)
+                },
+                onExitApp = {
+                    ttsHelper?.speak("SafeCross 앱을 종료합니다.")
+                    locationSource.stopTracking()
+                    (context as? android.app.Activity)?.finishAffinity()
                 }
             )
         }
@@ -242,6 +261,8 @@ fun SafeCrossNavHost(
                     navController.navigate(Screen.Navigation.route)
                 },
                 onNavigateBack = {
+                    routeSummaryViewModel.clearRoute()
+                    ttsHelper?.stop()
                     navController.popBackStack()
                 }
             )
@@ -275,12 +296,21 @@ fun SafeCrossNavHost(
                         navController.navigate(Screen.CrossingAssist.route)
                     },
                     onStopNavigation = {
-                        // FGS 중지
+                        // FGS 중지 및 경로 상태 클리어
+                        NavigationForegroundService.stopService(context)
+                        routeSummaryViewModel.clearRoute()
+                        ttsHelper?.stop()
+                        navController.navigate(Screen.Destination.route) {
+                            popUpTo(Screen.Destination.route) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+                    onExitApp = {
+                        ttsHelper?.speak("SafeCross 보행 안내 및 앱을 완전히 종료합니다.")
                         NavigationForegroundService.stopService(context)
                         navigationViewModel.stopNavigation()
-                        navController.navigate(Screen.Destination.route) {
-                            popUpTo(Screen.Destination.route) { inclusive = false }
-                        }
+                        routeSummaryViewModel.clearRoute()
+                        (context as? android.app.Activity)?.finishAffinity()
                     }
                 )
             }
@@ -301,12 +331,13 @@ fun SafeCrossNavHost(
                     kr.safecross.mobile.ui.screens.crossingassist.CrossingAssistViewModel(
                         cameraPipeManager = kr.safecross.mobile.camera.ProductionCameraPipeManager(context),
                         crosswalkEstimator = kr.safecross.mobile.perception.FakeCrosswalkEstimator(),
-                        signalEstimator = kr.safecross.mobile.perception.CameraVisionSignalEstimator(context),
-                        //signalAssociator = kr.safecross.mobile.perception.FakeSignalAssociator(),
+                        signalEstimator = kr.safecross.mobile.perception.TwoTierHybridSignalEstimator.createDefault(context),
                         signalAssociator = kr.safecross.mobile.perception.LockOnSignalAssociator(),
                         decisionEngine = kr.safecross.mobile.decision.CrossingDecisionEngine(),
                         poseTracker = kr.safecross.mobile.sensor.ProductionDevicePoseTracker(context),
-                        guidanceArbiter = kr.safecross.mobile.guidance.GuidanceArbiter()
+                        guidanceArbiter = kr.safecross.mobile.guidance.GuidanceArbiter(),
+                        signalStatusProvider = kr.safecross.mobile.signal.CitsRealSignalStatusProvider(),
+                        enableSignalPolling = true
                     )
                 }
 

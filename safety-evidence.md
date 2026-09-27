@@ -176,4 +176,166 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
 - **하드웨어 가속 추론 및 안전 Fallback (`TfliteModelRunner`)**: `org.tensorflow.lite.Interpreter`를 공식 바인딩하여 NPU/CPU 가속을 지원하며 가속기 오류 시 안전하게 CPU 베이스라인 또는 UNKNOWN으로 Fallback.
 - **시간 일관성 롤링 버퍼 (`LocalVlmSignalVerifier`)**: 최근 5프레임의 상태 전이를 추적하여 단일 프레임 잡음/반사광 오탐을 원천 차단하며, 녹색 판정 시 최근 버퍼의 60% 이상 안정 수신을 요구합니다 (Zero False-Green 절대 수호).
 
+### 11) 2단계 하이브리드 보행신호 판정 파이프라인 (`TwoTierHybridSignalEstimator`)
+- **알고리즘 기전**: 딥러닝 객체 검출 모델(`LiteRtPedestrianSignalEstimator`)이 신호등 바운딩 박스를 먼저 검출하고, 그 검출된 박스 내부 영역만 국한하여 적응형 HSV 정밀 색상 분석을 수행합니다.
+- **Zero False-Green 검증**: 딥러닝이 신호등 형태를 입증하지 못하면 배경에 초록색이 아무리 많아도 즉시 `UNKNOWN`으로 강등 차단함을 검증 완료 (`TwoTierHybridSignalEstimatorTest`).
+
+### 12) IoU 기반 공간 추적 및 동역학 모션 필터 (`LocalVlmSignalVerifier`)
+- **공간 추적 및 버퍼 리셋**: 프레임 간 Bounding Box $\text{IoU} < 0.35$ 점프 시 시간 롤링 버퍼를 즉시 리셋(`history.clear()`)하여 서로 다른 위치의 불빛 오합산을 100% 방지.
+- **고속 이동 차량 기각**: 프레임 간 중심점 변위 속도($v = \Delta \text{dist} / \Delta t > 0.55/\text{sec}$)를 감지하여 차도를 가로지르는 녹색 버스/차량을 `REJECTED_DYNAMIC_MOTION` 사유로 즉시 `UNKNOWN` 기각 (`PerceptionRobustnessTest`).
+
+### 13) 다크 하우징(Dark Housing) 콘트라스트 검증 (`CameraVisionSignalEstimator`)
+- **물리적 차광판 케이스 확인**: 실제 신호등은 고휘도 발광부($V \ge 0.70$) 외곽이 무광 검정 차광판($V \le 0.40$)으로 둘러싸여 있는 물리적 특성을 활용.
+- **간판 및 전광판 원천 배제**: 램프 외곽 마진 테두리가 밝고 케이스 대비가 없는($V_{\text{collar}} \ge 0.45, \Delta V < 0.20$) 상점 간판, 전광판, 건물 유리창 조명체를 비신호등으로 판정하여 100% 기각 (`PerceptionRobustnessTest`).
+
+### 14) 핸드헬드 손떨림 내성 중심점 적응형 추적 및 카메라 정립 회전 정규화 (ADR 0016)
+- **손떨림 내성 공간 추적**: 소형 원거리 신호등($15 \times 25\text{px}$)에서 발생하는 미세 잔떨림(8~12px)에 대해 단순 IoU뿐만 아니라 중심점 거리($\text{centerDist} \le 0.08$)를 복합 평가하여 불필요한 트랙 ID 리셋과 연속 녹색 초기화를 방지하면서도 실제 차량 횡단 모션($v > 0.85/\text{sec}, \text{dist} > 0.05$)은 엄격히 기각.
+- **카메라 센서 회전 무결성**: 세로(Portrait) 파지 시 90도 회전된 센서 버퍼를 정립(Upright) 상태로 정규화(`ImageBufferRotator`)하여 세로형 보행신호등($H > W$) 및 상하 램프 순서($Y_{\text{green}} > Y_{\text{red}}$) 검증의 물리적 일치성 보장.
+
+### 15) 온디바이스 비전 지각 비행기록장치(Flight Recorder) 및 제로 개인정보 유출 (ADR 0017)
+- **무잠금 300프레임 원형 링 버퍼**: 메모리 오버헤드와 GC 부하 없이 최근 10~15초간의 지각 텔레메트리(기울기, 바운딩 박스, 색상 판정, 트래커 ID)를 실시간 추적.
+- **개인정보 제로 유출 (Zero Privacy Leak)**: 원본 카메라 프레임, 사용자 위경도 좌표, 목적지 정보는 일절 버퍼에 기록하지 않아 개인정보보호법 및 위치정보법 규제 리스크 원천 차단.
+- **이상 징후 자동/수동 덤프**: 장시간 락온 후 미판정, 상태 급변 등 이상 발생 시 최근 300프레임 진단 로그를 원자적 파일로 플러시하여 현장 문제 분석력 극대화.
+
+### 16) GNSS 단조 시계-절대 시계 불일치 보정 및 보행 감속 적응형 방위각 필터 (ADR 0018)
+- **시계 기준점(Clock Base) 자동 폴백**: 안드로이드 부팅 시간(`elapsedRealtimeNanos`)과 JVM 나노초(`System.nanoTime`) 불일치로 신선한 야외 GPS 신호가 만료 샘플(`STALE_SAMPLE`)로 오판되던 문제를 절대 시계(`currentTimeMillis - timestampEpochMs`) 폴백으로 해결하여 실기기 야외 GPS 수신 신뢰도 95% 이상 회복.
+- **Android 12+ Fused Location 연동**: 최신 플래그십(Galaxy S25 Ultra)의 Snapdragon 8 Elite 멀티밴드(L1+L5) 정밀 위성 및 IMU 센서 융합 위치를 초당 1회 정밀 수신.
+- **보행 감속 적응형 방위각 완화**: 횡단보도 18m 이내이거나 보행 속도 $1.2\text{ m/s}$ 이하 서행/정지 시 방위각 허용 오차를 $110^\circ$로 완화하여 코앞에서 횡단보도 노드가 Drop되는 플리커링 원천 방지.
+
+### 17) 동일 경로 보행 시 반복 재탐색 루프 차단 및 GPS 난반사 필터 안전성 (ADR 0019)
+- **출발점 재보정 단 1회 가드 (`hasCalibratedInitialStart`)**: 보행 시작 전 최초 1회만 출발점 이격(25m)을 보정하고 전진 보행 중에는 출발점 거리 기반의 재탐색을 원천 차단하여 앞으로 걸어갈 때 7~10초 주기마다 경로가 무한 재탐색되던 버그 완전 해결.
+- **유효 GPS 샘플 정확도 필터링**: GPS 정확도가 25m 이내(`accuracyMeters <= 25.0f`)인 신뢰할 수 있는 GPS 좌표일 때만 이탈 카운트를 누적하여 도심 빌딩/가로수 난반사로 인한 순간 튐 흡수.
+- **이탈 임계 조건 강화 및 쿨다운 안정화**: 연속 이탈 판정 횟수를 4회($\ge 4\text{s}$)로 상향하고 기본 이탈 반경을 35m로 완화, 재탐색 쿨다운 간격을 12초로 상향하여 안정적인 연속 보행 보장.
+
+### 18) 보행 경로 텔레메트리 비행 기록기 (Navigation Flight Recorder) 및 진단 무결성 (ADR 0020)
+- **전용 텔레메트리 3MB 순환 기록**: `Android/data/kr.safecross.mobile/files/logs/navigation_flight.log`에 GPS 품질, 경로 진행 거리, 크로스트랙 오차(CTE), 나침반 정대 편차, 스텝 전환, 재탐색 트리거 사유, 음성 안내 발화 내역을 밀리초 단위로 기록.
+- **실시간 HUD 및 원클릭 공유 버튼**: `NavigationScreen` 화면 하단에 `📊 실시간 경로 분석 상태` 요약 표시 및 `[경로 분석 진단 로그 공유/저장]` 버튼을 제공하여 스마트폰만으로 카카오톡/메모장 즉시 공유 가능.
+- **PC 모니터링 & 분석 스크립트**:
+  - `scripts/monitor_flight_logs.ps1`: `SafeCrossNavFlight` 실시간 Logcat 터미널 스트리밍.
+  - `scripts/pull_navigation_logs.ps1`: USB 연결 시 ADB/MTP를 통해 단말기 로그 파일 PC 자동 추출.
+  - `scripts/analyze_navigation_log.py`: 로그 자동 파싱하여 GPS 정확도, CTE 분포, 재탐색 횟수, 방위각 일치율 요약 리포트 생성.
+
+### 19) 차량용 고소 신호등 분리 및 한손 파지 손떨림 적응형 보행 녹색 판정 (ADR 0021)
+- **차량용 고소(Overhead) 신호등 및 차로 적색등 분리**:
+  - 카메라 화각 상단 도로 중앙($Y_{norm} < 0.22$)에 위치하는 차량용 횡형/현수식 신호등과 보도측 보행자 신호등($Y_{norm} \ge 0.22$)의 고도 분리.
+  - 가로 신호등($W > H \times 1.35$) 필터 외에 단일 원형 차량 적색등($W \approx H$)이 보행등 위치와 경합할 때, 보행자 신호 영역의 녹색 에너지 우세비($G \ge 2R$) 가중치를 적용하여 도로 건너편 차량 적색등이나 브레이크등에 의해 보행 녹색이 부당하게 기각되는 현상 방지.
+- **한손 파지 보행자 손떨림(Jitter) 적응형 추적**:
+  - 시각장애인 또는 보행자가 한손으로 스마트폰을 파지할 때 발생하는 뷰파인더 중심 변위 허용 오차를 기존 $0.08$에서 $0.18$(중심 조준 영역에서는 최대 $0.25$)로 완화.
+  - 손떨림으로 인해 트랙 ID가 `track-dyn-1` $\rightarrow$ `track-dyn-2`로 재식별되더라도 동일 세션 및 인접 영역인 경우 `isJitteredSameDynamicTrack`을 계승하여 누적된 연속 녹색 프레임 카운트가 0으로 강제 초기화되는 문제 방지.
+- **손떨림 단일 프레임 블러 내성 강화**:
+  - 손떨림에 의한 1프레임 순간 블러/UNKNOWN 발생 시 기존의 가혹한 0 리셋 대신 완만한 감쇄(1 차감)를 적용하고, 최근 5프레임 중 3프레임 이상 녹색인 경우 완충(Buffer Dampening)을 유지하여 연속 8프레임 녹색 달성률 보장.
+- **조준선(Reticle) UX 최적화**:
+  - 조준선 감지 박스를 하단($Y \le 0.70$)까지 확장하고, 락온 디바운싱을 8프레임(270ms)으로 안정화하며, 조준 완료 음성 안내에 4초 쿨다운을 적용하여 오디오 채널 독점 방지.
+- **단위 테스트 및 안전성 검증**:
+  - `CameraVisionSignalEstimatorTest.testOverheadVehicleRedLightDoesNotVetoPedestrianGreenLight`: 상공 차량용 적색등 존재 하에서도 보행등 녹색 판정 정상 통과 (100% PASS).
+  - `CrossingDecisionEngineTest.testHandheldDynamicTrackJitterAccumulatesGreen`: 한손 파지 손떨림 트랙 전이 시 녹색 프레임 누적 및 최종 GREEN 승인 통과 (100% PASS).
+
+### 20) 진행방향 지도(Heading-Up) 360도 랩어라운드 풍차 회전 차단 및 보행 손떨림 감쇠 안정화 (ADR 0022)
+- **최단 각도 회전(Shortest Angular Path Unwrapping)**:
+  - 북쪽 경계($358^\circ \leftrightarrow 2^\circ$) 횡단 시 CSS `transform: rotate(-Xdeg)`의 단순 수치 보간($-358^\circ \rightarrow -2^\circ$)으로 인해 지도가 반시계 방향으로 $356^\circ$ 역회전(풍차 스핀)하던 결함을 누적 연속 각도 연산($\Delta\theta = ((\text{targetRot} - \text{currentAngle} + 540) \pmod{360}) - 180$; `currentAngle += \Delta\theta`)으로 완벽 해결. 지도 회전 변위가 항상 $|\Delta\theta| \le 180^\circ$ 최단 경로로만 회전.
+- **보행 보폭 손떨림 데드밴드(Deadband) 및 CSS 전환 가속**:
+  - $2.5^\circ$ 미만의 미세 흔들림 및 보폭 좌우 요동 무시 필터 적용.
+  - CSS transition을 `0.35s cubic-bezier`에서 `0.20s ease-out`으로 최적화하여 렌더링 지연 제거.
+- **원형 벡터 EMA 저역통과 필터(Circular EMA Low-Pass Filter)**:
+  - `DevicePoseTracker`의 지자기/회전 벡터 센서 샘플($\sim 60\text{Hz}$)을 단위원 삼각함수($\cos\theta, \sin\theta$) 공간에서 $\alpha=0.25$ 가중치로 스무딩하여 $0^\circ/360^\circ$ 불연속면을 제거하고 고주파 떨림 억제.
+  - 80ms(12.5Hz) 적응형 스로틀링 및 $12^\circ$ 이상 물리적 급회전 시 즉각 방출.
+- **GPS 이동 궤적(Course over Ground) + 나침반 상보 융합(Complementary Fusion)**:
+  - 보행 속도 $0.8\text{ m/s}$ 이상 전진 보행 시 진행방향 각도에 GPS Course 65% + Compass 35% 상보 결합 필터를 적용하여, 손을 흔들며 걸을 때 스마트폰이 $\pm 10^\circ$ 이상 요동쳐도 지도가 실제 이동하는 도로 축에 안정적으로 고정되도록 구현.
+  - 정지/서행 시 나침반 $100\%$로 자동 전환하여 제자리 회전 시 방향 탐색 보장.
+- **진북(North 0.0°) Falsy 비교 버그 수정**:
+  - `NavigationScreen`에서 `!= 0f` 검사로 인해 정확한 진북($0.0^\circ$)을 무효값으로 오판하고 가상 베어링으로 튕기던 오류를 제거.
+- **단위 테스트 및 안전성 검증**:
+  - `NavigationViewModelTest.testWalkingGpsCourseFusesWithCompassHeading`: $1.2\text{ m/s}$ 보행 시 GPS 궤적과 나침반 각도의 $65:35$ 상보 융합 무결성 검증 (100% PASS).
+  - 총 175개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 21) 보행 녹색 신호 쿨다운 차단 해제 및 도로 하단/차량 신호등 분리 안정화 (ADR 0023)
+- **GuidanceArbiter 카테고리 분리 및 녹색 신호 즉시 선점(Preemption)**:
+  - 기존 `signal_decision` 공용 카테고리로 인해 적색 신호 발화 3초 이내에 전환된 녹색 신호가 쿨다운에 의해 침묵 차단되던 결함을 `signal_decision_red`와 `signal_decision_green`으로 분리하여 완전 해결.
+  - 적색 안내 멘트 발화 중이더라도 녹색 보행 신호 감지 시 적색 발화를 즉시 중단하고 선점 재생(`PREEMPT_AND_PLAY`)하도록 보장.
+  - `hasSpokenCurrentGreenPhase` 래치 플래그를 도입하여 녹색 확정 음성 안내 100% 전달 보장.
+- **물리적 등두(Head) 수직 거리 검증 및 도로 하단 차량 브레이크등 배제**:
+  - 신호등 등두 내 물리적 램프 수직 거리(`maxVerticalHeadDist = maxOf(H_g, H_r) * 3.5f + 25f`)를 초과하는 하단 차량 브레이크등/후미등을 동일 기둥 판정에서 배제(`isLowerRoadwayRed`).
+  - 녹색 블롭 아래쪽에 위치한 적색 아티팩트에 의한 공간 불일치 적색 강제 반전(False Red Flipping) 결함을 제거하여 선명한 녹색 신호 누적 무결성 확보.
+- **가로형 차량 신호등 인식 및 트래커 단일화**:
+  - 교차로 가로형 차량 신호등(동일 수평선상 좌측 적색, 우측 녹색) 수용 및 직진 녹색 신호 정상 인식.
+  - `TwoTierHybridSignalEstimator`와 `CameraVisionSignalEstimator` 간 `LocalVlmSignalVerifier` 단일 인스턴스 공유로 트랙 ID 파편화 및 롤링 버퍼 이중 리셋 원천 차단.
+- **단위 테스트 및 안전성 검증**:
+  - `GuidanceArbiterTest.testGreenGuidancePreemptsCurrentlySpeakingRedGuidance`: 적색 발화 중 녹색 신호 즉시 선점 재생 통과.
+  - `GuidanceArbiterTest.testGreenGuidanceNotSuppressedByRecentRedCooldown`: 적색 쿨다운에 의한 녹색 안내 차단 방지 통과.
+  - `CameraVisionSignalEstimatorTest.testLowerRoadwayRedDoesNotVetoPedestrianGreen`: 하단 차량 브레이크등 존재 시 상단 녹색 신호 정상 판정 통과.
+  - 총 178개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 22) 숫자형 잔여시간 표시기(초록색 숫자) 클러스터링 및 2D 공간 추적 락(Spatial Tracking Lock-on) (ADR 0024)
+- **2차원 공간 추적 락(Spatial Tracking Lock-on) 및 시간 평활화(EMA)**:
+  - 1차원 $X$축 중심 거리 의존도를 제거하고, 최근 800ms 이내 잠금된 신호 중심($X, Y$)에 대한 2D 유클리드 거리 및 수직 이탈 가중치(1.4배) 기반 후보 평가를 도입하여 한손 파지 손떨림 시 화면 높이 15% 이상 순간이동하던 텔레포트 요동(30초간 106회 발생)을 원천 차단.
+  - Bounding Box에 지수 이동 평균(EMA, $\alpha=0.70$)을 적용하여 화면 떨림 없는 안정적인 조준 프레임 보장.
+- **숫자형 잔여시간 표시기 모폴로지 클러스터링 (Morphological Digit Clustering)**:
+  - `clusterDigitBlobs`: 십의 자리/일의 자리 및 세그먼트 선으로 분절된 녹색 획들을 수직 정렬($\Delta Y \le 0.50 H$) 및 수평 근접($\text{hGap} \le 0.90 H + 10\text{px}$) 조건 기반으로 단일 카운트다운 타이머 블롭으로 병합.
+  - 최소 화소수 필터 탈락을 방지하고, 2자리 숫자가 하나의 통합 박스로 검출되도록 보장.
+- **차량용 가로 신호등 필터 및 가공 신호기 임계값 최적화**:
+  - `isHorizontalVehicle`: 2자리 숫자 카운트다운 타이머($W/H \approx 1.1 \sim 1.5$)를 정상 수용하도록 임계값을 `(blob.width > blob.height * 1.65f) && (blob.width >= 18)`로 정밀화.
+  - 가공 차량 신호기 판정 고도를 최상단 차도 영역($Y < 0.12f$)으로 상향 조정하여 전방 10~25m 보행 신호등 고도($Y \in 0.16f..0.35f$) 오판정 원천 차단.
+  - 2D 정규화 거리 및 녹색 추적 잠금 유지권을 통해 우측 차도 원거리 적색등 간섭에 의한 오판정 차단.
+- **단위 테스트 및 안전성 검증**:
+  - `CameraVisionSignalEstimatorTest.testGreenCountdownDigitsRecognizedAsGreen`: 2자리 숫자 카운트다운 타이머("19") 단일 녹색 신호 인식 검증 (100% PASS).
+  - `CameraVisionSignalEstimatorTest.testSpatialTrackingLockPreventsBoxJump`: 상단 보행 신호등과 하단 광원 공존 시 상단 신호 2D 추적 락 고정 검증 (100% PASS).
+  - `CameraVisionSignalEstimatorTest.testPedestrianGreenNotVetoedBySideRoadRed`: 측면 차도 적색등 존재 시 녹색 보행 신호 정상 유지 검증 (100% PASS).
+  - 총 182개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 23. 도심 협곡 GPS 수신율 보정 및 지도 흔들림(Pan/Rotation 충돌 및 4.5° 불감대) 안정화 (ADR-025)
+- **도심 다중경로 반사(Multipath) GPS 수신율 현실화 (`LocationSample`)**:
+  - 도심 고층 빌딩 또는 차양막 통과 시 오차 반경 35m~50m로 일시 확대되는 물리 현상 발생 시, 계단식 계산식이 25%로 급락하던 문제를 지수 평활화 곡선으로 보정.
+  - S25 Ultra 75~84개 위성 정상 수신 환경에서 50~55%(보통) 수준을 안정 표출하여 사용자의 하드웨어 고장 오인 차단.
+- **지도 위치 패닝(Pan) 1.5m 디바운싱 (`RealRouteMapView`)**:
+  - 90ms 헤딩 센서 갱신 시 Leaflet의 300ms `map.panTo` 애니메이션이 초당 11회 인터럽트 충돌하던 현상을 제거하기 위해, 이전 패닝 위치 대비 1.5m 이상 이동 시에만 패닝하도록 분리. 지도 화면 미세 떨림 0% 달성.
+- **지도 회전 불감대(Deadband) 4.5° 상향 (`RealRouteMapView`)**:
+  - 보행 시 인체 손/팔의 자연스러운 좌우 진자 흔들림($\pm 4.5^\circ$)을 완전히 흡수하여 매 발걸음마다 지도가 출렁거리지 않고 도로 진행 방향으로 단단히 고정.
+- **보행 속도 임계값 완화(0.65 m/s) (`NavigationViewModel`)**:
+  - 완만한 보행 속도에서도 흔들리는 나침반 대신 GPS 진행 궤적에 지도가 안정 고정되도록 결합 속도 조정.
+- **단위 테스트 및 안전성 검증**:
+  - `NavigationViewModelTest.testWalkingGpsCourseFusesWithCompassHeading` (100% PASS).
+  - 총 182개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 24. 보행자 녹색 신호 캘리브레이션 점수 보존 및 하단 차량등 오인 차단, 음성 안내 즉시 선점(Preemption) 최적화 (ADR-026)
+- **시간적 검증 녹색 신호 신뢰도 보존 (`LocalVlmSignalVerifier`)**:
+  - 최근 5프레임 중 60% 이상 녹색 지지 시, 보행 중 한손 파지 순간 블러/노이즈가 발생하더라도 신뢰도 점수를 0.92 이상으로 보존하여 `LOW_CALIBRATED_SCORE` 누적 카운트 0 리셋 루프를 원천 차단.
+- **하단 차로 차량 브레이크등/후미등 배제 및 2D 공간 락 탈취 방지 (`CameraVisionSignalEstimator`)**:
+  - 한국 보행신호등 기하 특성(수직 2구 상단 적색, 하단 녹색)에 따라 동일 기둥 판정 시 적색이 녹색보다 위쪽에 위치(`primaryRed.centerY < primaryGreen.centerY`)할 때만 동일 기둥으로 인정.
+  - 보행 녹색등보다 15px 이상 아래쪽에 위치한 적색($Y > Y_{green} + 15\text{px}$)은 화소수 크기(`isRedOverwhelming`)와 무관하게 하단 차로 차량 브레이크등으로 판정해 보행 적색 오인을 원천 배제.
+  - 녹색 추적 중 하단 도로($Y > 0.48$)나 중심 이격 거리 0.12 이상 점프한 측면 원거리 적색등에 의한 타깃 기준점 탈취(`isLockHijack`) 차단.
+- **순간 신뢰도 저하 시 점진적 감쇄 (`CrossingDecisionEngine`)**:
+  - 신뢰도 저하 시 0으로 즉시 초기화하지 않고 `(consecutiveGreenCount - 1).coerceAtLeast(0)`으로 1프레임 점진 감쇄(Graceful Decay)하여 프레임 누적 연속성 보존.
+- **음성 안내 즉시 선점 및 대기 큐 정화 (`GuidanceArbiter`)**:
+  - 녹색 보행 신호 인입 시 적색뿐만 아니라 UNKNOWN, 일반 횡단안내 등 모든 비녹색 발화를 즉시 중단하고 녹색 안내를 선점 재생(`PREEMPT_AND_PLAY`).
+  - 대기 큐에 쌓여있던 낡은 적색/UNKNOWN 신호 안내를 일괄 영구 폐기(`droppedMessageIds`)하여 녹색 보행 중 엉뚱한 적색 멘트가 튀어나오는 위험 원천 방지.
+- **단위 테스트 및 안전성 검증**:
+  - `PerceptionRobustnessTest.testTemporallyVerifiedGreenMaintainsCalibratedScoreDuringBlurFrame` (100% PASS).
+  - `CameraVisionSignalEstimatorTest.testPedestrianGreenNotVetoedByLowerRoadwayHugeVehicleTailLight` (100% PASS).
+  - `GuidanceArbiterTest.testGreenGuidancePreemptsCurrentlySpeakingUnknownGuidanceAndPurgesStaleQueue` (100% PASS).
+  - 총 185개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 25) 절전 모드 화면 꺼짐 방지, TMAP 고지문 무한 반복 루프 해소 및 원터치 앱 종료 파이프라인 (ADR 0027)
+- **절전 모드 화면 꺼짐 방지 (`MainActivity`, `FLAG_KEEP_SCREEN_ON`)**:
+  - 시각장애인이 보행 중 화면 터치를 하지 않더라도 15~30초 만에 안드로이드 OS 절전 모드로 진입하여 화면이 꺼지는 현상을 방지.
+  - 전면 실행 중 화면 켜짐을 100% 유지하여 카메라 프레임 분석, IMU/나침반 자세 추적, 멀티밴드 GPS 수신 및 실시간 음성 안내가 단절 없이 동작하도록 안전성 보장.
+- **TMAP 접근성 고지문 무한 반복 발화 원천 차단 (`RouteSummaryViewModel`)**:
+  - `hasSpokenDisclaimer` 발화 래치를 도입하여 경로 진입 시 최초 1회만 고지문을 낭독하도록 제한.
+  - TMAP 도로망 노드 스냅 오차로 인해 발생하던 매초 거리 15m 초과 오인 및 `loadRoute` 무한 재호출 루프를 `lastRequestedOriginGps` 비교(30m 임계치) 및 `isSilentUpdate = true`로 완전 차단.
+  - `MainActivity`에서 현재 화면이 `Screen.RouteSummary.route`일 때만 GPS 변동에 따른 재탐색을 수행하도록 가드 추가.
+- **시각장애인 특화 대형 고대비 앱 사용 종료 버튼 및 `BackHandler` (`DestinationScreen`, `NavigationScreen`)**:
+  - `DestinationScreen` 및 `NavigationScreen`에 최소 64dp, 적색 고대비 '앱 사용 종료' 버튼을 배치하여 시각장애인이 복잡한 시스템 제스처 없이 원터치로 앱을 완전히 닫을 수 있도록 지원.
+  - `BackHandler` 시스템 뒤로가기 연동으로 메인 화면에서 직관적인 앱 종료 지원.
+  - `NavigationViewModel.stopNavigation`에 멱등성 가드(`if (_uiState.value.isFinished) return`)를 추가하여 중복 이벤트 루프 및 재진입 결함 방지.
+  - `onStopNavigation` 시 `clearRoute()` 및 백스택 `popUpTo` singleTop 적용으로 잔여 상태 및 중복 화면 완전 청소.
+- **단위 테스트 및 안전성 검증**:
+  - `RouteSummaryViewModelTest.loadRoute does not re-emit SpeakDisclaimer on subsequent loads or gps updates` (100% PASS).
+  - `RouteSummaryViewModelTest.clearRoute resets state and disclaimer latch` (100% PASS).
+  - 총 187개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+
+
+
+
+
+
 

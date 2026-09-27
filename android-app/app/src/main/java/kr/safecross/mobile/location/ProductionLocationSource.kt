@@ -48,6 +48,10 @@ class ProductionLocationSource(
     private var activeSatelliteCount = 0
     private var usedInFixSatelliteCount = 0
 
+    // 단일 활성 Provider 및 이상치(순간이동/기지국) 기각 필터
+    private var activeProviderName: String? = null
+    private val outlierFilter = LocationOutlierFilter()
+
     // 위성 상태 실시간 콜백 (S25 Ultra 하드웨어 위성 수신 감도 모니터링)
     private val gnssStatusCallback = object : GnssStatus.Callback() {
         override fun onSatelliteStatusChanged(status: GnssStatus) {
@@ -67,9 +71,11 @@ class ProductionLocationSource(
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
-            val sample = convertToSample(location)
-            _signalPercentFlow.value = sample.signalStrengthPercent
-            _locationFlow.tryEmit(sample)
+            val rawSample = convertToSample(location)
+            val filteredSample = outlierFilter.filter(rawSample) ?: return
+
+            _signalPercentFlow.value = filteredSample.signalStrengthPercent
+            _locationFlow.tryEmit(filteredSample)
         }
 
         @Deprecated("Deprecated in Java")
@@ -120,8 +126,18 @@ class ProductionLocationSource(
                 } catch (_: Exception) {}
             }
 
-            // 2. Android 12/14/15 고정밀 LocationRequest 적용 (S25 Ultra 최적화)
-            if (hasFine && isGpsEnabled()) {
+            // 2. 단일 고정밀 Provider 우선순위 등록 (다중 Provider 동시 등록으로 인한 17m 핑퐁 및 기지국 튐 원천 차단)
+            // 우선순위: FUSED_PROVIDER (Android 12+ 최적 융합) -> GPS_PROVIDER (하드웨어 고정밀) -> NETWORK_PROVIDER (실내/기지국)
+            val chosenProvider = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasFine &&
+                    locationManager.isProviderEnabled(LocationManager.FUSED_PROVIDER) -> LocationManager.FUSED_PROVIDER
+                hasFine && isGpsEnabled() -> LocationManager.GPS_PROVIDER
+                locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+                else -> null
+            }
+
+            if (chosenProvider != null) {
+                activeProviderName = chosenProvider
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val highAccuracyRequest = LocationRequest.Builder(minTimeMs)
                         .setQuality(LocationRequest.QUALITY_HIGH_ACCURACY)
@@ -130,14 +146,14 @@ class ProductionLocationSource(
                         .build()
 
                     locationManager.requestLocationUpdates(
-                        LocationManager.GPS_PROVIDER,
+                        chosenProvider,
                         highAccuracyRequest,
                         ContextCompat.getMainExecutor(context),
                         locationListener
                     )
                 } else {
                     locationManager.requestLocationUpdates(
-                        LocationManager.GPS_PROVIDER,
+                        chosenProvider,
                         minTimeMs,
                         minDistanceM,
                         locationListener
@@ -145,32 +161,28 @@ class ProductionLocationSource(
                 }
             }
 
-            // 3. Network Provider (Wi-Fi/기지국) 보조 등록
-            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                locationManager.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER,
-                    minTimeMs,
-                    minDistanceM,
-                    locationListener
-                )
-            }
-
-            // 4. 최근 위치(Last Known Location): 15초 이내의 신선한 샘플만 방출 (오래된 샘플로 인한 Stale 경고 방지)
+            // 3. 최근 위치(Last Known Location): 15초 이내의 신선한 샘플만 방출 (오래된 샘플로 인한 Stale 경고 방지)
             val nowRealtime = SystemClock.elapsedRealtimeNanos()
             val nowWall = System.currentTimeMillis()
 
+            val lastFused = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasFine) {
+                try { locationManager.getLastKnownLocation(LocationManager.FUSED_PROVIDER) } catch (_: Exception) { null }
+            } else null
             val lastGps = if (hasFine) locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER) else null
             val lastNetwork = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
             val lastPassive = if (hasFine) locationManager.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER) else null
 
-            val candidates = listOfNotNull(lastGps, lastNetwork, lastPassive)
+            val candidates = listOfNotNull(lastFused, lastGps, lastNetwork, lastPassive)
             val bestLast = candidates.maxByOrNull { it.time }
 
             // 15초 이내의 유효한 최근 위치일 때만 초기 샘플 방출
             if (bestLast != null && (nowWall - bestLast.time) <= 15_000L) {
                 val sample = convertToSample(bestLast)
-                _signalPercentFlow.value = sample.signalStrengthPercent
-                _locationFlow.tryEmit(sample)
+                val filtered = outlierFilter.filter(sample)
+                if (filtered != null) {
+                    _signalPercentFlow.value = filtered.signalStrengthPercent
+                    _locationFlow.tryEmit(filtered)
+                }
             }
         } catch (_: SecurityException) {
             isTracking = false
@@ -190,6 +202,8 @@ class ProductionLocationSource(
             // 무시
         } finally {
             isTracking = false
+            activeProviderName = null
+            outlierFilter.reset()
         }
     }
 

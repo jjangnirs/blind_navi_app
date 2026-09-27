@@ -18,7 +18,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Search
@@ -64,11 +66,17 @@ fun DestinationScreen(
     voiceAnnouncer: VoiceAnnouncer?,
     onNavigateToRouteSummary: (DestinationItem) -> Unit,
     onNavigateToSettings: () -> Unit,
+    onExitApp: () -> Unit = {},
     modifier: Modifier = Modifier,
     currentGps: LocationPoint? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scrollState = rememberScrollState()
+
+    // 시스템 뒤로가기 버튼 누를 시 안전하게 앱 종료
+    BackHandler {
+        onExitApp()
+    }
 
     // Android 음성 인식 (SpeechRecognizer Intent) 런처
     val voiceLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -139,21 +147,43 @@ fun DestinationScreen(
                         color = HighContrastYellow
                     )
                 )
-                IconButton(
-                    onClick = { viewModel.openSettings() },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .semantics {
-                            role = Role.Button
-                            contentDescription = "앱 환경설정 화면으로 이동합니다."
-                        }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = null,
-                        tint = HighContrastWhite,
-                        modifier = Modifier.size(32.dp)
-                    )
+                    IconButton(
+                        onClick = { viewModel.openSettings() },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = "앱 환경설정 화면으로 이동합니다."
+                            }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null,
+                            tint = HighContrastWhite,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onExitApp,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = "SafeCross 앱 사용을 완전히 종료합니다."
+                            }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = null,
+                            tint = Color(0xFFFF5252),
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
                 }
             }
 
@@ -395,10 +425,48 @@ fun DestinationScreen(
                     DestinationCardItem(
                         item = item,
                         currentLocation = currentGps,
-                        onClick = { viewModel.selectDestination(item) }
+                        onClick = { viewModel.selectDestination(item) },
+                        onToggleFavorite = { viewModel.toggleFavorite(item) }
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 앱 사용 종료 버튼 (최소 64dp, 고대비 레드 테두리 및 배경)
+            Button(
+                onClick = onExitApp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 64.dp)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "SafeCross 앱 사용을 완전히 종료하고 앱을 닫습니다."
+                    },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFB71C1C),
+                    contentColor = HighContrastWhite
+                ),
+                border = BorderStroke(2.dp, Color(0xFFFF5252))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = HighContrastWhite,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "앱 사용 종료",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 20.sp
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
@@ -407,7 +475,8 @@ fun DestinationScreen(
 private fun DestinationCardItem(
     item: DestinationItem,
     currentLocation: LocationPoint? = null,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onToggleFavorite: () -> Unit = {}
 ) {
     // 현재 위치와의 거리 산출
     val distanceMeters = currentLocation?.let { calculateDistanceMeters(it, item.location) }
@@ -422,69 +491,96 @@ private fun DestinationCardItem(
             .heightIn(min = 64.dp)
             .background(CardBackground, RoundedCornerShape(12.dp))
             .border(BorderStroke(1.dp, Color(0xFF444444)), RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(16.dp)
-            .semantics(mergeDescendants = true) {
-                role = Role.Button
-                val distDesc = distanceText?.let { ", 현재 위치에서 $it" } ?: ""
-                contentDescription = "목적지 ${item.name}. 주소: ${item.address}$distDesc. ${if (item.isFavorite) "즐겨찾기 항목." else ""} 선택하려면 두 번 탭하세요."
-            },
+            .padding(start = 16.dp, top = 6.dp, bottom = 6.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = if (item.isFavorite) Icons.Default.Star else Icons.Default.Place,
-            contentDescription = null,
-            tint = if (item.isFavorite) HighContrastYellow else TextSecondary,
-            modifier = Modifier.size(32.dp)
-        )
-        Spacer(modifier = Modifier.width(16.dp))
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.Center
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onClick)
+                .padding(vertical = 10.dp)
+                .semantics(mergeDescendants = true) {
+                    role = Role.Button
+                    val distDesc = distanceText?.let { ", 현재 위치에서 $it" } ?: ""
+                    contentDescription = "목적지 ${item.name}. 주소: ${item.address}$distDesc. ${if (item.isFavorite) "즐겨찾기 항목." else ""} 선택하려면 두 번 탭하세요."
+                },
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Icon(
+                imageVector = Icons.Default.Place,
+                contentDescription = null,
+                tint = if (item.isFavorite) HighContrastYellow else TextSecondary,
+                modifier = Modifier.size(32.dp)
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
             ) {
-                Text(
-                    text = item.name,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
-                        color = HighContrastWhite
-                    ),
-                    modifier = Modifier.weight(1f, fill = false)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = item.name,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = HighContrastWhite
+                        ),
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
 
-                // 거리 뱃지
-                if (distanceText != null) {
-                    val badgeColor = if (isWalkable) Color(0xFF00E676) else Color(0xFFFF5252)
-                    Row(
-                        modifier = Modifier
-                            .background(badgeColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
-                            .border(1.dp, badgeColor, RoundedCornerShape(6.dp))
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (isWalkable) "🚶 $distanceText" else "⚠️ $distanceText (초과)",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = badgeColor,
-                                fontSize = 11.sp
+                    // 거리 뱃지
+                    if (distanceText != null) {
+                        val badgeColor = if (isWalkable) Color(0xFF00E676) else Color(0xFFFF5252)
+                        Row(
+                            modifier = Modifier
+                                .background(badgeColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                                .border(1.dp, badgeColor, RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (isWalkable) "🚶 $distanceText" else "⚠️ $distanceText (초과)",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = badgeColor,
+                                    fontSize = 11.sp
+                                )
                             )
-                        )
+                        }
                     }
                 }
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = item.address,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 14.sp,
-                    color = TextSecondary
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = item.address,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 14.sp,
+                        color = TextSecondary
+                    )
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        // 즐겨찾기 별 토글 버튼 (터치 타깃 최소 48dp 보장)
+        IconButton(
+            onClick = onToggleFavorite,
+            modifier = Modifier
+                .size(48.dp)
+                .semantics {
+                    role = Role.Button
+                    contentDescription = if (item.isFavorite) "${item.name} 즐겨찾기 해제" else "${item.name} 즐겨찾기 등록"
+                }
+        ) {
+            Icon(
+                imageVector = Icons.Default.Star,
+                contentDescription = null,
+                tint = if (item.isFavorite) HighContrastYellow else Color(0xFF666666),
+                modifier = Modifier.size(28.dp)
             )
         }
     }

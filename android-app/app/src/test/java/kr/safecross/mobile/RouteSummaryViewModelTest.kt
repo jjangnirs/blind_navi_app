@@ -138,4 +138,65 @@ class RouteSummaryViewModelTest {
         assertFalse(state.isLoading)
         assertNotNull(state.errorMessage)
     }
+
+    @Test
+    fun `loadRoute does not re-emit SpeakDisclaimer on subsequent loads or gps updates`() = runTest(testDispatcher) {
+        val effects = mutableListOf<RouteSummaryEffect>()
+        val job = launch {
+            viewModel.effects.collect { effects.add(it) }
+        }
+
+        // 1차 경로 로드: Disclaimer 발화 1회 발생
+        viewModel.loadRoute(
+            origin = LocationPoint(35.1595, 126.8526),
+            destination = LocationPoint(35.1610, 126.8550)
+        )
+        advanceUntilIdle()
+
+        val disclaimerCount1 = effects.count { it is RouteSummaryEffect.SpeakDisclaimer }
+        assertEquals(1, disclaimerCount1)
+
+        // 2차 GPS 이동(>30m)에 따른 자동 재탐색: 무음 모드로 disclaimer 중복 발화 없어야 함
+        viewModel.updateOriginIfGpsMoved(
+            newGps = LocationPoint(35.1605, 126.8536),
+            newAddress = "이동된 위치"
+        )
+        advanceUntilIdle()
+
+        val disclaimerCount2 = effects.count { it is RouteSummaryEffect.SpeakDisclaimer }
+        assertEquals(1, disclaimerCount2) // 여전히 1회 유지 (무한 반복 방지 확인)
+
+        job.cancel()
+    }
+
+    @Test
+    fun `clearRoute resets state and disclaimer latch`() = runTest(testDispatcher) {
+        val effects = mutableListOf<RouteSummaryEffect>()
+        val job = launch {
+            viewModel.effects.collect { effects.add(it) }
+        }
+
+        viewModel.loadRoute(
+            origin = LocationPoint(35.1595, 126.8526),
+            destination = LocationPoint(35.1610, 126.8550)
+        )
+        advanceUntilIdle()
+        assertNotNull(viewModel.uiState.value.route)
+
+        // 클리어 실행
+        viewModel.clearRoute()
+        assertEquals(null, viewModel.uiState.value.route)
+
+        // 클리어 후 신규 목적지 로드 시 다시 1회 발화 허용 확인
+        viewModel.loadRoute(
+            origin = LocationPoint(35.1595, 126.8526),
+            destination = LocationPoint(35.1620, 126.8560)
+        )
+        advanceUntilIdle()
+
+        val disclaimerCount = effects.count { it is RouteSummaryEffect.SpeakDisclaimer }
+        assertEquals(2, disclaimerCount) // 1차 1회 + 클리어 후 신규 1회 = 총 2회
+
+        job.cancel()
+    }
 }

@@ -14,17 +14,24 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kr.safecross.mobile.data.repository.FakeRecentDestinationRepository
+import kr.safecross.mobile.data.repository.RecentDestinationRepository
 import kr.safecross.mobile.data.repository.TmapPoiRepository
 import kr.safecross.mobile.domain.model.DestinationItem
 import kr.safecross.mobile.domain.model.LocationPoint
 
 class DestinationViewModel(
     private val poiRepository: TmapPoiRepository = TmapPoiRepository(),
+    private val recentRepository: RecentDestinationRepository = FakeRecentDestinationRepository(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DestinationUiState())
     val uiState: StateFlow<DestinationUiState> = _uiState.asStateFlow()
+
+    init {
+        _uiState.update { it.copy(destinations = buildDefaultList()) }
+    }
 
     private val _effects = MutableSharedFlow<DestinationEffect>()
     val effects: SharedFlow<DestinationEffect> = _effects.asSharedFlow()
@@ -188,8 +195,10 @@ class DestinationViewModel(
         }
     }
 
-    private fun buildDefaultList(): List<DestinationItem> {
+    fun buildDefaultList(): List<DestinationItem> {
         val baseList = mutableListOf<DestinationItem>()
+
+        // 1. 현재 위치 기준 전방 테스트 목적지
         currentGpsPoint?.let { pt ->
             val displayAddr = _uiState.value.currentLocationAddress ?: "현재 위치"
             baseList.add(
@@ -202,8 +211,35 @@ class DestinationViewModel(
                 )
             )
         }
-        baseList.addAll(defaultDestinations)
+
+        // 2. 사용자가 등록한 즐겨찾기 목록 (상단 우선 노출)
+        val favorites = recentRepository.getFavoriteDestinations()
+        baseList.addAll(favorites.filterNot { it.id == "dest_current_ahead" })
+
+        // 3. 최근 검색 및 선택했던 목적지 목록 (즐겨찾기와 중복 배제)
+        val recents = recentRepository.getRecentDestinations()
+        val favIds = favorites.map { it.id }.toSet()
+        val uniqueRecents = recents.filterNot { favIds.contains(it.id) || it.id == "dest_current_ahead" }
+        baseList.addAll(uniqueRecents)
+
+        // 4. 기본 추천 목적지 (기존 목록과 중복 배제)
+        val existingIds = baseList.map { it.id }.toSet()
+        val remainingDefaults = defaultDestinations.filterNot { existingIds.contains(it.id) }
+        baseList.addAll(remainingDefaults)
+
         return baseList
+    }
+
+    fun toggleFavorite(item: DestinationItem) {
+        val newFav = recentRepository.toggleFavorite(item)
+        val updatedList = _uiState.value.destinations.map {
+            if (it.id == item.id) it.copy(isFavorite = newFav) else it
+        }
+        _uiState.update { it.copy(destinations = updatedList) }
+        val msg = if (newFav) "${item.name}이(가) 즐겨찾기에 등록되었습니다." else "${item.name}이(가) 즐겨찾기에서 해제되었습니다."
+        viewModelScope.launch {
+            _effects.emit(DestinationEffect.SpeakAnnouncement(msg))
+        }
     }
 
     fun onVoiceInputClicked() {
@@ -227,6 +263,10 @@ class DestinationViewModel(
     }
 
     fun selectDestination(item: DestinationItem) {
+        // 최근 검색 기록에 영구 저장 (실기기 테스트 목적지 제외)
+        if (item.id != "dest_current_ahead") {
+            recentRepository.saveRecentDestination(item)
+        }
         _uiState.update { it.copy(selectedDestination = item) }
         viewModelScope.launch {
             _effects.emit(DestinationEffect.SpeakAnnouncement("${item.name}이(가) 선택되었습니다. 경로 요약으로 이동합니다."))

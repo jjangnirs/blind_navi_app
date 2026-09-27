@@ -186,4 +186,30 @@ class CrossingDecisionEngineTest {
         assertEquals(CrossingAssistDecisionState.UNKNOWN, decision.state)
         assertTrue(decision.guidanceText!!.contains("올바른 각도"))
     }
+
+    @Test
+    fun testHandheldDynamicTrackJitterAccumulatesGreen() {
+        // 한손 파지 시 손떨림으로 track-dyn-1 -> track-dyn-2 -> track-dyn-3으로 식별자가 전이되어도
+        // 동일 타깃 영역 연속 추적이 인정되어 GREEN_ESTIMATE가 확정되어야 함
+        var lastDecision: kr.safecross.mobile.decision.DecisionResult? = null
+
+        for (i in 1..5) {
+            val trackId = "track-dyn-$i"
+            val greenSignal = createSignal(ObservedSignalState.GREEN, trackId = trackId)
+            val assoc = TargetSignalAssociation(true, greenSignal, "UNIQUE", 0.95f)
+
+            lastDecision = engine.evaluate(
+                crossingContext = standardCrossing,
+                devicePose = standardPose,
+                crosswalk = standardCrosswalk,
+                association = assoc,
+                isTiltSuitable = true
+            )
+        }
+
+        assertNotNull(lastDecision)
+        assertEquals(CrossingAssistDecisionState.GREEN_ESTIMATE, lastDecision!!.state)
+        assertTrue(lastDecision.guidanceText!!.contains("녹색"))
+    }
 }
+

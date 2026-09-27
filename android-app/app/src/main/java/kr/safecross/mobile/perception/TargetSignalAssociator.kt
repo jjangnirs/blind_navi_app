@@ -84,11 +84,22 @@ class LockOnSignalAssociator(
 
         val currentLock = lock
 
-        if (currentLock == null) {
-            return lockOnNewTarget(signals, reason = "LOCK_ON_INITIAL_TARGET")
+        // 5. 화면 측면 주변부 신호 배제 (cx < 0.28 또는 cx > 0.72는 전방 신호등이 아닌 인도변 간판/차량 신호)
+        val candidateSignals = signals.filterNot { sig ->
+            val cx = (sig.box.left + sig.box.right) / 2f
+            sig.state == ObservedSignalState.GREEN && (cx < 0.28f || cx > 0.72f)
         }
 
-        val best = signals
+        if (candidateSignals.isEmpty()) {
+            registerMiss()
+            return TargetSignalAssociation(false, null, "PERIPHERAL_SIGNAL_MISMATCH", 0.20f)
+        }
+
+        if (currentLock == null) {
+            return lockOnNewTarget(candidateSignals, reason = "LOCK_ON_INITIAL_TARGET")
+        }
+
+        val best = candidateSignals
             .map { it to trackingSimilarity(currentLock.lastBox, it.box) }
             .maxByOrNull { it.second }
 
@@ -104,7 +115,7 @@ class LockOnSignalAssociator(
             }
             // N프레임 이상 궤적 상실 -> Lock 해제 후 같은 프레임에서 즉시 재탐색.
             lock = null
-            return lockOnNewTarget(signals, reason = "LOCK_RESET_AND_REACQUIRED")
+            return lockOnNewTarget(candidateSignals, reason = "LOCK_RESET_AND_REACQUIRED")
         }
 
         val (target, similarity) = best!!

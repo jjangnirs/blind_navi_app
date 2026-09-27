@@ -16,12 +16,16 @@ class LocalVlmSignalVerifier(
     private val temporalWindowSize: Int = 5
 ) {
     private val history = ArrayDeque<SignalObservation>(temporalWindowSize)
+    private var lastObservation: SignalObservation? = null
+    private var currentTrackId: String = "track-dyn-1"
+    private var trackCounter: Int = 1
 
     data class VerificationResult(
         val verifiedState: ObservedSignalState,
         val confidenceScore: Float,
         val isVerified: Boolean,
-        val verificationReason: String
+        val verificationReason: String,
+        val ephemeralTrackId: String = ""
     )
 
     /**
@@ -33,56 +37,198 @@ class LocalVlmSignalVerifier(
         frameWidth: Int,
         frameHeight: Int
     ): VerificationResult {
-        // 버퍼가 없거나 관측값이 UNKNOWN인 경우 기본 검증 통과
-        if (frameBuffer == null || candidate.state == ObservedSignalState.UNKNOWN) {
+        // 버퍼가 없는 경우 기본 통과
+        if (frameBuffer == null) {
             recordObservation(candidate)
+            lastObservation = candidate
             return VerificationResult(
                 verifiedState = candidate.state,
                 confidenceScore = candidate.score,
-                isVerified = true,
-                verificationReason = "PASSTHROUGH_OR_NO_BUFFER"
+                isVerified = (candidate.state != ObservedSignalState.UNKNOWN),
+                verificationReason = "PASSTHROUGH_NO_BUFFER",
+                ephemeralTrackId = candidate.ephemeralTrackId.ifEmpty { currentTrackId }
             )
         }
 
-        // 1. 종횡비(Aspect Ratio) 및 크기 검증
-        val box = candidate.box
-        val boxWidth = box.width * frameWidth
-        val boxHeight = box.height * frameHeight
+        // UNKNOWN 신호 관측 시: 형상/모션 검사는 건너뛰고 시간 일관성 필터(Temporal Consistency)로 직행
+        // (보행 중 한손 파지 순간 블러 완충: 최근 5프레임 중 3개 이상 확실한 녹색이면 녹색 유지)
+        if (candidate.state != ObservedSignalState.UNKNOWN) {
+            // 1. 종횡비(Aspect Ratio) 및 크기 검증
+            val box = candidate.box
+            val boxWidth = box.width * frameWidth
+            val boxHeight = box.height * frameHeight
 
-        // 차량용 가로 신호등 (W > H * 1.3) 배제
-        if (boxWidth > boxHeight * 1.35f) {
-            val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.25f)
-            recordObservation(rejected)
-            return VerificationResult(
-                verifiedState = ObservedSignalState.UNKNOWN,
-                confidenceScore = 0.25f,
-                isVerified = false,
-                verificationReason = "REJECTED_HORIZONTAL_VEHICLE_LIGHT"
-            )
+            // 차량용 가로 신호등 (W > H * 1.35) 배제
+            if (boxWidth > boxHeight * 1.35f) {
+                val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.25f)
+                recordObservation(rejected)
+                lastObservation = rejected
+                return VerificationResult(
+                    verifiedState = ObservedSignalState.UNKNOWN,
+                    confidenceScore = 0.25f,
+                    isVerified = false,
+                    verificationReason = "REJECTED_HORIZONTAL_VEHICLE_LIGHT",
+                    ephemeralTrackId = currentTrackId
+                )
+            }
+
+            // 1-1. 도로 노면(Ground Plane) 아스팔트 위 차량 광원 기각 (보행 신호등은 지상 2.5m 이상 높이에 설치됨, ADR-032)
+            val cy = (box.top + box.bottom) / 2f
+            if (cy > 0.58f && box.top > 0.52f) {
+                val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
+                recordObservation(rejected)
+                lastObservation = rejected
+                return VerificationResult(
+                    verifiedState = ObservedSignalState.UNKNOWN,
+                    confidenceScore = 0.20f,
+                    isVerified = false,
+                    verificationReason = "REJECTED_ROADWAY_GROUND_PLANE",
+                    ephemeralTrackId = currentTrackId
+                )
+            }
+
+            // 2. 동적 움직임(Motion Vector) 및 고속 이동 차량/정면 접근 차량 기각 (ADR-032)
+            val prev = lastObservation
+            if (prev != null && prev.state != ObservedSignalState.UNKNOWN && prev.frameTimestampNanos > 0L && candidate.frameTimestampNanos > prev.frameTimestampNanos) {
+                val dtSec = (candidate.frameTimestampNanos - prev.frameTimestampNanos) / 1_000_000_000.0
+                if (dtSec in 0.01..0.50) {
+                    val cx1 = (prev.box.left + prev.box.right) / 2f
+                    val cy1 = (prev.box.top + prev.box.bottom) / 2f
+                    val cx2 = (candidate.box.left + candidate.box.right) / 2f
+                    val cy2 = (candidate.box.top + candidate.box.bottom) / 2f
+                    val dist = kotlin.math.hypot(cx2 - cx1, cy2 - cy1)
+                    val velocity = (dist / dtSec).toFloat()
+
+                    // 핸드헬드 기기의 미세 손떨림(dist <= 0.18f)은 정상 진동으로 수용.
+                    // 동일 신호등 기둥 내 상/하단 램프 전환(적색<->녹색)은 X 변위가 극히 작음(|cx2-cx1| <= 0.06f)
+                    val isSamePoleVerticalTransition = kotlin.math.abs(cx2 - cx1) <= 0.06f && kotlin.math.abs(cy2 - cy1) <= 0.16f
+                    val isHandheldShake = dist <= 0.18f
+
+                    // (1) 수평 주행 차량 기각 (속도 > 1.5 & 거리 > 0.18)
+                    if (!isSamePoleVerticalTransition && !isHandheldShake && dist > 0.18f && velocity > 1.5f) {
+                        val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
+                        recordObservation(rejected)
+                        lastObservation = rejected
+                        return VerificationResult(
+                            verifiedState = ObservedSignalState.UNKNOWN,
+                            confidenceScore = 0.20f,
+                            isVerified = false,
+                            verificationReason = "REJECTED_DYNAMIC_MOTION",
+                            ephemeralTrackId = currentTrackId
+                        )
+                    }
+
+                    // (2) 정면 접근 차량(Scale Expansion) 기각: 중심 위치 이동은 작으나 면적이 단시간에 급팽창하는 광원
+                    val curArea = box.width * box.height
+                    val prevArea = prev.box.width * prev.box.height
+                    if (prevArea > 0f && dtSec in 0.03..0.40) {
+                        val expansionRatio = curArea / prevArea
+                        if (expansionRatio > 2.4f || expansionRatio < 0.40f) {
+                            val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
+                            recordObservation(rejected)
+                            lastObservation = rejected
+                            return VerificationResult(
+                                verifiedState = ObservedSignalState.UNKNOWN,
+                                confidenceScore = 0.20f,
+                                isVerified = false,
+                                verificationReason = "REJECTED_APPROACHING_VEHICLE_SCALE_EXPANSION",
+                                ephemeralTrackId = currentTrackId
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 3. 공간 추적 및 Track 일관성 검사 (IoU + Centroid Proximity 복합 적용)
+            if (prev != null && prev.state != ObservedSignalState.UNKNOWN) {
+                val iou = computeIoU(candidate.box, prev.box)
+                val cx1 = (prev.box.left + prev.box.right) / 2f
+                val cy1 = (prev.box.top + prev.box.bottom) / 2f
+                val cx2 = (candidate.box.left + candidate.box.right) / 2f
+                val cy2 = (candidate.box.top + candidate.box.bottom) / 2f
+                val centerDist = kotlin.math.hypot(cx2 - cx1, cy2 - cy1)
+
+                // 한손 파지 시 손떨림으로 중심 위치가 0.15~0.18까지 흔들릴 수 있음.
+                // 또한 신호등이 중앙 뷰파인더 관심 영역(cx in 0.15..0.85, cy in 0.10..0.75)에 머무는 경우 동일 Track으로 간주.
+                val isSmallBox = minOf(candidate.box.width, prev.box.width) < 0.12f ||
+                        minOf(candidate.box.height, prev.box.height) < 0.15f
+                val isInCentralViewfinder = cx2 in 0.25f..0.75f && cy2 in 0.10f..0.70f
+                val isSameStateCandidate = candidate.state == prev.state && candidate.state != ObservedSignalState.UNKNOWN
+                val isContinuous = if (isSmallBox) {
+                    iou >= 0.10f || centerDist <= 0.18f || (isInCentralViewfinder && (centerDist <= 0.28f || (isSameStateCandidate && centerDist <= 0.35f)))
+                } else {
+                    iou >= 0.20f || centerDist <= 0.16f || (isInCentralViewfinder && (centerDist <= 0.25f || (isSameStateCandidate && centerDist <= 0.32f)))
+                }
+
+                if (!isContinuous) {
+                    // 실제 다른 위치로 완전히 이탈/시선 전환됨 -> 시간 큐 리셋 및 신규 Track 분리!
+                    history.clear()
+                    currentTrackId = "track-dyn-${++trackCounter}"
+                }
+            }
         }
 
-        // 2. 시간 일관성 필터링 (Temporal Consistency)
-        recordObservation(candidate)
+        // 4. 시간 일관성 필터링 (Temporal Consistency)
+        val trackedCandidate = candidate.copy(ephemeralTrackId = currentTrackId)
+        recordObservation(trackedCandidate)
+        lastObservation = trackedCandidate
         val smoothedState = evaluateTemporalStability()
 
-        // 3. Zero False-Green 보장: 녹색 신호가 최근 기록에서 불안정하면 즉시 UNKNOWN으로 안전 강등
-        val finalState = if (candidate.state == ObservedSignalState.GREEN && smoothedState != ObservedSignalState.GREEN) {
+        // 5. Zero False-Green 보장:
+        // (1) 화면 좌우 측면(cx < 0.28 또는 cx > 0.72)의 녹색 신호는 횡단보도 전방 신호등이 아닌 인도변 간판이므로 즉각 UNKNOWN 강등
+        // (2) 녹색 신호가 최근 기록에서 불안정하면 즉시 UNKNOWN으로 안전 강등
+        // (3) 한손 파지 순간 블러 완충: 최근 5프레임 중 3개 이상이 확실한 녹색이면 녹색 유지
+        val cxCandidate = (candidate.box.left + candidate.box.right) / 2f
+        val isPeripheralGreen = (candidate.state == ObservedSignalState.GREEN || smoothedState == ObservedSignalState.GREEN) &&
+                (cxCandidate < 0.28f || cxCandidate > 0.72f)
+
+        val finalState = if (isPeripheralGreen) {
             ObservedSignalState.UNKNOWN
+        } else if (candidate.state == ObservedSignalState.GREEN && smoothedState != ObservedSignalState.GREEN) {
+            ObservedSignalState.UNKNOWN
+        } else if (candidate.state == ObservedSignalState.UNKNOWN && smoothedState == ObservedSignalState.GREEN && history.count { it.state == ObservedSignalState.GREEN } >= 3) {
+            ObservedSignalState.GREEN
         } else {
             smoothedState
         }
 
         val boostedScore = if (finalState == candidate.state) {
             (candidate.score * 1.05f).coerceAtMost(0.99f)
+        } else if (finalState == ObservedSignalState.GREEN) {
+            // 시간적 평활화로 녹색이 보존된 경우: 일시적 블러/노이즈 프레임이어도 신뢰도를 0.88 이상(0.92f)으로 유지하여
+            // LOW_CALIBRATED_SCORE로 인한 연속 녹색 누적 초기화 루프 방지
+            val greenCount = history.count { it.state == ObservedSignalState.GREEN }
+            val greenRatio = if (history.isNotEmpty()) greenCount.toFloat() / history.size else 0f
+            if (greenRatio >= 0.60f) {
+                (0.92f + greenRatio * 0.05f).coerceIn(0.92f, 0.97f)
+            } else {
+                (candidate.score * 0.85f).coerceAtLeast(0.70f)
+            }
+        } else if (finalState == ObservedSignalState.RED) {
+            // 시간적 평활화로 적색이 보존된 경우: 순간적인 블러나 하향 각도에서도 신뢰도를 0.94 이상으로 유지하여
+            // LOW_CALIBRATED_SCORE 및 POOR_DEVICE_TILT 강등 방지 (ADR-031)
+            val redCount = history.count { it.state == ObservedSignalState.RED }
+            val redRatio = if (history.isNotEmpty()) redCount.toFloat() / history.size else 0f
+            if (redRatio >= 0.60f) {
+                (0.94f + redRatio * 0.05f).coerceIn(0.94f, 0.99f)
+            } else {
+                (candidate.score * 0.90f).coerceAtLeast(0.75f)
+            }
         } else {
             (candidate.score * 0.70f).coerceAtLeast(0.30f)
         }
+
+        PerceptionFlightRecorder.record(
+            "VERIFIER",
+            "Track=$currentTrackId Cand=${candidate.state}(${"%.2f".format(candidate.score)}) Smooth=$smoothedState -> Final=$finalState Reason=TEMPORAL_GEOMETRIC_VERIFIED HistSize=${history.size}"
+        )
 
         return VerificationResult(
             verifiedState = finalState,
             confidenceScore = boostedScore,
             isVerified = (finalState != ObservedSignalState.UNKNOWN),
-            verificationReason = "TEMPORAL_GEOMETRIC_VERIFIED"
+            verificationReason = "TEMPORAL_GEOMETRIC_VERIFIED",
+            ephemeralTrackId = currentTrackId
         )
     }
 
@@ -91,6 +237,23 @@ class LocalVlmSignalVerifier(
             history.removeFirst()
         }
         history.addLast(obs)
+    }
+
+    companion object {
+        fun computeIoU(b1: NormalizedBox, b2: NormalizedBox): Float {
+            val interLeft = maxOf(b1.left, b2.left)
+            val interTop = maxOf(b1.top, b2.top)
+            val interRight = minOf(b1.right, b2.right)
+            val interBottom = minOf(b1.bottom, b2.bottom)
+
+            if (interRight <= interLeft || interBottom <= interTop) return 0.0f
+
+            val interArea = (interRight - interLeft) * (interBottom - interTop)
+            val area1 = b1.width * b1.height
+            val area2 = b2.width * b2.height
+            val unionArea = area1 + area2 - interArea
+            return if (unionArea > 0f) interArea / unionArea else 0.0f
+        }
     }
 
     private fun evaluateTemporalStability(): ObservedSignalState {
@@ -124,5 +287,7 @@ class LocalVlmSignalVerifier(
      */
     fun reset() {
         history.clear()
+        lastObservation = null
+        currentTrackId = "track-dyn-1"
     }
 }

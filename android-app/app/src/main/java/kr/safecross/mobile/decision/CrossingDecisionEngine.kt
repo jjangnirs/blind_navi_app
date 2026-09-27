@@ -3,6 +3,7 @@ package kr.safecross.mobile.decision
 import kr.safecross.mobile.decision.model.CrossingDecisionInput
 import kr.safecross.mobile.decision.model.CrossingDecisionOutput
 import kr.safecross.mobile.decision.model.CrossingState
+import kr.safecross.mobile.decision.model.OfficialSignalObservation
 import kr.safecross.mobile.decision.model.OfficialSignalState
 import kr.safecross.mobile.decision.model.TransitionLogRecord
 import kr.safecross.mobile.decision.model.UserTriggerAction
@@ -26,15 +27,15 @@ typealias DecisionResult = CrossingDecisionOutput
  */
 data class CrossingDecisionConfig(
     val windowNanos: Long = 1_500_000_000L,       // 1.5초 슬라이딩 윈도우
-    val minUsableFrames: Int = 8,                 // 윈도우 내 최소 유효 프레임 수
-    val minGreenAgreement: Float = 0.90f,         // 90% 이상 녹색 합의
-    val minCalibratedScore: Float = 0.90f,        // 최소 캘리브레이션 신뢰도 점수
-    val maxObservationAgeNanos: Long = 300_000_000L, // 300ms (카메라 관측 최대 나이)
+    val minUsableFrames: Int = 5,                 // 윈도우 내 최소 유효 프레임 수 (한손 파지 손떨림 적응: 5프레임)
+    val minGreenAgreement: Float = 0.75f,         // 75% 이상 녹색 합의 (단일 블러/노이즈 프레임 수용)
+    val minCalibratedScore: Float = 0.88f,        // 최소 캘리브레이션 신뢰도 점수
+    val maxObservationAgeNanos: Long = 350_000_000L, // 350ms (카메라 관측 최대 나이)
     val maxLocationAgeNanos: Long = 2_000_000_000L,  // 2.0초
     val maxDevicePoseAgeNanos: Long = 500_000_000L,  // 500ms
-    val maxLocationAccuracyM: Float = 15.0f,         // 위치 정확도 상한
+    val maxLocationAccuracyM: Float = 25.0f,         // 위치 정확도 상한
     val maxHeadingDiffDegrees: Float = 35.0f,        // 지도-기기/영상 방향 허용 오차
-    val version: String = "engine-1.2.0"
+    val version: String = "engine-1.3.0"
 )
 
 /**
@@ -62,7 +63,9 @@ class CrossingDecisionEngine(
     )
 
     private var currentState: CrossingState = CrossingState.IDLE
-    private var consecutiveGreenCount: Int = 0
+    var consecutiveGreenCount: Int = 0
+        private set
+    private var consecutiveRedInGreenPhase: Int = 0
     private var lastObservedTrackId: String? = null
     private var lastMonotonicTimeNanos: Long = 0L
 
@@ -84,6 +87,7 @@ class CrossingDecisionEngine(
     fun reset() {
         currentState = CrossingState.IDLE
         consecutiveGreenCount = 0
+        consecutiveRedInGreenPhase = 0
         lastObservedTrackId = null
         lastMonotonicTimeNanos = 0L
         frameWindow.clear()
@@ -195,7 +199,10 @@ class CrossingDecisionEngine(
         }
 
         // 6. 기기 기울기 및 센서 자세 게이트 (SR-F-045, ST-006, TRD 4.6)
-        if (!input.isTiltSuitable) {
+        val candidateSignal = input.association?.targetSignal
+        val isDefiniteRed = candidateSignal != null && candidateSignal.state == ObservedSignalState.RED && candidateSignal.score >= 0.75f
+
+        if (!input.isTiltSuitable && !isDefiniteRed) {
             consecutiveGreenCount = 0
             return transitionTo(
                 targetState = CrossingState.UNKNOWN,
@@ -222,17 +229,20 @@ class CrossingDecisionEngine(
                     )
                 }
             }
-            // pose tilt check
-            if (abs(input.devicePose.rollDegrees) > 30f || input.devicePose.pitchDegrees < -30f || input.devicePose.pitchDegrees > 50f) {
-                consecutiveGreenCount = 0
-                return transitionTo(
-                    targetState = CrossingState.UNKNOWN,
-                    prevState = prevState,
-                    nowNanos = nowNanos,
-                    reasonCode = "POOR_DEVICE_TILT",
-                    guidanceText = "스마트폰을 올바른 각도로 들어주세요.",
-                    hapticType = HapticFeedbackType.UNKNOWN_CAUTION
-                )
+            // pose tilt check (자연스러운 횡단보도 하향 대기 각도 -65도 ~ +55도 허용, ADR-031)
+            val minPitch = if (isDefiniteRed) -65f else -45f
+            if (abs(input.devicePose.rollDegrees) > 35f || input.devicePose.pitchDegrees < minPitch || input.devicePose.pitchDegrees > 55f) {
+                if (!isDefiniteRed) {
+                    consecutiveGreenCount = 0
+                    return transitionTo(
+                        targetState = CrossingState.UNKNOWN,
+                        prevState = prevState,
+                        nowNanos = nowNanos,
+                        reasonCode = "POOR_DEVICE_TILT",
+                        guidanceText = "스마트폰을 올바른 각도로 들어주세요.",
+                        hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+                    )
+                }
             }
         }
 
@@ -398,6 +408,23 @@ class CrossingDecisionEngine(
 
         // 13. 적색 신호 우선권 (Red Precedence, SR-F-068, ST-001, ST-002)
         if (targetSignal.state == ObservedSignalState.RED || official?.state == OfficialSignalState.RED) {
+            // 녹색 보행 신호 진행 중(GREEN_ESTIMATE) 단발성 노이즈(0.1초 미만 차량등 반사)로 인한 핑퐁 발화 방지 (ADR-030)
+            if (prevState == CrossingState.GREEN_ESTIMATE && official?.state != OfficialSignalState.RED) {
+                consecutiveRedInGreenPhase++
+                if (consecutiveRedInGreenPhase < 2) {
+                    // 1프레임 미세 적색 노이즈: 녹색 누적 카운트를 감쇄하되 즉각적인 적색 반전 핑퐁을 1프레임 완충
+                    consecutiveGreenCount = (consecutiveGreenCount - 2).coerceAtLeast(0)
+                    return transitionTo(
+                        targetState = CrossingState.GREEN_ESTIMATE,
+                        prevState = prevState,
+                        nowNanos = nowNanos,
+                        reasonCode = "GREEN_ESTIMATE_CONFIRMED",
+                        guidanceText = null,
+                        hapticType = null
+                    )
+                }
+            }
+            consecutiveRedInGreenPhase = 0
             consecutiveGreenCount = 0
             lastObservedTrackId = targetSignal.ephemeralTrackId
             frameWindow.clear()
@@ -409,11 +436,25 @@ class CrossingDecisionEngine(
                 guidanceText = if (prevState != CrossingState.RED_ESTIMATE) "적색 신호입니다. 대기하세요." else null,
                 hapticType = if (prevState != CrossingState.RED_ESTIMATE) HapticFeedbackType.RED_STOP else null
             )
+        } else {
+            consecutiveRedInGreenPhase = 0
         }
 
         // 14. 카메라 신호 상태가 UNKNOWN인 경우
         if (targetSignal.state == ObservedSignalState.UNKNOWN) {
-            consecutiveGreenCount = 0
+            cleanWindow(nowNanos)
+            frameWindow.addLast(
+                WindowFrame(
+                    timestampNanos = targetSignal.frameTimestampNanos,
+                    trackId = targetSignal.ephemeralTrackId,
+                    state = targetSignal.state,
+                    score = targetSignal.score
+                )
+            )
+            // 한손 파지 시 순간적인 프레임 블러에 즉시 0 리셋하지 않고 점진적 감쇄
+            if (consecutiveGreenCount > 0) {
+                consecutiveGreenCount = (consecutiveGreenCount - 1).coerceAtLeast(0)
+            }
             return transitionTo(
                 targetState = CrossingState.UNKNOWN,
                 prevState = prevState,
@@ -427,7 +468,12 @@ class CrossingDecisionEngine(
         // 15. 녹색 신호 검증 게이트 (SR-F-044, SR-F-068, ST-014, TRD 4.7)
         if (targetSignal.state == ObservedSignalState.GREEN) {
             // 다른 track ID의 RED->GREEN 전이는 인정하지 않음 (SR-F-068, ST-014)
-            if (lastObservedTrackId != null && lastObservedTrackId != targetSignal.ephemeralTrackId) {
+            // 단, 핸드헬드 기기의 미세 손떨림으로 Track ID 번호만 증가한 연속 추적(track-dyn-*)인 경우 동일 타깃으로 승계
+            val isJitteredSameDynamicTrack = lastObservedTrackId != null &&
+                    targetSignal.ephemeralTrackId.startsWith("track-dyn-") &&
+                    lastObservedTrackId!!.startsWith("track-dyn-")
+
+            if (lastObservedTrackId != null && lastObservedTrackId != targetSignal.ephemeralTrackId && !isJitteredSameDynamicTrack) {
                 consecutiveGreenCount = 0
                 frameWindow.clear()
                 lastObservedTrackId = targetSignal.ephemeralTrackId
@@ -442,15 +488,18 @@ class CrossingDecisionEngine(
             }
             lastObservedTrackId = targetSignal.ephemeralTrackId
 
-            // 신뢰도 점수 캘리브레이션 임계 검사 (TRD 4.7: minimum calibrated green score = 0.90)
+            // 신뢰도 점수 캘리브레이션 임계 검사 (TRD 4.7: minimum calibrated green score = 0.88)
             if (targetSignal.score < config.minCalibratedScore) {
-                consecutiveGreenCount = 0
+                // 한손 파지 시 순간적인 프레임 블러/신뢰도 저하에 즉시 0 리셋하지 않고 점진적 감쇄 (Graceful Decay)
+                if (consecutiveGreenCount > 0) {
+                    consecutiveGreenCount = (consecutiveGreenCount - 1).coerceAtLeast(0)
+                }
                 return transitionTo(
                     targetState = CrossingState.UNKNOWN,
                     prevState = prevState,
                     nowNanos = nowNanos,
                     reasonCode = "LOW_CALIBRATED_SCORE",
-                    guidanceText = "신호 감지 신뢰도가 충분하지 않습니다.",
+                    guidanceText = if (prevState == CrossingState.UNKNOWN || prevState == CrossingState.GREEN_CANDIDATE) null else "신호 감지 신뢰도가 충분하지 않습니다.",
                     hapticType = HapticFeedbackType.UNKNOWN_CAUTION
                 )
             }
@@ -468,7 +517,10 @@ class CrossingDecisionEngine(
             consecutiveGreenCount++
 
             // 윈도우 내 프레임 수 및 녹색 합의율 검사
-            val usableFrames = frameWindow.filter { it.trackId == targetSignal.ephemeralTrackId }
+            val usableFrames = frameWindow.filter { 
+                it.trackId == targetSignal.ephemeralTrackId || 
+                (isJitteredSameDynamicTrack && it.trackId.startsWith("track-dyn-"))
+            }
             val greenAgreement = if (usableFrames.isNotEmpty()) {
                 usableFrames.count { it.state == ObservedSignalState.GREEN }.toFloat() / usableFrames.size
             } else 0f
@@ -518,7 +570,8 @@ class CrossingDecisionEngine(
         devicePose: DevicePose,
         crosswalk: CrosswalkObservation,
         association: TargetSignalAssociation,
-        isTiltSuitable: Boolean
+        isTiltSuitable: Boolean,
+        officialSignal: OfficialSignalObservation? = null
     ): DecisionResult {
         val targetTs = association.targetSignal?.frameTimestampNanos
         val candidateNow = if (targetTs != null && targetTs > lastMonotonicTimeNanos) targetTs else System.nanoTime()
@@ -536,7 +589,8 @@ class CrossingDecisionEngine(
             devicePose = devicePose,
             crosswalk = crosswalk,
             association = fixedAssoc,
-            isTiltSuitable = isTiltSuitable
+            isTiltSuitable = isTiltSuitable,
+            officialSignal = officialSignal
         )
         return evaluate(input)
     }

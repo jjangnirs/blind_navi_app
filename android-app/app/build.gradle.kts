@@ -53,6 +53,9 @@ android {
         compose = true
         buildConfig = true
     }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
     androidResources {
         noCompress += "tflite"
     }
@@ -78,6 +81,9 @@ dependencies {
 
     // LiteRT / TFLite On-Device ML (프롬프트 11)
     implementation(libs.tflite)
+
+    // OpenCV Android (Computer Vision Pipeline)
+    implementation("com.quickbirdstudios:opencv:4.5.3.0")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

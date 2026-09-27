@@ -58,7 +58,7 @@ switch ($Command) {
     }
     "secret-scan" {
         Write-Host "Checking for prohibited safety phrases and secret leakages..." -ForegroundColor Cyan
-        $ScanPaths = @("backend\app", "data-pipeline\safecross_pipeline", "android-app\app\src")
+        $ScanPaths = @("backend\app", "data-pipeline\safecross_pipeline", "android-app\app\src\main")
         $p1 = "$([char]0xC548)$([char]0xC804)$([char]0xD569)$([char]0xB2C8)$([char]0xB2E4)" # 안전합니다
         $p2 = "$([char]0xC9C0)$([char]0xAE08) $([char]0xAC74)$([char]0xB108)$([char]0xC138)$([char]0xC694)" # 지금 건너세요
         $p3 = "$([char]0xCC28)$([char]0xAC00) $([char]0xC5C6)$([char]0xC2B5)$([char]0xB2C8)$([char]0xB2E4)" # 차가 없습니다

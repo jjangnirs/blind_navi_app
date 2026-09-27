@@ -139,4 +139,45 @@ class DestinationViewModelTest {
 
         job.cancel()
     }
+
+    @Test
+    fun `toggleFavorite updates favorite state and saves to repository`() = runTest(testDispatcher) {
+        val effects = mutableListOf<DestinationEffect>()
+        val job = launch {
+            viewModel.effects.collect { effects.add(it) }
+        }
+
+        val target = defaultDestinations[0]
+        viewModel.toggleFavorite(target)
+        advanceUntilIdle()
+
+        val updated = viewModel.uiState.value.destinations.firstOrNull { it.id == target.id }
+        assertNotNull(updated)
+        assertTrue(updated!!.isFavorite)
+        assertTrue(effects.any { it is DestinationEffect.SpeakAnnouncement && (it as DestinationEffect.SpeakAnnouncement).text.contains("즐겨찾기에 등록") })
+
+        // Toggle again to remove
+        viewModel.toggleFavorite(updated)
+        advanceUntilIdle()
+
+        val removedFav = viewModel.uiState.value.destinations.firstOrNull { it.id == target.id }
+        assertNotNull(removedFav)
+        org.junit.Assert.assertFalse(removedFav!!.isFavorite)
+
+        job.cancel()
+    }
+
+    @Test
+    fun `selectDestination adds item to recent destinations`() = runTest(testDispatcher) {
+        val target = defaultDestinations[1]
+        viewModel.selectDestination(target)
+        advanceUntilIdle()
+
+        // When search query is reset, target should be in recent items
+        viewModel.onSearchQueryChanged("")
+        advanceUntilIdle()
+
+        val hasTargetInList = viewModel.uiState.value.destinations.any { it.id == target.id }
+        assertTrue(hasTargetInList)
+    }
 }

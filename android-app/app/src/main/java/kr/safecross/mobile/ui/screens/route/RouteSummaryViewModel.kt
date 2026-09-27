@@ -23,13 +23,18 @@ class RouteSummaryViewModel(
     private val _effects = MutableSharedFlow<RouteSummaryEffect>()
     val effects: SharedFlow<RouteSummaryEffect> = _effects.asSharedFlow()
 
+    private var hasSpokenDisclaimer = false
+    private var lastRequestedOriginGps: LocationPoint? = null
+
     fun loadRoute(
         origin: LocationPoint,
         destination: LocationPoint,
         originName: String = "출발지",
         destinationName: String = "목적지",
-        excludeStairs: Boolean = true
+        excludeStairs: Boolean = true,
+        isSilentUpdate: Boolean = false
     ) {
+        lastRequestedOriginGps = origin
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         viewModelScope.launch {
             val result = routeRepository.getPedestrianRoute(
@@ -50,8 +55,11 @@ class RouteSummaryViewModel(
                             disclaimerAcknowledged = false
                         )
                     }
-                    // 화면 진입/경로 로드 성공 시 접근성 고지문 음성 낭독 요청
-                    _effects.emit(RouteSummaryEffect.SpeakDisclaimer(route.disclaimer))
+                    // 최초 1회 및 비-무음(사용자 진입) 시에만 접근성 고지문 음성 낭독 요청
+                    if (!hasSpokenDisclaimer && !isSilentUpdate) {
+                        hasSpokenDisclaimer = true
+                        _effects.emit(RouteSummaryEffect.SpeakDisclaimer(route.disclaimer))
+                    }
                 },
                 onFailure = { error ->
                     _uiState.update {
@@ -66,19 +74,24 @@ class RouteSummaryViewModel(
     }
 
     /**
-     * GPS 위치가 실시간 갱신되어 기존 출발점과 15m 이상 차이나는 경우,
-     * 새 위치를 출발점으로 경로를 자동 재탐색하여 변환합니다.
+     * GPS 위치가 실시간 갱신되어 기존 요청 출발점과 30m 이상 차이나는 경우,
+     * 새 위치를 출발점으로 경로를 자동 재탐색합니다 (무음 모드로 고지문 중복 낭독 방지).
      */
     fun updateOriginIfGpsMoved(
         newGps: LocationPoint,
         newAddress: String? = null
     ) {
         val currentRoute = _uiState.value.route ?: return
-        val currentOrigin = currentRoute.fullGeometry.firstOrNull()
-            ?: currentRoute.maneuvers.firstOrNull()?.location ?: return
+        if (_uiState.value.isLoading) return
 
-        val distance = calculateDistanceMeters(currentOrigin, newGps)
-        if (distance > 15.0 && !_uiState.value.isLoading) {
+        // TMAP의 스냅된 첫 정점이 아닌, 실제 이전 요청에 사용된 GPS 좌표와 비교하여 영구 재요청 루프 방지
+        val compareOrigin = lastRequestedOriginGps
+            ?: currentRoute.fullGeometry.firstOrNull()
+            ?: currentRoute.maneuvers.firstOrNull()?.location
+            ?: return
+
+        val distance = calculateDistanceMeters(compareOrigin, newGps)
+        if (distance > 30.0) {
             val destPoint = currentRoute.fullGeometry.lastOrNull()
                 ?: currentRoute.maneuvers.lastOrNull()?.location ?: return
             val destName = _uiState.value.destinationName
@@ -89,7 +102,8 @@ class RouteSummaryViewModel(
                 destination = destPoint,
                 originName = originName,
                 destinationName = destName,
-                excludeStairs = currentRoute.excludeStairs
+                excludeStairs = currentRoute.excludeStairs,
+                isSilentUpdate = true
             )
         }
     }
@@ -118,6 +132,15 @@ class RouteSummaryViewModel(
                 _effects.emit(RouteSummaryEffect.SpeakDisclaimer(disclaimer))
             }
         }
+    }
+
+    /**
+     * 경로 상태 및 고지문 래치를 초기화하여 잔여 데이터나 중복 발화를 방지
+     */
+    fun clearRoute() {
+        hasSpokenDisclaimer = false
+        lastRequestedOriginGps = null
+        _uiState.update { RouteSummaryUiState() }
     }
 
     /**

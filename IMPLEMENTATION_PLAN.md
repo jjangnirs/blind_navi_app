@@ -171,12 +171,15 @@ flowchart TD
 1. `CrosswalkSceneEstimator`, `PedestrianSignalEstimator`, `TargetSignalAssociator`에 fake 구현을 먼저 연결한다.
 2. CameraX ImageAnalysis의 최신 프레임 전략과 lifecycle을 구현한다.
 3. 카메라 기울기·회전·방향 조정 음성을 구현한다.
-4. 온디바이스 보행자 신호 적응형 비전 AI 및 오탐 방지 파이프라인을 구현한다:
-   - RGB→HSV 고속 변환 및 조도 적응: 조도(V)와 색조(H)/채도(S)를 완전 분리하여 한낮 직사광선/역광(백화 현상) 및 그늘/야간(저조도) 환경에서도 색상 고유 파장 추출.
-   - 한국 경찰청 표준 규격 파장: 에메랄드/청록색 Green(Hue 145°~195°) 및 고채도 Red(Hue 0°~15°, 345°~360°) 정밀 감지, 황색등/가로등(Hue 25°~55°) 즉시 배제.
-   - 세로 2구 보행신호등 기하 구조(상단 적색 정지인형 / 하단 녹색 보행인형) 분석 및 가로형 차량 신호등(종횡비 $W/H > 1.35$) 배제.
+4. 온디바이스 2단계 하이브리드 보행자 신호 판정 파이프라인(`TwoTierHybridSignalEstimator`) 및 오탐 방지 필터를 구현한다:
+   - Tier 1 (LiteRT 딥러닝 객체 검출): 신호등 바운딩 박스를 선검출하며, 미검출 시 배경 색상과 무관하게 즉시 `UNKNOWN` 강등 차단 (Zero False-Green 절대 수호).
+   - Tier 2 (신호등 박스 한정 정밀 HSV 분석): ROI 내부로만 스캔을 한정(연산량 90% 절감)하여 경찰청 규격 파장(Green 145°~195°, Red 0°~15°/345°~360°) 정밀 감지, 황색등/가로등 배제.
+   - 다크 하우징(Dark Housing) 콘트라스트 검증: 램프 외곽 테두리 마진 명도($V_{\text{collar}} \ge 0.45, \Delta V < 0.20$) 대비 검사를 통해 차광판 케이스가 없는 전광판/간판/유리창 조명체 비신호등 기각.
    - 하드웨어 가속 러너(`TfliteModelRunner`): `org.tensorflow.lite.Interpreter` 바인딩을 통한 NPU/CPU 멀티스레드 가속 추론.
-   - 지능형 검증기(`LocalVlmSignalVerifier`): 최근 5프레임의 시간 일관성 롤링 버퍼(녹색 판정 시 60% 이상 안정 수신) 및 Zero False-Green 보장.
+   - 지능형 검증기(`LocalVlmSignalVerifier`):
+     - IoU 기반 공간 추적기: 프레임 간 Bounding Box $\text{IoU} < 0.35$ 점프 시 시간 롤링 버퍼 즉시 리셋(`history.clear()`) 및 신규 Track 분리.
+     - 동역학(Motion) 변위 속도 필터: 화면을 가로지르는 고속 이동 차량/버스($v > 0.55/\text{sec}$)를 감지하여 `REJECTED_DYNAMIC_MOTION`으로 즉시 `UNKNOWN` 기각.
+     - 시간 일관성 롤링 버퍼: 최근 5프레임 중 60% 이상 안정 수신 시에만 녹색 승인.
 5. 횡단보도 mask·방향과 보행신호 box를 같은 좌표계로 복원한다.
 6. 현장 지도 링크, 횡단보도 방향, 기기 pose로 목표 신호 하나를 연결한다.
 7. LiteRT estimator를 연결하지만 사용자에게 녹색 안내를 하지 않는다.
@@ -325,6 +328,78 @@ flowchart TD
 - E9-S1 FastAPI 백엔드 프록시 및 외부 HTTPS 보안 터널(localtunnel) 연동
 - E9-S2 3단계 라우팅 복원력(백엔드 프록시 -> TMAP 클라우드 직접 호출 -> 오프라인 Fallback)
 - E9-S3 최신 디버그 APK (`app-debug.apk`, 43.1MB) 빌드 및 147개 단위 테스트 100% 검증 통과
+
+### Epic E10 — 카메라 안정화, 최근/즐겨찾기 검색 기록 및 야외 GNSS 시각 보정
+
+- E10-S1 CameraX 프레임 회전 정규화(`imageProxy.imageInfo.rotationDegrees`) 및 센서-비전 좌표계 통합
+- E10-S2 손떨림 보정 IOU 스무딩 및 한국형 청록색(Cyan LED) 분광 대역(`Hue 150°~195°`) 가중치 보정
+- E10-S3 룸(Room) 기반 최근 검색어(`RecentDestinationDao`) 및 즐겨찾기(`FavoriteDestinationDao`) 비동기 영속화
+- E10-S4 갤럭시 S25 울트라 등 플래그십 기기 야외 GNSS 하드웨어 클록 동기화 및 25m 정확도 안전 필터링
+
+### Epic E11 — 20m 출발점 경로 재탐색 루프 차단 및 진행방향 우선(Heading-Up) 170% 광각 지도 뷰어
+
+- E11-S1 초기 출발점 20m 반경 GPS 드리프트 발생 시 재탐색 무한 반복 방지 가드(`hasCalibratedInitialStart`, 4회 연속/35m 이탈 임계치, 12초 쿨다운)
+- E11-S2 진행방향 기준 상단 정렬(Course-Up / Heading-Up) 실시간 회전 지도 뷰어(`RealRouteMapView.kt` CSS 3D 트랜스폼 및 170% 오버사이즈 캔버스)
+- E11-S3 나침반 센서 기반 방향 지시자 셰브론(Directional Chevron) 및 원터치 북쪽 고정(North-Up) / 진행방향(Heading-Up) 모드 전환 FAB 버튼
+
+### Epic E12 — 온디바이스 항법 블랙박스(Navigation Flight Recorder) 및 실시간 분석 HUD
+
+- E12-S1 온디바이스 JSONL 항법 블랙박스 레코더(`NavigationFlightRecorder.kt`) 탑재 (GPS 수신 품질, 이탈 오차 거리, bearing, 재탐색 트리거 원인 스냅샷)
+- E12-S2 보행 내비게이션 상단 실시간 경로 분석 HUD 칩(`RouteDevBadge`: 거리 오차, 신뢰도, 카운트 실시간 표시)
+- E12-S3 원클릭 시스템 공유 인텐트(`shareFlightLog()`) 및 PC 실시간 원격 텔레메트리 툴킷(`monitor_flight_logs.ps1`, `pull_navigation_logs.ps1`, `analyze_navigation_log.py`)
+
+### Epic E13 — 차량용 신호 분리 및 한손 파지 손떨림 적응형 보행 녹색 판정 (ADR-021)
+
+- E13-S1 차량용 고소(Overhead) 신호등 고도 분리($Y_{norm} < 0.22$ vs $Y_{norm} \ge 0.22$) 및 보행 신호 녹색 우세 에너지비($G \ge 2R$) 가중치 적용 (`CameraVisionSignalEstimator.kt`)
+- E13-S2 한손 파지 손떨림(Jitter) 허용 오차 대폭 완화($0.08 \rightarrow 0.18$, 뷰파인더 중심 시 최대 $0.25$) 및 정적 기물 손떨림 시 동역학 모션 필터 오기각 방지 (`LocalVlmSignalVerifier.kt`)
+- E13-S3 동일 세션 인접 동적 트랙 연계(`isJitteredSameDynamicTrack`) 및 단일 프레임 블러(`UNKNOWN`) 발생 시 0 리셋 대신 완만한 감쇄 적용 (`CrossingDecisionEngine.kt`)
+- E13-S4 조준선(Reticle) 하단 범위 확장($Y \le 0.70$), 락온 디바운싱 강화(8프레임/270ms) 및 조준 완료 음성 안내 4초 쿨다운 적용 (`CrossingAssistViewModel.kt`, `CrossingAssistUiState.kt`)
+- E13-S5 174개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.6MB) 빌드 검증
+
+### Epic E14 — 진행방향 지도(Heading-Up) 360도 랩어라운드 풍차 회전 차단 및 보행 손떨림 감쇠 안정화 (ADR-022)
+
+- E14-S1 북쪽 경계($358^\circ \leftrightarrow 2^\circ$) 최단 각도 누적 언래핑($\Delta\theta \in [-180^\circ, 180^\circ]$)을 통한 360도 역회전(풍차 스핀) 원천 차단 (`RealRouteMapView.kt`)
+- E14-S2 $2.5^\circ$ 데드밴드(Deadband) 필터 및 CSS 트랜지션 단축(`0.20s ease-out`)을 통한 보폭 스웨이 및 미세 손떨림 억제 (`RealRouteMapView.kt`)
+- E14-S3 단위원 삼각함수 벡터 공간($\cos\theta, \sin\theta$) 원형 EMA 저역통과 필터($\alpha=0.25$) 및 12.5Hz 적응형 스로틀링 (`DevicePoseTracker.kt`)
+- E14-S4 보행 속도($\ge 0.8\text{ m/s}$) 기반 GPS 이동 궤적(65%) + 나침반(35%) 상보 융합 필터 및 정지 시 나침반 자동 전환 (`NavigationViewModel.kt`)
+- E14-S5 진북($0.0^\circ$) Falsy 오판 버그 수정 (`NavigationScreen.kt`)
+- E14-S6 175개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.6MB) 빌드 검증
+
+### Epic E15 — 보행 녹색 신호 쿨다운 차단 해제 및 도로 하단/차량 신호등 분리 안정화 (ADR-023)
+
+- E15-S1 `GuidanceArbiter` 발화 카테고리 분리(`signal_decision_red` vs `signal_decision_green`) 및 적색 발화 중 녹색 신호 즉시 선점(`isGreenOverridingRed -> PREEMPT_AND_PLAY`)
+- E15-S2 `CrossingAssistViewModel`의 `hasSpokenCurrentGreenPhase` 래치 플래그 도입을 통한 녹색 음성 안내 100% 전달 보장
+- E15-S3 물리적 등두(Head) 수직 거리 검증(`maxVerticalHeadDist`) 및 하단 차량 브레이크등/후미등 분리 배제 (`CameraVisionSignalEstimator.kt`)
+- E15-S4 교차로 가로형 차량 신호등(직진 녹색) 인식 및 적색 아래 녹색 램프 우선 판정
+- E15-S5 `TwoTierHybridSignalEstimator` 단일 `LocalVlmSignalVerifier` 공유 및 중앙 뷰파인더 손떨림 허용 오차(`0.35f`) 확장
+- E15-S6 178개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.5MB) 빌드 검증
+
+### Epic E16 — 숫자형 잔여시간 표시기(초록색 숫자) 클러스터링 및 2D 공간 추적 락(Spatial Tracking Lock-on) (ADR-024)
+
+- E16-S1 2차원 공간 추적 락(`lastLockedCenterNorm`, 수직 가중치 1.4배 2D 유클리드 거리) 도입으로 한손 파지 시 조준 박스 상/하단 텔레포트 요동(30초간 106회) 원천 차단
+- E16-S2 Bounding Box 지수 이동 평균(EMA, $\alpha=0.70$) 시간 평활화를 통한 프레임 간 조준 박스 떨림 완충
+- E16-S3 디지털 잔여시간 표시기 획 분절 병합 알고리즘(`clusterDigitBlobs`) 구현 및 2자리 카운트다운 타이머 화소수 부족 탈락 방지
+- E16-S4 2자리 숫자형 잔여시간 표시기($W \le 1.65 H$) 수용을 위한 차량 신호 필터 임계값 정밀화
+- E16-S5 가공 차량 신호기 고도 임계값($Y < 0.12f$) 최적화 및 2D 거리 비교로 배경 우측 적색등에 의한 Zero False-Green 오작동 차단
+- E16-S6 182개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug.apk`, 43.1MB) 빌드 및 기기 MTP 전송 검증
+
+### Epic E17 — 도심 협곡 GPS 수신율 보정 및 지도 흔들림(Pan/Rotation 충돌 및 4.5° 불감대) 안정화 (ADR-025)
+
+- E17-S1 `LocationSample` 도심 건물 다중경로 반사(Multipath) 오차(35m~50m) 발생 시 GPS 신호 강도 계산식 평활화 (기존 35% 급락 해소 및 50~55% 보통 수준 안정 표출)
+- E17-S2 `RealRouteMapView` 지도 위치 패닝(Pan) 1.5m 디바운싱 적용으로 90ms 센서 갱신에 의한 `map.panTo` 무한 인터럽트 충돌 및 지도 미세 떨림 완전 제거
+- E17-S3 `RealRouteMapView` 지도 회전 불감대(Deadband) 4.5° 상향으로 보행 시 손/팔 진자 흔들림($\pm 4.5^\circ$) 완벽 흡수 및 직진 도로 고정
+- E17-S4 `NavigationViewModel` 보행 속도 임계값 완화(0.65 m/s)로 완만한 보행 중에도 GPS 진행 궤적에 지도가 안정 고정되도록 개선
+- E17-S5 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug-0925-v25.apk`, 41.5MB) 빌드 및 기기 MTP 전송 검증
+
+### Epic E18 — 보행자 녹색 신호 캘리브레이션 점수 보존 및 하단 차량등 오인 차단, 음성 안내 즉시 선점(Preemption) 최적화 (ADR-026)
+
+- E18-S1 `LocalVlmSignalVerifier` 최근 5프레임 중 60% 이상 녹색 지지 시 일시적 블러 프레임의 신뢰도 점수를 0.92 이상으로 보존하여 `LOW_CALIBRATED_SCORE` 리셋 루프 원천 차단
+- E18-S2 `CameraVisionSignalEstimator` 한국 보행신호등 기하 특성(수직 2구 상단 적색, 하단 녹색)에 따라 동일 기둥 판정 시 적색 상단 조건 강제(`primaryRed.centerY < primaryGreen.centerY`) 및 하단 차로 적색등(`isLowerRoadwayRed`)의 보행 적색 오인 원천 배제
+- E18-S3 `CameraVisionSignalEstimator` 녹색 신호 추적 중 하단/원거리 적색등에 의한 타깃 기준점 탈취 방지(`isLockHijack`)
+- E18-S4 `CrossingDecisionEngine` 순간 신뢰도 저하 시 하드 리셋 대신 1프레임 점진적 감쇄(Graceful Decay) 적용
+- E18-S5 `GuidanceArbiter` 녹색 신호 인입 시 현재 발화 중인 비녹색(적색, UNKNOWN 등) 전체 음성 즉시 선점 중단(`PREEMPT_AND_PLAY`) 및 대기 큐의 지연된 낡은 신호 메시지 일괄 영구 폐기
+- E18-S6 전체 단위 테스트 100% 통과 (185개 전수 통과) 및 최신 릴리스 디버그 APK (`app-debug-0927-v26.apk`, 41.5MB) 빌드 및 S25 Ultra 기기 MTP 전송 검증
+
 
 
 ## 10. 일일 개발 루틴

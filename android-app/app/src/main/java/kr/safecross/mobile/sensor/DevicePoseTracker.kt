@@ -54,6 +54,11 @@ class ProductionDevicePoseTracker(
     private var isTracking = false
     private val rotationMatrix = FloatArray(9)
     private val orientationValues = FloatArray(3)
+    private var smoothedHeadingCos = 0.0
+    private var smoothedHeadingSin = 0.0
+    private var hasInitializedHeading = false
+    private var lastPoseEmitTimeMs = 0L
+    private val headingAlpha = 0.25 // 원형 저주파 통과 필터(EMA) 가중치 (손떨림 및 보행 진자 흡수)
 
     override fun startTracking() {
         if (!isTracking && sensorManager != null) {
@@ -75,6 +80,7 @@ class ProductionDevicePoseTracker(
         if (isTracking && sensorManager != null) {
             sensorManager.unregisterListener(this)
             isTracking = false
+            hasInitializedHeading = false
         }
     }
 
@@ -87,17 +93,44 @@ class ProductionDevicePoseTracker(
                     SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                     SensorManager.getOrientation(rotationMatrix, orientationValues)
 
-                    // orientationValues[0]: Azimuth (-PI ~ +PI) -> 0.0 ~ 360.0 도
+                    // 원형 단위 벡터(sin/cos) 기반 저주파 통과 필터(Circular EMA) 적용
                     val azimuthRad = orientationValues[0].toDouble()
-                    val heading = ((Math.toDegrees(azimuthRad) + 360.0) % 360.0).toFloat()
+                    val curCos = kotlin.math.cos(azimuthRad)
+                    val curSin = kotlin.math.sin(azimuthRad)
 
-                    // orientationValues[1]: Pitch, orientationValues[2]: Roll
-                    val pitch = Math.toDegrees(orientationValues[1].toDouble()).toFloat()
-                    val roll = Math.toDegrees(orientationValues[2].toDouble()).toFloat()
+                    val smoothedHeading: Float
+                    if (!hasInitializedHeading) {
+                        smoothedHeadingCos = curCos
+                        smoothedHeadingSin = curSin
+                        hasInitializedHeading = true
+                        smoothedHeading = ((Math.toDegrees(azimuthRad) + 360.0) % 360.0).toFloat()
+                    } else {
+                        smoothedHeadingCos = (1.0 - headingAlpha) * smoothedHeadingCos + headingAlpha * curCos
+                        smoothedHeadingSin = (1.0 - headingAlpha) * smoothedHeadingSin + headingAlpha * curSin
+                        val smoothedRad = kotlin.math.atan2(smoothedHeadingSin, smoothedHeadingCos)
+                        smoothedHeading = ((Math.toDegrees(smoothedRad) + 360.0) % 360.0).toFloat()
+                    }
 
-                    val pose = DevicePose(pitchDegrees = pitch, rollDegrees = roll, headingDegrees = heading)
-                    _currentPose.value = pose
-                    _tiltGuidance.value = evaluateGuidance(pitch, roll)
+                    // 후면 카메라 시선 벡터 (기기 좌표계 (0, 0, -1)^T)의 월드 좌표계 z성분 (-R[8]):
+                    // 카메라가 지평선을 바라보면 vz = 0, 하늘은 vz > 0, 바닥은 vz < 0.
+                    val vz = -rotationMatrix[8].toDouble().coerceIn(-1.0, 1.0)
+                    val pitch = Math.toDegrees(kotlin.math.asin(vz)).toFloat()
+
+                    // 기기 가로축 (1, 0, 0)^T의 월드 z성분 (R[6]):
+                    val vxZ = rotationMatrix[6].toDouble().coerceIn(-1.0, 1.0)
+                    val roll = Math.toDegrees(kotlin.math.asin(vxZ)).toFloat()
+
+                    // 초당 약 12.5회(80ms)로 UI 스로틀링하되, 신체 회전(12도 이상)은 즉시 방출하여 반응성 극대화
+                    val nowMs = System.currentTimeMillis()
+                    val lastHeading = _currentPose.value.headingDegrees
+                    val deltaHeading = kotlin.math.abs(((smoothedHeading - lastHeading + 540.0) % 360.0) - 180.0)
+
+                    if (nowMs - lastPoseEmitTimeMs >= 80L || deltaHeading >= 12.0) {
+                        lastPoseEmitTimeMs = nowMs
+                        val pose = DevicePose(pitchDegrees = pitch, rollDegrees = roll, headingDegrees = smoothedHeading)
+                        _currentPose.value = pose
+                        _tiltGuidance.value = evaluateGuidance(pitch, roll, _tiltGuidance.value)
+                    }
                 } catch (_: Exception) {}
             }
             Sensor.TYPE_ACCELEROMETER -> {
@@ -106,13 +139,14 @@ class ProductionDevicePoseTracker(
                 val az = event.values[2]
 
                 // 세로 모드(Portrait Camera) 기준 Pitch & Roll 계산 (단위: 도)
-                val pitch = atan2(-az.toDouble(), sqrt((ax * ax + ay * ay).toDouble())).toFloat() * (180f / Math.PI.toFloat())
-                val roll = atan2(ax.toDouble(), ay.toDouble()).toFloat() * (180f / Math.PI.toFloat())
+                // 전방 수평을 볼 때 pitch ≈ 0, 하늘 볼 때 pitch > 0, 바닥 볼 때 pitch < 0
+                val pitch = Math.toDegrees(atan2(-az.toDouble(), sqrt((ax * ax + ay * ay).toDouble()))).toFloat()
+                val roll = Math.toDegrees(atan2(ax.toDouble(), ay.toDouble())).toFloat()
 
                 val currentHeading = _currentPose.value.headingDegrees
                 val pose = DevicePose(pitchDegrees = pitch, rollDegrees = roll, headingDegrees = currentHeading)
                 _currentPose.value = pose
-                _tiltGuidance.value = evaluateGuidance(pitch, roll)
+                _tiltGuidance.value = evaluateGuidance(pitch, roll, _tiltGuidance.value)
             }
         }
     }
@@ -120,20 +154,31 @@ class ProductionDevicePoseTracker(
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     companion object {
-        fun evaluateGuidance(pitch: Float, roll: Float): TiltGuidance {
-            // 좌우 기울기(Roll)가 28도 이상 틀어지면 수평 정렬 유도
-            if (kotlin.math.abs(roll) > 28f) {
+        fun evaluateGuidance(
+            pitch: Float,
+            roll: Float,
+            previous: TiltGuidance? = null
+        ): TiltGuidance {
+            // 1. 좌우 기울기(Roll): 수평에서 32도 이상 기울어졌을 때 수평 정렬 유도 (히스테리시스 5도 적용)
+            val rollLimit = if (previous == TiltGuidance.LEVEL_PHONE) 25f else 32f
+            if (kotlin.math.abs(roll) > rollLimit) {
                 return TiltGuidance.LEVEL_PHONE
             }
-            // 상하 각도(Pitch): 서서 전방 횡단보도와 신호등을 바라볼 때 약 -25도(상단 신호등) ~ +45도(전방 횡단보도)가 이상적
-            // 하늘을 너무 향하는 경우 (pitch < -25도)
-            if (pitch < -25f) {
-                return TiltGuidance.TILT_DOWN
-            }
-            // 바닥을 너무 향하는 경우 (pitch > 45도)
-            if (pitch > 45f) {
+
+            // 2. 상하 각도(Pitch, 전방 수평 기준 Elevation Angle):
+            // - 수평선 기준 -35도(횡단보도 앞쪽 지면) ~ +40도(건너편 높은 신호등)가 보행자 기준 자연스러운 촬영 각도 (ADR-0014)
+            // - 카메라가 너무 바닥을 향하는 경우 (pitch < -35도 또는 이전 TILT_UP 상태 시 < -28도) -> TILT_UP
+            val downLimit = if (previous == TiltGuidance.TILT_UP) -28f else -35f
+            if (pitch < downLimit) {
                 return TiltGuidance.TILT_UP
             }
+
+            // - 카메라가 너무 하늘을 향하는 경우 (pitch > 40도 또는 이전 TILT_DOWN 상태 시 > 32도) -> TILT_DOWN
+            val upLimit = if (previous == TiltGuidance.TILT_DOWN) 32f else 40f
+            if (pitch > upLimit) {
+                return TiltGuidance.TILT_DOWN
+            }
+
             return TiltGuidance.SUITABLE
         }
     }
@@ -166,6 +211,6 @@ class FakeDevicePoseTracker(
     fun setPose(pitch: Float, roll: Float, heading: Float = 0f) {
         val newPose = DevicePose(pitch, roll, heading)
         _currentPose.value = newPose
-        _tiltGuidance.value = ProductionDevicePoseTracker.evaluateGuidance(pitch, roll)
+        _tiltGuidance.value = ProductionDevicePoseTracker.evaluateGuidance(pitch, roll, _tiltGuidance.value)
     }
 }
