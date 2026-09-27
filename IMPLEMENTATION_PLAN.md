@@ -391,6 +391,16 @@ flowchart TD
 - E17-S4 `NavigationViewModel` 보행 속도 임계값 완화(0.65 m/s)로 완만한 보행 중에도 GPS 진행 궤적에 지도가 안정 고정되도록 개선
 - E17-S5 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug-0925-v25.apk`, 41.5MB) 빌드 및 기기 MTP 전송 검증
 
+### Epic E18 — 보행자 녹색 신호 캘리브레이션 점수 보존 및 하단 차량등 오인 차단, 음성 안내 즉시 선점(Preemption) 최적화 (ADR-026)
+
+- E18-S1 `LocalVlmSignalVerifier` 최근 5프레임 중 60% 이상 녹색 지지 시 일시적 블러 프레임의 신뢰도 점수를 0.92 이상으로 보존하여 `LOW_CALIBRATED_SCORE` 리셋 루프 원천 차단
+- E18-S2 `CameraVisionSignalEstimator` 한국 보행신호등 기하 특성(수직 2구 상단 적색, 하단 녹색)에 따라 동일 기둥 판정 시 적색 상단 조건 강제(`primaryRed.centerY < primaryGreen.centerY`) 및 하단 차로 적색등(`isLowerRoadwayRed`)의 보행 적색 오인 원천 배제
+- E18-S3 `CameraVisionSignalEstimator` 녹색 신호 추적 중 하단/원거리 적색등에 의한 타깃 기준점 탈취 방지(`isLockHijack`)
+- E18-S4 `CrossingDecisionEngine` 순간 신뢰도 저하 시 하드 리셋 대신 1프레임 점진적 감쇄(Graceful Decay) 적용
+- E18-S5 `GuidanceArbiter` 녹색 신호 인입 시 현재 발화 중인 비녹색(적색, UNKNOWN 등) 전체 음성 즉시 선점 중단(`PREEMPT_AND_PLAY`) 및 대기 큐의 지연된 낡은 신호 메시지 일괄 영구 폐기
+- E18-S6 전체 단위 테스트 100% 통과 (185개 전수 통과) 및 최신 릴리스 디버그 APK (`app-debug-0927-v26.apk`, 41.5MB) 빌드 및 S25 Ultra 기기 MTP 전송 검증
+
+
 
 ## 10. 일일 개발 루틴
 

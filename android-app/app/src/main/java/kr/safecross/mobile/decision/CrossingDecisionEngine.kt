@@ -462,13 +462,16 @@ class CrossingDecisionEngine(
 
             // 신뢰도 점수 캘리브레이션 임계 검사 (TRD 4.7: minimum calibrated green score = 0.88)
             if (targetSignal.score < config.minCalibratedScore) {
-                consecutiveGreenCount = 0
+                // 한손 파지 시 순간적인 프레임 블러/신뢰도 저하에 즉시 0 리셋하지 않고 점진적 감쇄 (Graceful Decay)
+                if (consecutiveGreenCount > 0) {
+                    consecutiveGreenCount = (consecutiveGreenCount - 1).coerceAtLeast(0)
+                }
                 return transitionTo(
                     targetState = CrossingState.UNKNOWN,
                     prevState = prevState,
                     nowNanos = nowNanos,
                     reasonCode = "LOW_CALIBRATED_SCORE",
-                    guidanceText = "신호 감지 신뢰도가 충분하지 않습니다.",
+                    guidanceText = if (prevState == CrossingState.UNKNOWN || prevState == CrossingState.GREEN_CANDIDATE) null else "신호 감지 신뢰도가 충분하지 않습니다.",
                     hapticType = HapticFeedbackType.UNKNOWN_CAUTION
                 )
             }

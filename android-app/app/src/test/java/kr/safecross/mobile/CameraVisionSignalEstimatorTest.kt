@@ -619,6 +619,55 @@ class CameraVisionSignalEstimatorTest {
         assertEquals(ObservedSignalState.GREEN, lastObs.state)
         assertTrue(lastObs.score >= 0.90f)
     }
+
+    @Test
+    fun testPedestrianGreenNotVetoedByLowerRoadwayHugeVehicleTailLight() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        for (i in 0 until width * height) {
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(35.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 보행자 녹색 신호 (y: 60..75, x: 155..165, 약 165 화소)
+        for (y in 60..75) {
+            for (x in 155..165) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 25.toByte())
+                buffer.put(offset + 1, 220.toByte())
+                buffer.put(offset + 2, 150.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+
+        // 하단 차로 대형 차량 브레이크등 (y: 130..155, x: 90..115, 25x25 = 625 화소, 3배 이상 압도적인 적색)
+        for (y in 130..155) {
+            for (x in 90..115) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 250.toByte())
+                buffer.put(offset + 1, 20.toByte())
+                buffer.put(offset + 2, 20.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val localEstimator = CameraVisionSignalEstimator()
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        var lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+        buffer.rewind()
+        lastObs = localEstimator.estimate(frame).first()
+
+        // 하단 차로 차량 브레이크등이 아무리 커도(isRedOverwhelming이어도) 보행자 녹색 신호를 기각하지 않고 GREEN을 유지해야 함
+        assertEquals(ObservedSignalState.GREEN, lastObs.state)
+        assertTrue("Verified score should remain >= 0.90f", lastObs.score >= 0.90f)
+    }
 }
 
 

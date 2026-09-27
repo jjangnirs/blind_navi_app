@@ -296,6 +296,25 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `NavigationViewModelTest.testWalkingGpsCourseFusesWithCompassHeading` (100% PASS).
   - 총 182개 안드로이드 단위 테스트 전체 통과 (100% PASS).
 
+### 24. 보행자 녹색 신호 캘리브레이션 점수 보존 및 하단 차량등 오인 차단, 음성 안내 즉시 선점(Preemption) 최적화 (ADR-026)
+- **시간적 검증 녹색 신호 신뢰도 보존 (`LocalVlmSignalVerifier`)**:
+  - 최근 5프레임 중 60% 이상 녹색 지지 시, 보행 중 한손 파지 순간 블러/노이즈가 발생하더라도 신뢰도 점수를 0.92 이상으로 보존하여 `LOW_CALIBRATED_SCORE` 누적 카운트 0 리셋 루프를 원천 차단.
+- **하단 차로 차량 브레이크등/후미등 배제 및 2D 공간 락 탈취 방지 (`CameraVisionSignalEstimator`)**:
+  - 한국 보행신호등 기하 특성(수직 2구 상단 적색, 하단 녹색)에 따라 동일 기둥 판정 시 적색이 녹색보다 위쪽에 위치(`primaryRed.centerY < primaryGreen.centerY`)할 때만 동일 기둥으로 인정.
+  - 보행 녹색등보다 15px 이상 아래쪽에 위치한 적색($Y > Y_{green} + 15\text{px}$)은 화소수 크기(`isRedOverwhelming`)와 무관하게 하단 차로 차량 브레이크등으로 판정해 보행 적색 오인을 원천 배제.
+  - 녹색 추적 중 하단 도로($Y > 0.48$)나 중심 이격 거리 0.12 이상 점프한 측면 원거리 적색등에 의한 타깃 기준점 탈취(`isLockHijack`) 차단.
+- **순간 신뢰도 저하 시 점진적 감쇄 (`CrossingDecisionEngine`)**:
+  - 신뢰도 저하 시 0으로 즉시 초기화하지 않고 `(consecutiveGreenCount - 1).coerceAtLeast(0)`으로 1프레임 점진 감쇄(Graceful Decay)하여 프레임 누적 연속성 보존.
+- **음성 안내 즉시 선점 및 대기 큐 정화 (`GuidanceArbiter`)**:
+  - 녹색 보행 신호 인입 시 적색뿐만 아니라 UNKNOWN, 일반 횡단안내 등 모든 비녹색 발화를 즉시 중단하고 녹색 안내를 선점 재생(`PREEMPT_AND_PLAY`).
+  - 대기 큐에 쌓여있던 낡은 적색/UNKNOWN 신호 안내를 일괄 영구 폐기(`droppedMessageIds`)하여 녹색 보행 중 엉뚱한 적색 멘트가 튀어나오는 위험 원천 방지.
+- **단위 테스트 및 안전성 검증**:
+  - `PerceptionRobustnessTest.testTemporallyVerifiedGreenMaintainsCalibratedScoreDuringBlurFrame` (100% PASS).
+  - `CameraVisionSignalEstimatorTest.testPedestrianGreenNotVetoedByLowerRoadwayHugeVehicleTailLight` (100% PASS).
+  - `GuidanceArbiterTest.testGreenGuidancePreemptsCurrentlySpeakingUnknownGuidanceAndPurgesStaleQueue` (100% PASS).
+  - 총 185개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+
 
 
 

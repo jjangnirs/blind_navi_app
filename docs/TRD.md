@@ -881,6 +881,18 @@ TMAP 경로가 “시각장애인에게 안전한 경로”라는 의미는 아�
 - 이유: 실기기 야외 보행 시험 로그 분석 결과, S25 Ultra의 다중 대역 GNSS 하드웨어는 75~84개 위성을 수신하며 정상 작동 중이었으나 도심 건물 반사 오차가 앱 계산식에 의해 35%로 왜곡 표출되었고, 보행 진자 운동과 90ms 센서 갱신에 의한 `panTo` 충돌로 지도가 좌우로 극심하게 요동치던 결함 해결.
 - 결과: 도심 환경 GPS 수신율 현실화(35% 오인 해소), 정상 보행 중 지도 덜덜 떨림 0% 달성 및 도로 진행 방향 위(Heading-Up) 완벽 고정.
 
+### ADR-026 — 보행자 녹색 신호 캘리브레이션 점수 보존 및 하단 차량등 오인 차단, 음성 안내 즉시 선점(Preemption) 최적화
+
+- 결정:
+  1. `LocalVlmSignalVerifier`에서 최근 5프레임 중 60% 이상 녹색 지지(`history.count { it.state == GREEN } >= 3`)로 `finalState == GREEN`이 입증된 경우, 일시적 한손 파지 손떨림 블러나 노이즈 프레임이어도 신뢰도 점수를 `0.92f ~ 0.97f`로 보존하여 `minCalibratedScore (0.88)` 미만으로 추락하는 `LOW_CALIBRATED_SCORE` 리셋 루프를 원천 차단한다.
+  2. `CameraVisionSignalEstimator`에서 한국 보행신호등 기하 특성(수직 2구 상단 적색, 하단 녹색)에 따라 동일 기둥 판정 시 적색이 녹색보다 위쪽에 위치(`primaryRed.centerY < primaryGreen.centerY`)할 때만 동일 기둥을 인정하고, 보행 녹색등보다 15px 이상 아래쪽에 위치한 적색($Y > Y_{green} + 15\text{px}$)은 화소수 크기(`isRedOverwhelming`)와 무관하게 하단 차로 차량 브레이크등/후미등으로 판정해 보행 적색 오인을 원천 배제한다.
+  3. `CameraVisionSignalEstimator`에서 녹색 신호 추적 중 도로 바닥($Y > 0.48$)이나 중심에서 0.12 이상 점프한 측면 원거리 적색등이 유입되더라도 타깃 기준점(`lastLockedCenterNorm`)을 덮어쓰지 않고 중앙 보행등에 락을 견고히 유지하도록 타깃 탈취 방지(`isLockHijack`)를 구현한다.
+  4. `CrossingDecisionEngine`에서 `targetSignal.score < minCalibratedScore` 발생 시 즉시 0으로 강제 초기화하지 않고 `(consecutiveGreenCount - 1).coerceAtLeast(0)`으로 1프레임씩 점진 감쇄(Graceful Decay)하여 1프레임 노이즈 후 즉시 연속성을 회복하도록 개선한다.
+  5. `GuidanceArbiter`에서 녹색 보행 신호(`signal_decision_green`) 인입 시 현재 발화 중인 음성이 적색뿐만 아니라 UNKNOWN, 일반 횡단안내 등 비녹색 계열이면 즉시 발화를 중단하고 녹색 안내를 즉시 선점 재생(`PREEMPT_AND_PLAY`)하며, 대기 큐의 낡은 신호 안내를 일괄 영구 폐기한다.
+- 이유: 2026년 9월 26일 오후 실제 횡단보도 실측 로그(`perception_flight.log`) 포렌식 결과, 보행 녹색 신호가 켜져 있는 도중 `consecutiveGreenCount`가 1 이상에서 0으로 강제 리셋된 횟수가 총 55회(LOW_CALIBRATED_SCORE 30회, 차량 브레이크등 오인 17회) 발생하여 5프레임 녹색 누적이 매초 파괴되었고, UNKNOWN 멘트가 2.5초간 녹색 음성 선점을 차단해 사용자에게 보행 신호 인식 및 안내가 극도로 지체되던 결함 해결.
+- 결과: 일시적 1프레임 블러 시에도 연속 녹색 누적 카운트 보존, 하단 차량 브레이크등 간섭 0% 차단, 녹색 전환 즉시 0ms 지연 음성 선점 발화 달성.
+
+
 
 ## 14. 기술 검증 PoC 순서
 

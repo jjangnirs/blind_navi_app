@@ -305,12 +305,13 @@ class CameraVisionSignalEstimator(
                 Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
             }
             primaryRed != null && primaryGreen != null -> {
-                // 동일 기둥 판정: 두 블롭의 X 중심 거리가 폭 허용오차 이내이고,
-                // 단일 신호기 등두(Head)의 수직 거리(램프 높이 3.5배 + 25px) 이내여야 함
-                val maxColDist = maxOf(primaryGreen.width, primaryRed.width) * 1.8f + 16f
+                // 동일 기둥 판정: 한국 보행신호등은 수직 2구(상단 적색, 하단 녹색)
+                // 따라서 동일 기둥이 성립하려면 반드시 적색이 녹색보다 위쪽에 위치해야 함 (primaryRed.centerY < primaryGreen.centerY)
+                val maxColDist = maxOf(primaryGreen.width, primaryRed.width) * 1.3f + 12f
                 val isSameXColumn = abs(primaryRed.centerX - primaryGreen.centerX) <= maxColDist
                 val maxVerticalHeadDist = maxOf(primaryGreen.height, primaryRed.height) * 3.5f + 25f
-                val isPlausibleVerticalHead = abs(primaryRed.centerY - primaryGreen.centerY) <= maxVerticalHeadDist
+                val isPlausibleVerticalHead = (primaryRed.centerY < primaryGreen.centerY) &&
+                        (primaryGreen.centerY - primaryRed.centerY) <= maxVerticalHeadDist
                 val isSamePole = isSameXColumn && isPlausibleVerticalHead
 
                 val redNormY = primaryRed.centerY / height
@@ -326,8 +327,8 @@ class CameraVisionSignalEstimator(
                 val isHorizontalPair = abs(primaryRed.centerY - primaryGreen.centerY) <= maxOf(primaryGreen.height, primaryRed.height) * 1.3f + 10f
                 val isVehicleHorizontalLayout = isHorizontalPair && (primaryRed.centerX < primaryGreen.centerX)
 
-                // 도로 하단 적색 아티팩트(차량 브레이크등/후미등/반사판): 녹색등보다 25px 이상 아래쪽에 위치한 적색
-                val isLowerRoadwayRed = primaryRed.centerY > primaryGreen.centerY + 25f
+                // 도로 하단 적색 아티팩트(차량 브레이크등/후미등/반사판): 녹색등보다 15px 이상 아래쪽에 위치한 적색
+                val isLowerRoadwayRed = primaryRed.centerY > primaryGreen.centerY + 15f
 
                 // 발광 화소수(에너지) 압도도 비교: 능동 발광 중인 보행등이 미세 반사광/원거리 차량등을 압도하는 경우
                 val isGreenOverwhelming = primaryGreen.pixelCount >= primaryRed.pixelCount * 1.5f ||
@@ -339,8 +340,9 @@ class CameraVisionSignalEstimator(
                         // 상단 차도 가로등/차량 적색 신호 배제 -> 인도 보행 녹색 선택
                         val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
                         Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
-                    } else if (isLowerRoadwayRed && !isRedOverwhelming) {
-                        // 하단 차로 차량 브레이크등/후미등 배제 -> 상단 신호등(녹색) 선택
+                    } else if (isLowerRoadwayRed) {
+                        // 하단 차로 차량 브레이크등/후미등 배제 -> 상단 인도 보행 신호등(녹색) 선택
+                        // 차량 후미등이 아무리 크고 밝아도(isRedOverwhelming이어도) 보행등보다 아래쪽에 위치하면 절대 보행 적색이 될 수 없음
                         val b = calculateBox(primaryGreen.minX, primaryGreen.maxX, primaryGreen.minY, primaryGreen.maxY, width, height)
                         Triple(ObservedSignalState.GREEN, b, (0.94f + (primaryGreen.pixelCount / 150f) * 0.05f).coerceIn(0.94f, 0.98f))
                     } else if (isVehicleHorizontalLayout && isGreenOverwhelming) {
@@ -421,10 +423,18 @@ class CameraVisionSignalEstimator(
         if (detectedState == ObservedSignalState.GREEN || detectedState == ObservedSignalState.RED) {
             val cxNorm = (smoothedBox.left + smoothedBox.right) / 2f
             val cyNorm = (smoothedBox.top + smoothedBox.bottom) / 2f
-            lastLockedCenterNorm = Pair(cxNorm, cyNorm)
-            lastLockedTimestampNanos = timestampNanos
-            lastLockedState = detectedState
-            lastSmoothedBox = smoothedBox
+
+            // 녹색 추적 중 하단 도로 차로 차량등/측면 원거리 적색등으로의 타깃 탈취 방지
+            val isLockHijack = isTrackActive && lastLockedState == ObservedSignalState.GREEN &&
+                    detectedState == ObservedSignalState.RED &&
+                    (cyNorm > 0.48f || kotlin.math.hypot(cxNorm - lastLockedCenterNorm!!.first, cyNorm - lastLockedCenterNorm!!.second) > 0.12f)
+
+            if (!isLockHijack) {
+                lastLockedCenterNorm = Pair(cxNorm, cyNorm)
+                lastLockedTimestampNanos = timestampNanos
+                lastLockedState = detectedState
+                lastSmoothedBox = smoothedBox
+            }
         } else {
             lastSmoothedBox = null
         }

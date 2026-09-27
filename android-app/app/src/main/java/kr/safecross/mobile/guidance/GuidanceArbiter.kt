@@ -85,17 +85,19 @@ class GuidanceArbiter(
             val iterator = messageQueue.iterator()
             while (iterator.hasNext()) {
                 val queued = iterator.next()
-                if (queued.priority.level < GuidancePriority.CROSSING.level) {
+                val isStaleSignalMessage = (message.category == "signal_decision_green" || message.text.contains("녹색")) &&
+                        (queued.category == "signal_decision_red" || queued.category == "signal_decision_unknown" || queued.text.contains("적색"))
+                if (queued.priority.level < GuidancePriority.CROSSING.level || isStaleSignalMessage) {
                     droppedIds.add(queued.id)
                     iterator.remove()
                 }
             }
 
-            // 현재 발화 중인 메시지가 낮은 우선순위(ROUTE, INFO)이거나, 적색 발화 중 녹색 신호로 전환된 경우 즉시 선점 중단 판정
+            // 현재 발화 중인 메시지가 낮은 우선순위(ROUTE, INFO)이거나, 녹색 신호 전환 시 비녹색(적색, UNKNOWN 등) 발화를 즉시 선점 중단(Preemption) 판정
             val cur = currentlySpeakingMessage
-            val isGreenOverridingRed = (message.category == "signal_decision_green" || message.text.contains("녹색")) &&
-                    (cur?.category == "signal_decision_red" || cur?.text?.contains("적색") == true)
-            if (cur != null && (cur.priority.level < GuidancePriority.CROSSING.level || isGreenOverridingRed)) {
+            val isGreenOverridingNonGreen = (message.category == "signal_decision_green" || message.text.contains("녹색")) &&
+                    (cur != null && cur.category != "signal_decision_green" && !cur.text.contains("녹색"))
+            if (cur != null && (cur.priority.level < GuidancePriority.CROSSING.level || isGreenOverridingNonGreen)) {
                 recordSpoken(message, currentTimeMs)
                 return ArbiterDecision(
                     action = ArbiterAction.PREEMPT_AND_PLAY,

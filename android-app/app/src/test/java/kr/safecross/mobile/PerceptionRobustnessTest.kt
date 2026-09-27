@@ -434,4 +434,43 @@ class PerceptionRobustnessTest {
         assertEquals(255, g)
         assertEquals(255, b)
     }
+
+    @Test
+    fun testTemporallyVerifiedGreenMaintainsCalibratedScoreDuringBlurFrame() {
+        val dummyBuffer = ByteBuffer.allocateDirect(100)
+        val verifier = LocalVlmSignalVerifier()
+
+        // 1. 4프레임 동안 안정적인 녹색 신호 관측 (t = 1.0s, 1.1s, 1.2s, 1.3s)
+        for (i in 0 until 4) {
+            val obs = SignalObservation(
+                ephemeralTrackId = "track-dyn-1",
+                state = ObservedSignalState.GREEN,
+                score = 0.95f,
+                box = NormalizedBox(0.48f, 0.40f, 0.52f, 0.44f),
+                frameTimestampNanos = (10 + i) * 100_000_000L,
+                quality = FrameQuality(1.0f, 1.0f, true),
+                modelVersion = "test"
+            )
+            val res = verifier.verify(obs, dummyBuffer, 320, 240)
+            if (i >= 2) {
+                assertEquals(ObservedSignalState.GREEN, res.verifiedState)
+            }
+        }
+
+        // 2. 5번째 프레임에서 한손 파지 보행 중 순간적인 블러로 UNKNOWN 관측 (t = 1.4s)
+        val blurObs = SignalObservation(
+            ephemeralTrackId = "track-dyn-1",
+            state = ObservedSignalState.UNKNOWN,
+            score = 0.35f,
+            box = NormalizedBox(0.48f, 0.40f, 0.52f, 0.44f),
+            frameTimestampNanos = 14 * 100_000_000L,
+            quality = FrameQuality(0.6f, 0.5f, true),
+            modelVersion = "test"
+        )
+        val blurRes = verifier.verify(blurObs, dummyBuffer, 320, 240)
+
+        // 시간적 완충에 의해 GREEN이 유지되어야 하며, 신뢰도 점수가 0.88 이상(0.90f 이상)으로 보존되어야 함
+        assertEquals("시간 평활화로 녹색이 유지되어야 함", ObservedSignalState.GREEN, blurRes.verifiedState)
+        assertTrue("신뢰도 점수가 minCalibratedScore(0.88) 이상이어야 함: ${blurRes.confidenceScore}", blurRes.confidenceScore >= 0.90f)
+    }
 }
