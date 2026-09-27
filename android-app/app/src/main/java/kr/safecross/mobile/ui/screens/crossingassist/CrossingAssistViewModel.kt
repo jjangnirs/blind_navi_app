@@ -20,7 +20,8 @@ import kr.safecross.mobile.guidance.GuidanceMessage
 import kr.safecross.mobile.guidance.GuidancePriority
 import kr.safecross.mobile.perception.CrosswalkSceneEstimator
 import kr.safecross.mobile.perception.FakeCrosswalkEstimator
-import kr.safecross.mobile.perception.FakeSignalAssociator
+//import kr.safecross.mobile.perception.FakeSignalAssociator
+import kr.safecross.mobile.perception.LockOnSignalAssociator
 import kr.safecross.mobile.perception.FakeSignalEstimator
 import kr.safecross.mobile.perception.PedestrianSignalEstimator
 import kr.safecross.mobile.perception.TargetSignalAssociator
@@ -36,7 +37,8 @@ class CrossingAssistViewModel(
     val cameraPipeManager: CameraPipeManager = FakeCameraPipeManager(),
     val crosswalkEstimator: CrosswalkSceneEstimator = FakeCrosswalkEstimator(),
     val signalEstimator: PedestrianSignalEstimator = FakeSignalEstimator(),
-    val signalAssociator: TargetSignalAssociator = FakeSignalAssociator(),
+    //val signalAssociator: TargetSignalAssociator = FakeSignalAssociator(),
+    val signalAssociator: TargetSignalAssociator = LockOnSignalAssociator(),
     val decisionEngine: CrossingDecisionEngine = CrossingDecisionEngine(),
     val poseTracker: DevicePoseTracker = FakeDevicePoseTracker(),
     val guidanceArbiter: GuidanceArbiter = GuidanceArbiter()
@@ -52,18 +54,48 @@ class CrossingAssistViewModel(
     private var isAnalyzing = false
     private var guidanceSeq = 0
 
+    // ▼▼▼ 여기 새로 추가입니다! ▼▼▼
+    private var candidateState: kr.safecross.mobile.decision.CrossingAssistDecisionState? = null
+    private var consecutiveStateCount = 0
+
     init {
         // 기기 기울기 모니터링 구독
         viewModelScope.launch {
+            var lastTiltInstruction = "" // 이전 경고 상태 저장
+
             poseTracker.tiltGuidance.collect { guidance ->
                 _uiState.value = _uiState.value.copy(tiltGuidance = guidance)
-                if (!guidance.isSuitable && isAnalyzing) {
-                    emitGuidance(
-                        text = guidance.instruction,
-                        priority = GuidancePriority.CROSSING,
-                        category = "tilt_guidance",
-                        hapticType = kr.safecross.mobile.guidance.HapticFeedbackType.UNKNOWN_CAUTION
+
+                // 상태가 부적절하고, 이전 경고 메시지와 다를 때만 1회 실행 (도배 방지)
+                if (!guidance.isSuitable && isAnalyzing && guidance.instruction != lastTiltInstruction) {
+                    lastTiltInstruction = guidance.instruction
+
+                    val decision = guidanceArbiter.enqueue(
+                        kr.safecross.mobile.guidance.GuidanceMessage(
+                            id = "tilt_warn_${System.currentTimeMillis()}",
+                            text = guidance.instruction,
+                            priority = kr.safecross.mobile.guidance.GuidancePriority.INFO,
+                            category = "tilt_guidance",
+                            hapticType = kr.safecross.mobile.guidance.HapticFeedbackType.UNKNOWN_CAUTION
+                        )
                     )
+
+                    // PLAY_IMMEDIATELY, PREEMPT_AND_PLAY뿐만 아니라 QUEUE 상태도 허용
+                    when (decision.action) {
+                        kr.safecross.mobile.guidance.ArbiterAction.PLAY_IMMEDIATELY,
+                        kr.safecross.mobile.guidance.ArbiterAction.PREEMPT_AND_PLAY,
+                        kr.safecross.mobile.guidance.ArbiterAction.QUEUE -> {
+                            emitGuidance(
+                                text = guidance.instruction,
+                                priority = kr.safecross.mobile.guidance.GuidancePriority.INFO,
+                                category = "tilt_guidance",
+                                hapticType = kr.safecross.mobile.guidance.HapticFeedbackType.UNKNOWN_CAUTION
+                            )
+                        }
+                        else -> { /* 쿨다운 중 무시 */ }
+                    }
+                } else if (guidance.isSuitable) {
+                    lastTiltInstruction = "" // 정상 각도로 돌아오면 다시 초기화
                 }
             }
         }
@@ -137,30 +169,66 @@ class CrossingAssistViewModel(
                     isTiltSuitable = isTiltOk
                 )
 
-                _uiState.value = _uiState.value.copy(
-                    decisionState = decision.state,
-                    crosswalkDetected = cwObs.hasCrosswalk,
-                    statusMessage = decision.guidanceText ?: decision.state.description,
-                    detectedSignalBox = association.targetSignal?.box,
-                    detectedSignalColor = association.targetSignal?.state
-                )
+                val rawState = decision.state
 
-                // 5. 발화 안내 이벤트 전송
-                if (decision.guidanceText != null) {
-                    val priority = when (decision.state) {
-                        CrossingAssistDecisionState.RED_ESTIMATE -> GuidancePriority.SAFETY
-                        CrossingAssistDecisionState.GREEN_ESTIMATE -> GuidancePriority.SAFETY
-                        CrossingAssistDecisionState.UNKNOWN -> GuidancePriority.CROSSING
-                        else -> GuidancePriority.INFO
-                    }
-                    val category = "signal_decision"
+                // 디바운스 로직: 이전 프레임과 상태가 같으면 카운트 증가, 다르면 1부터 다시 시작
+                if (rawState == candidateState) {
+                    consecutiveStateCount++
+                } else {
+                    candidateState = rawState
+                    consecutiveStateCount = 1
+                }
 
-                    emitGuidance(
-                        text = decision.guidanceText,
-                        priority = priority,
-                        category = category,
-                        hapticType = decision.hapticType
+                // 5프레임 이상 동일한 상태가 안정적으로 유지되었을 때만 최종 업데이트 진행
+                if (consecutiveStateCount >= 5) {
+                    val previousConfirmedState = _uiState.value.decisionState
+
+                    // 1. 화면에 표시될 텍스트를 미리 확정 (null일 경우 기본 설명문 사용)
+                    val displayText = decision.guidanceText ?: rawState.description
+
+                    _uiState.value = _uiState.value.copy(
+                        decisionState = rawState,
+                        crosswalkDetected = cwObs.hasCrosswalk,
+                        statusMessage = displayText, // 확정된 텍스트를 화면에 표시
+                        detectedSignalBox = association.targetSignal?.box,
+                        detectedSignalColor = association.targetSignal?.state
                     )
+
+                    // 2. 발화 안내 이벤트 전송 (텍스트가 비어있지 않고, 상태가 진짜로 바뀌었을 때만 1회 발화)
+                    if (displayText.isNotBlank() && rawState != previousConfirmedState) {
+                        val priority = when (rawState) {
+                            kr.safecross.mobile.decision.CrossingAssistDecisionState.RED_ESTIMATE -> kr.safecross.mobile.guidance.GuidancePriority.SAFETY
+                            kr.safecross.mobile.decision.CrossingAssistDecisionState.GREEN_ESTIMATE -> kr.safecross.mobile.guidance.GuidancePriority.SAFETY
+                            kr.safecross.mobile.decision.CrossingAssistDecisionState.UNKNOWN -> kr.safecross.mobile.guidance.GuidancePriority.CROSSING
+                            else -> kr.safecross.mobile.guidance.GuidancePriority.INFO
+                        }
+
+                        val category = "signal_${rawState.name}"
+
+                        val arbiterDecision = guidanceArbiter.enqueue(
+                            kr.safecross.mobile.guidance.GuidanceMessage(
+                                id = "signal_${System.currentTimeMillis()}",
+                                text = displayText,
+                                priority = priority,
+                                category = category,
+                                hapticType = decision.hapticType // 상태에 맞는 진동 패턴 전달
+                            )
+                        )
+
+                        when (arbiterDecision.action) {
+                            kr.safecross.mobile.guidance.ArbiterAction.PLAY_IMMEDIATELY,
+                            kr.safecross.mobile.guidance.ArbiterAction.PREEMPT_AND_PLAY,
+                            kr.safecross.mobile.guidance.ArbiterAction.QUEUE -> {
+                                emitGuidance(
+                                    text = displayText,
+                                    priority = priority,
+                                    category = category,
+                                    hapticType = decision.hapticType
+                                )
+                            }
+                            else -> {}
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
