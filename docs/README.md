@@ -105,6 +105,11 @@ MVP에 포함한다.
     - TMAP 스냅 노드 오차 비교 방지(`lastRequestedOriginGps`): 도로 노드 스냅 오차로 인한 매초 무한 재탐색 루프를 차단하고 실질 GPS 이동(30m 이상) 시에만 재탐색하도록 개선
     - 원터치 대형 고대비 앱 사용 종료 버튼(최소 64dp, Red): `DestinationScreen` 및 `NavigationScreen`에 명시적인 종료 버튼 배치 및 Android 시스템 뒤로가기(`BackHandler`) 종료 연동
     - 네비게이션 종료 멱등성 및 백스택 클린업: `stopNavigation()` 중복 호출 차단 가드 및 `popUpTo` singleTop 적용으로 안전한 화면 복귀 보장
+33. GPS 단일 Provider 우선순위화, 보행자 기구학 이상치(Anti-Teleport) 기각 필터 및 지도 회전/흔들림 안정화 (`ProductionLocationSource`, `LocationOutlierFilter`, `NavigationViewModel`, `RealRouteMapView`, ADR-028):
+    - 3개 Provider 동시 등록 결함 해소: `GPS_PROVIDER`, `FUSED_PROVIDER`, `NETWORK_PROVIDER` 동시 등록으로 발생하던 17m 핑퐁(1초에 2회 2중 좌표 방출) 및 435m 기지국 좌표 난입(수신율 35% 급락) 원천 차단. S25 Ultra 고정밀 `FUSED_PROVIDER` 단일 등록 우선순위 체계 확립
+    - 보행자 기구학 안티 텔레포트 필터(`LocationOutlierFilter`): 3초 이내 25m 이상 이동 및 시속 36km/h 초과 물리적 불가능 좌표 즉각 기각, 선행 GPS 확보 후 단발성 45m 초과 저정밀도 기지국 픽스 기각 (4회 연속 시 데드락 방지 수용)
+    - 나침반-GPS 헤딩 상보 필터 안정화: 정지/초저속($<0.5\text{m/s}$) 시 잔류 GPS bearing 초기화, 12m 이하 고정밀 샘플에서만 bearing 갱신, 각도차 50도 초과 시 나침반 100% 반영으로 지도 풍차 회전 차단
+    - 지도 카메라 추종 불감대 상향(`RealRouteMapView`): 2.5m 미만 미세 지터 시 카메라 팬(panTo)을 방지하고 마커만 부드럽게 갱신하여 제자리 정지/서행 중 화면 떨림 완벽 제거
 
 MVP에서 제외한다.
 

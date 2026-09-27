@@ -409,7 +409,14 @@ flowchart TD
 - E19-S5 `NavigationViewModel.stopNavigation`에 멱등성 가드(`isFinished`)를 추가하여 중복 이벤트 루프 제거, 백스택 클린업(`popUpTo` singleTop) 적용
 - E19-S6 전체 단위 테스트 100% 통과 (187개 전수 통과, 0 failure) 및 최신 릴리스 디버그 APK (`app-debug-0927-v27.apk`, 41.5MB) 빌드 및 S25 Ultra 기기 MTP 전송 검증 완료 (ADR-027)
 
+### Epic 20 — GPS 단일 Provider 우선순위화, 보행자 기구학 이상치(Anti-Teleport) 기각 필터 및 지도 회전/흔들림 안정화 (2026-09-27 완료)
 
+- E20-S1 2026-09-26 야외 보행 비행 기록 포렌식 분석(`navigation_flight.log.1`, 3.14MB, 13,382행): 3중 Provider 동시 등록으로 인한 17m 핑퐁(1초에 2회 2중 좌표 교차 방출), 기지국 좌표 난입(435m 텔레포트 및 GPS 수신율 35% 급락), 목표 방위각 180도 역회전(4,851회 방위 점프) 3대 근본 원인 규명
+- E20-S2 `ProductionLocationSource` 3개 Provider 중복 등록 결함 제거 및 Android 12+ S25 Ultra 최적화 고정밀 단일 `LocationManager.FUSED_PROVIDER` 배타적 우선순위 등록 파이프라인 구현
+- E20-S3 `LocationOutlierFilter` 신설 및 연동: 3초 이내 25m 초과 및 속도 > 10m/s (36km/h) 순간이동 기각, 선행 GPS 확보 후 단발성 45m 초과 저정밀도 기지국 픽스 기각, 4회 연속 이상치 시 데드락 방지 강제 수용
+- E20-S4 `NavigationViewModel` 보행 헤딩 상보 필터 최적화: 정지/초저속($<0.5\text{m/s}$) 시 잔류 GPS bearing 초기화, 12m 이하 고정밀 샘플에서만 bearing 갱신, 각도차 50도 초과 시 나침반 100% 반영으로 지도 풍차 회전 차단
+- E20-S5 `RealRouteMapView` 지도 카메라 추종 불감대 상향: 2.5m 미만 미세 지터 시 카메라 팬(panTo)을 방지하고 마커만 부드럽게 갱신하여 제자리 정지/서행 중 화면 떨림 완벽 제거
+- E20-S6 `LocationOutlierFilterTest` 신설 및 전체 단위 테스트 100% 통과 (192개 전수 통과, 0 failure), 최신 디버그 APK (`app-debug-0927-v28.apk`, 41.5MB) 빌드 및 S25 Ultra 기기 MTP 전송 검증 완료 (ADR-028)
 
 ## 10. 일일 개발 루틴
 

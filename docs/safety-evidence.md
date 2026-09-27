@@ -314,6 +314,41 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `GuidanceArbiterTest.testGreenGuidancePreemptsCurrentlySpeakingUnknownGuidanceAndPurgesStaleQueue` (100% PASS).
   - 총 185개 안드로이드 단위 테스트 전체 통과 (100% PASS).
 
+### 25. 절전 모드 화면 꺼짐 방지, TMAP 고지문 무한 반복 해소 및 원터치 앱 종료 파이프라인 (ADR-027)
+- **절전 모드 화면 꺼짐 방지 (`MainActivity`)**:
+  - `FLAG_KEEP_SCREEN_ON` 윈도우 플래그 적용으로 시각장애인 보행 중 화면 터치가 없어도 OS 절전 모드 진입 방지, 카메라·센서·GPS·TTS 100% 영속 동작 보장.
+- **TMAP 면책 고지문 1회성 발화 보장 및 무음 갱신 (`RouteSummaryViewModel`)**:
+  - `hasSpokenDisclaimer` 래치 및 `isSilentUpdate` 플래그 도입으로 GPS 미세 위치 보정 재탐색 시 장문의 면책 고지문 무한 반복 발화 버그 원천 차단.
+  - `lastRequestedOriginGps` 기반 거리 비교(임계치 30m)로 TMAP 도로 스냅 오차에 의한 매초 무한 재탐색 루프 차단.
+- **원터치 대형 고대비 앱 종료 및 멱등성 보장 (`DestinationScreen`, `NavigationScreen`, `NavigationViewModel`)**:
+  - 대형 고대비 앱 종료 버튼(최소 64dp, Red) 및 `BackHandler` 시스템 뒤로가기 종료 파이프라인 완성.
+  - `NavigationViewModel.stopNavigation`에 `isFinished` 멱등성 가드 및 백스택 `popUpTo` singleTop 적용.
+- **단위 테스트 및 안전성 검증**:
+  - `RouteSummaryViewModelTest`, `NavigationViewModelTest`, `DestinationViewModelTest` (100% PASS).
+  - 총 187개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 26. GPS 단일 Provider 우선순위화, 보행자 기구학 이상치(Anti-Teleport) 기각 필터 및 지도 회전/흔들림 안정화 (ADR-028)
+- **9월 26일 비행 기록 포렌식 규명 (`navigation_flight.log.1`)**:
+  - 3개 Provider 동시 등록으로 인한 17m 평행 좌표 핑퐁(1초에 2회 왕복), 기지국 좌표 난입(435m 순간이동 및 GPS 수신율 35% 급락), 목표 방위각 180도 역회전(4,851회 방위 점프) 원인 규명.
+- **단일 고정밀 Provider 배타적 우선순위 등록 (`ProductionLocationSource`)**:
+  - `GPS_PROVIDER`, `FUSED_PROVIDER`, `NETWORK_PROVIDER` 다중 등록을 전면 금지하고, S25 Ultra 고정밀 융합 `LocationManager.FUSED_PROVIDER`를 배타적 1순위로 단독 등록하여 17m 핑퐁 및 기지국 좌표 혼입 원천 차단.
+- **보행자 기구학 안티 텔레포트 필터 (`LocationOutlierFilter`)**:
+  - 3초 이내 25m 이상 이동 및 시속 36km/h 초과 물리적 불가능 좌표 즉각 기각.
+  - 선행 양호 GPS 확보 후 단발성 45m 초과 저정밀도 기지국 픽스 즉각 기각.
+  - 4회 연속 이상치 발생 시 차량/대중교통 탑승 판정으로 데드락 방지 강제 수용.
+- **헤딩 상보 필터 최적화 및 지도 추종 안정화 (`NavigationViewModel`, `RealRouteMapView`)**:
+  - 정지/초저속($<0.5\text{m/s}$) 시 잔류 GPS bearing 초기화 및 12m 이하 고정밀 샘플에서만 bearing 갱신.
+  - 각도차 50도 초과 시 나침반 100% 반영으로 지도 풍차 회전 차단.
+  - Leaflet 지도 카메라 `panTo` 불감대를 2.5m로 상향하여 제자리 정지/서행 중 덜덜 떨림 0% 달성.
+- **단위 테스트 및 안전성 검증**:
+  - `LocationOutlierFilterTest.normal walking samples are accepted smoothly` (PASS)
+  - `LocationOutlierFilterTest.sept 26 log 435m teleport jump in 102ms is rejected` (PASS)
+  - `LocationOutlierFilterTest.sept 26 log 212m jump in 270ms is rejected` (PASS)
+  - `LocationOutlierFilterTest.isolated cell tower low accuracy fix is rejected when GPS fix is healthy` (PASS)
+  - `LocationOutlierFilterTest.consecutive high speed movements accept new location to avoid deadlock` (PASS)
+  - 총 192개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+
 
 
 

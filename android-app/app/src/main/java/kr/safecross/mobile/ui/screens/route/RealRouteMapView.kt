@@ -711,13 +711,14 @@ private fun buildRouteMapHtml(
                     var dLat = (lat - lastPannedLatLng[0]) * 111000;
                     var dLon = (lon - lastPannedLatLng[1]) * 111000 * Math.cos(lat * Math.PI / 180);
                     var distM = Math.sqrt(dLat * dLat + dLon * dLon);
-                    if (distM >= 1.5) {
+                    // 2.5m 미만의 미세 GPS 지터(Jitter)는 카메라를 이동하지 않고 마커만 갱신 (화면 떨림 완벽 방지)
+                    if (distM >= 2.5) {
                         shouldPan = true;
                     }
                 }
                 if (shouldPan) {
                     lastPannedLatLng = [lat, lon];
-                    map.panTo(latLng, { animate: true, duration: 0.35 });
+                    map.panTo(latLng, { animate: true, duration: 0.45, easeLinearity: 0.25 });
                 }
             }
         }

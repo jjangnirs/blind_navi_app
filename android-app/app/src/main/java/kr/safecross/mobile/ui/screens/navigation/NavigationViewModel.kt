@@ -162,7 +162,8 @@ class NavigationViewModel(
         val gpsBrg = lastValidGpsBearing
         val effectiveHeading: Float = if (lastSpeedMps >= 0.65f && gpsBrg != null) {
             val deltaGps = ((gpsBrg - heading + 540.0) % 360.0) - 180.0
-            if (kotlin.math.abs(deltaGps) <= 80.0) {
+            // 급격한 회전(50도 초과)이나 제자리 정지 시에는 나침반을 100% 신뢰하여 지도 흔들림 방지
+            if (kotlin.math.abs(deltaGps) <= 50.0) {
                 ((heading + (deltaGps * 0.65) + 360.0) % 360.0).toFloat()
             } else {
                 heading
@@ -280,8 +281,11 @@ class NavigationViewModel(
         // GPS 수신 원격 기록 및 이동 속도/방위각 갱신
         if (sample.speedMps != null) {
             lastSpeedMps = sample.speedMps
+            if (sample.speedMps < 0.5f) {
+                lastValidGpsBearing = null // 정지 또는 초저속 시 GPS bearing 잔류로 인한 오동작 방지
+            }
         }
-        if (sample.bearingDegrees != null && sample.speedMps != null && sample.speedMps >= 0.75f && sample.accuracyMeters <= 25.0f) {
+        if (sample.bearingDegrees != null && sample.speedMps != null && sample.speedMps >= 0.75f && sample.accuracyMeters <= 12.0f) {
             lastValidGpsBearing = sample.bearingDegrees
         }
 
