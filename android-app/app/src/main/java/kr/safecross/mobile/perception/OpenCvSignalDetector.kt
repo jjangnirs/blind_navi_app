@@ -216,6 +216,11 @@ object OpenCvSignalDetector {
                     bottom = (absBottom.toFloat() / frameHeight).coerceIn(0f, 1f)
                 )
 
+                // 도로 노면(Ground Plane) 아스팔트 위 차량 광원 기각 (보행 신호등은 지상 2.5m 이상 높이에 설치됨, ADR-032)
+                if (normBox.top > 0.52f && (normBox.top + normBox.bottom) / 2f > 0.56f) {
+                    continue
+                }
+
                 // 점수 계산: 원형도 + 면적 점수
                 val circleScore = if (isCircle) 0.98f else 0.88f
                 if (circleScore > maxScore) {

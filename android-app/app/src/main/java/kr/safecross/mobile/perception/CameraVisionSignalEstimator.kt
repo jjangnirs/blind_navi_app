@@ -261,15 +261,17 @@ class CameraVisionSignalEstimator(
 
         val minClusterPixels = if (targetRoi != null) 4 else 8
 
-        // 적색 유효 블롭 필터링 (가로형 차량 신호등 배제 및 다크 하우징 검증)
+        // 적색 유효 블롭 필터링 (가로형 차량 신호등 배제 및 다크 하우징/세로 2구 슬롯 검증, ADR-032)
         val validRedBlobs = redBlobs.filter { blob ->
             if (blob.pixelCount < minClusterPixels) return@filter false
             val isHorizontalVehicle = (blob.width > blob.height * 1.35f) && (blob.width >= 12)
             if (isHorizontalVehicle) return@filter false
-            verifyDarkHousingContrast(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, blob.avgV)
+            val hasDarkHousing = verifyDarkHousingContrast(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, blob.avgV)
+            if (!hasDarkHousing) return@filter false
+            verifyVerticalTwoAspectHousing(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, ObservedSignalState.RED, blob.avgV)
         }
 
-        // 녹색 유효 블롭 필터링 (가로수/간판 배제 및 다크 하우징 검증)
+        // 녹색 유효 블롭 필터링 (가로수/간판 배제 및 다크 하우징/세로 2구 슬롯 검증, ADR-032)
         // 1. 화면 좌우 측면 주변부(Peripheral) 녹색 배제 (X < 0.28 또는 X > 0.72는 전방 신호등이 아닌 인도변 상가 간판)
         // 2. 2자리 숫자형 잔여시간 표시기(W <= H * 1.65)를 정상 수용하도록 임계값 최적화
         val validGreenBlobs = greenBlobs.filter { blob ->
@@ -279,7 +281,9 @@ class CameraVisionSignalEstimator(
 
             val isHorizontalVehicle = (blob.width > blob.height * 1.65f) && (blob.width >= 18)
             if (isHorizontalVehicle) return@filter false
-            verifyDarkHousingContrast(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, blob.avgV)
+            val hasDarkHousing = verifyDarkHousingContrast(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, blob.avgV)
+            if (!hasDarkHousing) return@filter false
+            verifyVerticalTwoAspectHousing(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, ObservedSignalState.GREEN, blob.avgV)
         }
 
         // 타깃 참조점 결정:
@@ -776,6 +780,100 @@ class CameraVisionSignalEstimator(
 
         // 2. 테두리가 밝고(>= 0.45) 콘트라스트가 0.22 미만이면 다크 하우징이 없는 간판/배경광으로 기각
         if (avgCollarV >= 0.45f && contrast < 0.22f) {
+            return false
+        }
+
+        return true
+    }
+
+    /**
+     * 한국 표준 보행신호기(세로 2구 2-Aspect: 상단 적색, 하단 녹색) 하우징 구조를 공간적으로 검증합니다 (ADR-032).
+     *
+     * 1. GREEN(하단 녹색 보행등) 검출 시:
+     *    - 램프 크기(W x H) 기준 바로 위쪽 영역(Y: minY - 1.4*H ~ minY - 0.3*H)은 상단 적색 램프가 위치하는 하우징 슬롯입니다.
+     *    - 이 상단 영역은 소등 상태이므로 평균 밝기(V)가 어둡고(V <= 0.72) 주변 다크 하우징에 둘러싸여 있어야 합니다.
+     *    - 만약 상단 영역이 매우 밝거나(배경 하늘, 상가 유리창, 밝은 간판 등 V >= 0.75) 하우징이 없으면
+     *      독립된 단일 녹색 광원(가로등, 네온사인, 상가 간판)이므로 기각합니다.
+     * 2. RED(상단 적색 정지등) 검출 시:
+     *    - 램프 바로 아래쪽 영역(Y: maxY + 0.3*H ~ maxY + 1.4*H)은 소등된 하단 녹색 램프 하우징 슬롯이어야 합니다.
+     */
+    fun verifyVerticalTwoAspectHousing(
+        buffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        minX: Int,
+        maxX: Int,
+        minY: Int,
+        maxY: Int,
+        state: ObservedSignalState,
+        lampBrightness: Float
+    ): Boolean {
+        val blobW = maxX - minX + 1
+        val blobH = maxY - minY + 1
+
+        // 원거리 미소 램프(높이 < 6px)이거나 경계가 이미지 밖으로 나가는 경우 완화하여 판정 불가 시 통과
+        if (blobH < 6 || blobW < 6) return true
+
+        val companionMinY: Int
+        val companionMaxY: Int
+
+        if (state == ObservedSignalState.GREEN) {
+            // 상단 동반 슬롯 탐색 (녹색등 위쪽 0.3*H ~ 1.4*H)
+            companionMinY = minY - (blobH * 1.4f).toInt()
+            companionMaxY = minY - (blobH * 0.3f).toInt()
+            if (companionMinY < 0) {
+                // 화면 최상단에 붙어있어 상단 하우징이 잘려 나간 경우
+                return true
+            }
+        } else if (state == ObservedSignalState.RED) {
+            // 하단 동반 슬롯 탐색 (적색등 아래쪽 0.3*H ~ 1.4*H)
+            companionMinY = maxY + (blobH * 0.3f).toInt()
+            companionMaxY = maxY + (blobH * 1.4f).toInt()
+            if (companionMaxY >= height) {
+                return true
+            }
+        } else {
+            return true
+        }
+
+        val step = 2
+        var companionSumV = 0.0f
+        var companionPixels = 0
+
+        try {
+            for (y in companionMinY..companionMaxY step step) {
+                if (y < 0 || y >= height) continue
+                val rowOffset = y * width * 4
+                for (x in minX..maxX step step) {
+                    if (x < 0 || x >= width) continue
+                    val offset = rowOffset + (x * 4)
+                    if (offset + 2 < buffer.capacity()) {
+                        val r = buffer.get(offset).toInt() and 0xFF
+                        val g = buffer.get(offset + 1).toInt() and 0xFF
+                        val b = buffer.get(offset + 2).toInt() and 0xFF
+                        val maxVal = maxOf(r, maxOf(g, b))
+                        companionSumV += maxVal / 255.0f
+                        companionPixels++
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            return true
+        }
+
+        if (companionPixels < 4) return true
+
+        val avgCompanionV = companionSumV / companionPixels
+
+        // 검증 1: 소등된 반대편 렌즈 슬롯은 발광 중인 램프보다 확연히 어두워야 함
+        val contrastWithCompanion = lampBrightness - avgCompanionV
+        if (contrastWithCompanion < 0.15f && avgCompanionV > 0.55f) {
+            // 상단/하단 영역이 램프만큼이나 밝음 (테두리 없는 단일 대형 간판이나 배경 전광판) -> 기각
+            return false
+        }
+
+        // 검증 2: 소등된 슬롯 영역의 절대 밝기가 너무 밝으면(0.72 이상) 하늘이나 밝은 간판 배경 노출 -> 기각
+        if (avgCompanionV > 0.72f) {
             return false
         }
 

@@ -72,7 +72,22 @@ class LocalVlmSignalVerifier(
                 )
             }
 
-            // 2. 동적 움직임(Motion Vector) 및 고속 이동 차량 기각 (개선 2단계)
+            // 1-1. 도로 노면(Ground Plane) 아스팔트 위 차량 광원 기각 (보행 신호등은 지상 2.5m 이상 높이에 설치됨, ADR-032)
+            val cy = (box.top + box.bottom) / 2f
+            if (cy > 0.58f && box.top > 0.52f) {
+                val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
+                recordObservation(rejected)
+                lastObservation = rejected
+                return VerificationResult(
+                    verifiedState = ObservedSignalState.UNKNOWN,
+                    confidenceScore = 0.20f,
+                    isVerified = false,
+                    verificationReason = "REJECTED_ROADWAY_GROUND_PLANE",
+                    ephemeralTrackId = currentTrackId
+                )
+            }
+
+            // 2. 동적 움직임(Motion Vector) 및 고속 이동 차량/정면 접근 차량 기각 (ADR-032)
             val prev = lastObservation
             if (prev != null && prev.state != ObservedSignalState.UNKNOWN && prev.frameTimestampNanos > 0L && candidate.frameTimestampNanos > prev.frameTimestampNanos) {
                 val dtSec = (candidate.frameTimestampNanos - prev.frameTimestampNanos) / 1_000_000_000.0
@@ -86,10 +101,10 @@ class LocalVlmSignalVerifier(
 
                     // 핸드헬드 기기의 미세 손떨림(dist <= 0.18f)은 정상 진동으로 수용.
                     // 동일 신호등 기둥 내 상/하단 램프 전환(적색<->녹색)은 X 변위가 극히 작음(|cx2-cx1| <= 0.06f)
-                    // 가로로 주행하는 차량(velocity > 2.0f && dist > 0.18f && 수평 이동 우세)만 기각하며, 한손 파지 시 발생하는 진동은 정상 수용
                     val isSamePoleVerticalTransition = kotlin.math.abs(cx2 - cx1) <= 0.06f && kotlin.math.abs(cy2 - cy1) <= 0.16f
                     val isHandheldShake = dist <= 0.18f
 
+                    // (1) 수평 주행 차량 기각 (속도 > 1.5 & 거리 > 0.18)
                     if (!isSamePoleVerticalTransition && !isHandheldShake && dist > 0.18f && velocity > 1.5f) {
                         val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
                         recordObservation(rejected)
@@ -101,6 +116,25 @@ class LocalVlmSignalVerifier(
                             verificationReason = "REJECTED_DYNAMIC_MOTION",
                             ephemeralTrackId = currentTrackId
                         )
+                    }
+
+                    // (2) 정면 접근 차량(Scale Expansion) 기각: 중심 위치 이동은 작으나 면적이 단시간에 급팽창하는 광원
+                    val curArea = box.width * box.height
+                    val prevArea = prev.box.width * prev.box.height
+                    if (prevArea > 0f && dtSec in 0.03..0.40) {
+                        val expansionRatio = curArea / prevArea
+                        if (expansionRatio > 2.4f || expansionRatio < 0.40f) {
+                            val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
+                            recordObservation(rejected)
+                            lastObservation = rejected
+                            return VerificationResult(
+                                verifiedState = ObservedSignalState.UNKNOWN,
+                                confidenceScore = 0.20f,
+                                isVerified = false,
+                                verificationReason = "REJECTED_APPROACHING_VEHICLE_SCALE_EXPANSION",
+                                ephemeralTrackId = currentTrackId
+                            )
+                        }
                     }
                 }
             }

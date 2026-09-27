@@ -199,4 +199,96 @@ class OpenCvSignalDetectorTest {
         assertEquals("한손 파지 하향 각도(-59.4도)에서도 명확한 적색 신호는 RED_ESTIMATE를 유지해야 함", CrossingState.RED_ESTIMATE, output.state)
         assertEquals("적색 신호입니다. 대기하세요.", output.guidanceText)
     }
+
+    @Test
+    fun testRejectsRoadwayGroundPlaneVehicleLight() {
+        val verifier = kr.safecross.mobile.perception.LocalVlmSignalVerifier()
+        // 차도 아스팔트 노면 하단(CY > 0.58, Top > 0.52)에 위치한 차량 후미등 후보
+        val groundLight = SignalObservation(
+            ephemeralTrackId = "track-car-ground",
+            state = ObservedSignalState.RED,
+            score = 0.95f,
+            box = NormalizedBox(left = 0.45f, top = 0.55f, right = 0.55f, bottom = 0.65f),
+            frameTimestampNanos = 100_000_000L,
+            quality = FrameQuality(1.0f, 1.0f, true)
+        )
+        val dummyBuffer = ByteBuffer.allocateDirect(100 * 100 * 4)
+        val result = verifier.verify(groundLight, dummyBuffer, 100, 100)
+
+        assertEquals("노면 하단 차량 광원은 UNKNOWN으로 기각되어야 함", ObservedSignalState.UNKNOWN, result.verifiedState)
+        assertEquals("REJECTED_ROADWAY_GROUND_PLANE", result.verificationReason)
+    }
+
+    @Test
+    fun testRejectsApproachingVehicleScaleExpansion() {
+        val verifier = kr.safecross.mobile.perception.LocalVlmSignalVerifier()
+        val dummyBuffer = ByteBuffer.allocateDirect(100 * 100 * 4)
+
+        // 프레임 1: 원거리 차량 전조등 (작은 박스: 0.05 x 0.05 = 0.0025)
+        val frame1 = SignalObservation(
+            ephemeralTrackId = "track-car-1",
+            state = ObservedSignalState.GREEN,
+            score = 0.90f,
+            box = NormalizedBox(left = 0.45f, top = 0.30f, right = 0.50f, bottom = 0.35f),
+            frameTimestampNanos = 100_000_000L,
+            quality = FrameQuality(1.0f, 1.0f, true)
+        )
+        verifier.verify(frame1, dummyBuffer, 100, 100)
+
+        // 프레임 2 (0.1초 뒤): 정면으로 다가온 차량으로 인해 면적이 3배 급팽창 (0.09 x 0.09 = 0.0081)
+        val frame2 = SignalObservation(
+            ephemeralTrackId = "track-car-1",
+            state = ObservedSignalState.GREEN,
+            score = 0.90f,
+            box = NormalizedBox(left = 0.43f, top = 0.28f, right = 0.52f, bottom = 0.37f),
+            frameTimestampNanos = 200_000_000L,
+            quality = FrameQuality(1.0f, 1.0f, true)
+        )
+        val result2 = verifier.verify(frame2, dummyBuffer, 100, 100)
+
+        assertEquals("정면 접근 차량(면적 급팽창)은 UNKNOWN으로 기각되어야 함", ObservedSignalState.UNKNOWN, result2.verifiedState)
+        assertEquals("REJECTED_APPROACHING_VEHICLE_SCALE_EXPANSION", result2.verificationReason)
+    }
+
+    @Test
+    fun testRejectsIsolatedGreenSignWithoutCompanionHousing() {
+        val estimator = kr.safecross.mobile.perception.CameraVisionSignalEstimator()
+        val width = 200
+        val height = 200
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(java.nio.ByteOrder.nativeOrder())
+
+        // 배경: 흰색/밝은 상가 간판 벽면 (V = 230)
+        for (i in 0 until width * height) {
+            buffer.put(230.toByte())
+            buffer.put(230.toByte())
+            buffer.put(230.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 중앙(x: 80..120, y: 80..120)에 초록색 원형 글자/네온 주입 (상단에 다크 하우징 없이 온통 밝은 벽면)
+        for (y in 80..120) {
+            for (x in 80..120) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 10.toByte())
+                buffer.put(offset + 1, 230.toByte())
+                buffer.put(offset + 2, 160.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        // 한국형 세로 2구 하우징 검증 수행: 상단 동반 슬롯이 어둡지 않고 밝은 벽면이므로 false를 반환해야 함
+        val hasVerticalHousing = estimator.verifyVerticalTwoAspectHousing(
+            buffer = buffer,
+            width = width,
+            height = height,
+            minX = 80,
+            maxX = 120,
+            minY = 80,
+            maxY = 120,
+            state = ObservedSignalState.GREEN,
+            lampBrightness = 230f / 255f
+        )
+        assertFalse("상단 동반 적색 슬롯에 다크 하우징이 없는 독립 간판은 기각되어야 함", hasVerticalHousing)
+    }
 }

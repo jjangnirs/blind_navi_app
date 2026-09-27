@@ -33,7 +33,7 @@ class TwoTierHybridSignalEstimator(
 
         // [게이트 1: 신호등 객체 미검출 시]
         if (targetSignal == null) {
-            // 뷰파인더 폴백 활성화 시: 뷰파인더 가이드 박스(0.20..0.80, 0.10..0.60) 내부를 정밀 분석
+            // 뷰파인더 폴백 활성화 시: 뷰파인더 가이드 박스(0.30..0.70, 0.12..0.65) 내부를 정밀 분석
             if (fallbackToViewfinder) {
                 val viewfinderBox = NormalizedBox(left = 0.30f, top = 0.12f, right = 0.70f, bottom = 0.65f)
                 val roiObservations = colorAnalyzer.estimateWithinRoi(frame, viewfinderBox)
@@ -45,12 +45,23 @@ class TwoTierHybridSignalEstimator(
                         frame.width,
                         frame.height
                     )
+                    // Zero False-Green 원칙: 딥러닝 객체 모델 미검출 시 뷰파인더 폴백에서 녹색 판정은
+                    // 신뢰도가 0.90f 이상으로 완벽 검증된 경우에만 승인하며, 그렇지 않으면 UNKNOWN으로 안전 차단 (ADR-032)
+                    val isSafeGreen = verifiedResult.verifiedState == ObservedSignalState.GREEN &&
+                            verifiedResult.isVerified && verifiedResult.confidenceScore >= 0.90f
+                    val finalState = if (verifiedResult.verifiedState == ObservedSignalState.GREEN && !isSafeGreen) {
+                        ObservedSignalState.UNKNOWN
+                    } else {
+                        verifiedResult.verifiedState
+                    }
+                    val finalScore = if (finalState == ObservedSignalState.UNKNOWN) 0.25f else verifiedResult.confidenceScore
+
                     return listOf(
                         candidate.copy(
-                            state = verifiedResult.verifiedState,
-                            score = verifiedResult.confidenceScore,
+                            state = finalState,
+                            score = finalScore,
                             ephemeralTrackId = verifiedResult.ephemeralTrackId.ifEmpty { candidate.ephemeralTrackId },
-                            modelVersion = "two-tier-hybrid-viewfinder-v2.1"
+                            modelVersion = "two-tier-hybrid-viewfinder-v2.2"
                         )
                     )
                 }
