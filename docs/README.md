@@ -110,6 +110,30 @@ MVP에 포함한다.
     - 보행자 기구학 안티 텔레포트 필터(`LocationOutlierFilter`): 3초 이내 25m 이상 이동 및 시속 36km/h 초과 물리적 불가능 좌표 즉각 기각, 선행 GPS 확보 후 단발성 45m 초과 저정밀도 기지국 픽스 기각 (4회 연속 시 데드락 방지 수용)
     - 나침반-GPS 헤딩 상보 필터 안정화: 정지/초저속($<0.5\text{m/s}$) 시 잔류 GPS bearing 초기화, 12m 이하 고정밀 샘플에서만 bearing 갱신, 각도차 50도 초과 시 나침반 100% 반영으로 지도 풍차 회전 차단
     - 지도 카메라 추종 불감대 상향(`RealRouteMapView`): 2.5m 미만 미세 지터 시 카메라 팬(panTo)을 방지하고 마커만 부드럽게 갱신하여 제자리 정지/서행 중 화면 떨림 완벽 제거
+34. 화면 주변부 상가 간판 녹색광 오인 차단(Zero False-Green) 및 조준선(Reticle) 중앙 긴축 (`CrossingAssistUiState`, `TwoTierHybridSignalEstimator`, `CameraVisionSignalEstimator`, `LocalVlmSignalVerifier`, `TargetSignalAssociator`, ADR-029):
+    - 조준선(Reticle/Viewfinder) 중앙 40% 긴축: 기존 가로 60%(0.20..0.80)에서 중앙 40%(0.30..0.70)로 대폭 긴축하여, 정면 횡단보도 대기 시 좌/우측 인도 상가 간판, 네온사인, 편의점 녹색 LED가 조준 영역 내부로 들어오는 결함 원천 격리
+    - 주변부 녹색 블롭 기각 및 수평 가중치 강화: 화면 외곽($normCx < 0.28 \lor normCx > 0.72$)의 녹색 블롭은 보행 신호등 후보에서 배제(`validGreenBlobs`), 수평 거리 편차 가중치를 1.8배로 상향하여 화면 중앙 신호에 절대 우선순위 부여
+    - 다크 하우징(차광판 케이스) 콘트라스트 엄격화(`verifyDarkHousingContrast`): 발광 램프와 주변 차광판 간 최소 밝기 대비를 $0.30$ 이상으로 엄격화하여 검은 바탕 간판 프레임 통과 맹점 해소
+    - 공간 위치 검증 및 UNKNOWN 강등(`LocalVlmSignalVerifier`): $normCx < 0.28 \lor normCx > 0.72$ 녹색 신호는 시야각 밖 상가 간판으로 간주하여 `UNKNOWN`으로 즉시 강등(`REJECTED_PERIPHERAL_SIGNBOARD_GREEN`)
+    - 측면 녹색 신호 1:1 목표 정합 거부(`TargetSignalAssociator`): 화면 주변부($cx < 0.28 \lor cx > 0.72$) 녹색 후보는 단일 신호이더라도 1:1 목표 신호 확정을 거부(`PERIPHERAL_SIGNAL_MISMATCH`)
+35. OpenCV 4.5.3 컴퓨터 비전 라이브러리 연동 및 화면-음성 100% 동기화, 적색 핑퐁(Thrashing) 방지 (`OpenCvBridge`, `OpenCvSignalDetector`, `CameraVisionSignalEstimator`, `CrossingAssistScreen`, `CrossingDecisionEngine`, ADR-030):
+    - OpenCV 4.5.3 Android 공식 연동: `com.quickbirdstudios:opencv:4.5.3.0` Maven Central AAR 연동 및 `OpenCvBridge` JVM/Android 하이브리드 안전 로더 탑재
+    - 고정밀 원형도 및 모폴로지 검출기(`OpenCvSignalDetector`): OpenCV 표준 In-Range 색상 분할, `MORPH_ELLIPSE` 잡음 제거, 외곽선 추출 및 원형도($\text{Circularity} \ge 0.65$) 검증을 통해 직사각형 상가 간판과 원형 보행등 램프를 기하학적으로 완전 분별
+    - 화면 뱃지-음성 안내 100% 동기화(`CrossingAssistScreen`): 우측 상단 플로팅 뱃지를 1프레임 미검증 관측치가 아닌 의사결정 상태(`decisionState`)와 1:1 일치시켜 화면은 🔴인데 음성은 침묵/각도 경고만 나오는 시각-청각 불일치 결함 완전 해결
+    - 적색 핑퐁(Thrashing) 완충 버퍼(`CrossingDecisionEngine`): 녹색 보행등 진행 중 차도 건너편 차량등/반사광에 의한 0.3초 미세 적색 노이즈 발생 시 즉시 적색으로 뒤집히지 않도록 2프레임 완충 버퍼 적용
+    - 기울기 불량 시 적색 안전 우선권(ST-001): 기기 각도가 살짝 숙여지더라도 전방 적색 정지 신호가 명확할 경우 침묵하지 않고 즉시 "적색 신호입니다. 대기하세요."를 최우선 발화
+36. 적색 신호 점수 보존 및 한손 파지 하향 각도(-65°) 안전 오버라이드, 노면 반사광 필터 (`LocalVlmSignalVerifier`, `CrossingDecisionEngine`, ADR-031):
+    - 적색 신호 시간 평활화 스코어 보존: 한손 파지 대기 중 단말기 각도가 하향될 때 적색 점수가 0.31로 급락하는 현상을 보정하여 0.94~0.99의 높은 안전 점수를 보존
+    - 한손 파지 하향 각도(-65°) 적색 안전 우선권: 대기 중 팔이 내려가 피치 각도가 -59.4°로 처지더라도 적색 신호는 기각(UNKNOWN 침묵)하지 않고 안전 대기 안내 유지
+    - 노면 아스팔트 반사광 게이트(`REJECTED_ROADWAY_GROUND_PLANE`): 빗길이나 젖은 아스팔트 바닥($CY > 0.58f, \text{Top} > 0.52f$)에 비친 왜곡된 광원을 원천 기각
+37. 세로 2구 하우징 기하 검증 및 정면 접근 차량 스케일 팽창 기각 (`CameraVisionSignalEstimator`, `LocalVlmSignalVerifier`, ADR-032):
+    - 대한민국 표준 세로 2구 하우징 검증(`verifyVerticalTwoAspectHousing`): 녹색등 상단 슬롯에 다크 하우징 후드가 실제로 존재하는지 검증하여, 상단이 밝은 벽면/하늘인 상가 간판을 원천 차단
+    - 정면 접근 차량 스케일 팽창 기각(`REJECTED_APPROACHING_VEHICLE_SCALE_EXPANSION`): 단시간 내 면적이 2.4배 이상 급팽창하는 정면 접근 차량의 헤드라이트/전조등을 동적 물체로 식별하여 즉각 기각
+38. C-ITS 실시간 신호 연동, 아이나비식 상태 전이 트리거 및 지도 시각화 (`CitsRealSignalStatusProvider`, `CrossingAssistViewModel`, `RealRouteMapView`, ADR-033):
+    - C-ITS 실시간 보행 신호 연동: 공공데이터포털/경찰청 UTIC OpenAPI 인증키 기반으로 교차로별 실시간 신호 상태(RED/GREEN) 및 잔여 시간(초)을 1초 단위로 수신 및 서킷 브레이커 보호
+    - 아이나비식 적색 락온 $\rightarrow$ 전이(Transition) 감지: 허공에서 초록불을 찾지 않고 대기 중 빨간불 위치를 앵커로 고정하여, 초록색 간판이나 시내버스를 100% 무시하고 적색 $\rightarrow$ 녹색 전이만 포착
+    - 1회성 출발 알림(1-Shot Departure Trigger) & 비전 즉시 동결: 녹색 전환 순간 1회 발화 및 진동 피드백 후 비전 분석을 즉시 동결하여 건너는 도중 폰 흔들림으로 인한 핑퐁/재판정 영구 박멸
+    - VWorld 정밀 지도 상 C-ITS 건널목 시각화: C-ITS 실시간 신호등이 있는 횡단보도는 에메랄드 네온 펄스 핀(🚦) 및 `[C-ITS]` 뱃지로 표기하고, 좌측 상단에 범례(Legend) 상시 노출
 
 MVP에서 제외한다.
 

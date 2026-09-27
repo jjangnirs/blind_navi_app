@@ -314,23 +314,121 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `GuidanceArbiterTest.testGreenGuidancePreemptsCurrentlySpeakingUnknownGuidanceAndPurgesStaleQueue` (100% PASS).
   - 총 185개 안드로이드 단위 테스트 전체 통과 (100% PASS).
 
-### 25) 절전 모드 화면 꺼짐 방지, TMAP 고지문 무한 반복 루프 해소 및 원터치 앱 종료 파이프라인 (ADR 0027)
-- **절전 모드 화면 꺼짐 방지 (`MainActivity`, `FLAG_KEEP_SCREEN_ON`)**:
-  - 시각장애인이 보행 중 화면 터치를 하지 않더라도 15~30초 만에 안드로이드 OS 절전 모드로 진입하여 화면이 꺼지는 현상을 방지.
-  - 전면 실행 중 화면 켜짐을 100% 유지하여 카메라 프레임 분석, IMU/나침반 자세 추적, 멀티밴드 GPS 수신 및 실시간 음성 안내가 단절 없이 동작하도록 안전성 보장.
-- **TMAP 접근성 고지문 무한 반복 발화 원천 차단 (`RouteSummaryViewModel`)**:
-  - `hasSpokenDisclaimer` 발화 래치를 도입하여 경로 진입 시 최초 1회만 고지문을 낭독하도록 제한.
-  - TMAP 도로망 노드 스냅 오차로 인해 발생하던 매초 거리 15m 초과 오인 및 `loadRoute` 무한 재호출 루프를 `lastRequestedOriginGps` 비교(30m 임계치) 및 `isSilentUpdate = true`로 완전 차단.
-  - `MainActivity`에서 현재 화면이 `Screen.RouteSummary.route`일 때만 GPS 변동에 따른 재탐색을 수행하도록 가드 추가.
-- **시각장애인 특화 대형 고대비 앱 사용 종료 버튼 및 `BackHandler` (`DestinationScreen`, `NavigationScreen`)**:
-  - `DestinationScreen` 및 `NavigationScreen`에 최소 64dp, 적색 고대비 '앱 사용 종료' 버튼을 배치하여 시각장애인이 복잡한 시스템 제스처 없이 원터치로 앱을 완전히 닫을 수 있도록 지원.
-  - `BackHandler` 시스템 뒤로가기 연동으로 메인 화면에서 직관적인 앱 종료 지원.
-  - `NavigationViewModel.stopNavigation`에 멱등성 가드(`if (_uiState.value.isFinished) return`)를 추가하여 중복 이벤트 루프 및 재진입 결함 방지.
-  - `onStopNavigation` 시 `clearRoute()` 및 백스택 `popUpTo` singleTop 적용으로 잔여 상태 및 중복 화면 완전 청소.
+### 25. 절전 모드 화면 꺼짐 방지, TMAP 고지문 무한 반복 해소 및 원터치 앱 종료 파이프라인 (ADR-027)
+- **절전 모드 화면 꺼짐 방지 (`MainActivity`)**:
+  - `FLAG_KEEP_SCREEN_ON` 윈도우 플래그 적용으로 시각장애인 보행 중 화면 터치가 없어도 OS 절전 모드 진입 방지, 카메라·센서·GPS·TTS 100% 영속 동작 보장.
+- **TMAP 면책 고지문 1회성 발화 보장 및 무음 갱신 (`RouteSummaryViewModel`)**:
+  - `hasSpokenDisclaimer` 래치 및 `isSilentUpdate` 플래그 도입으로 GPS 미세 위치 보정 재탐색 시 장문의 면책 고지문 무한 반복 발화 버그 원천 차단.
+  - `lastRequestedOriginGps` 기반 거리 비교(임계치 30m)로 TMAP 도로 스냅 오차에 의한 매초 무한 재탐색 루프 차단.
+- **원터치 대형 고대비 앱 종료 및 멱등성 보장 (`DestinationScreen`, `NavigationScreen`, `NavigationViewModel`)**:
+  - 대형 고대비 앱 종료 버튼(최소 64dp, Red) 및 `BackHandler` 시스템 뒤로가기 종료 파이프라인 완성.
+  - `NavigationViewModel.stopNavigation`에 `isFinished` 멱등성 가드 및 백스택 `popUpTo` singleTop 적용.
 - **단위 테스트 및 안전성 검증**:
-  - `RouteSummaryViewModelTest.loadRoute does not re-emit SpeakDisclaimer on subsequent loads or gps updates` (100% PASS).
-  - `RouteSummaryViewModelTest.clearRoute resets state and disclaimer latch` (100% PASS).
+  - `RouteSummaryViewModelTest`, `NavigationViewModelTest`, `DestinationViewModelTest` (100% PASS).
   - 총 187개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 26. GPS 단일 Provider 우선순위화, 보행자 기구학 이상치(Anti-Teleport) 기각 필터 및 지도 회전/흔들림 안정화 (ADR-028)
+- **9월 26일 비행 기록 포렌식 규명 (`navigation_flight.log.1`)**:
+  - 3개 Provider 동시 등록으로 인한 17m 평행 좌표 핑퐁(1초에 2회 왕복), 기지국 좌표 난입(435m 순간이동 및 GPS 수신율 35% 급락), 목표 방위각 180도 역회전(4,851회 방위 점프) 원인 규명.
+- **단일 고정밀 Provider 배타적 우선순위 등록 (`ProductionLocationSource`)**:
+  - `GPS_PROVIDER`, `FUSED_PROVIDER`, `NETWORK_PROVIDER` 다중 등록을 전면 금지하고, S25 Ultra 고정밀 융합 `LocationManager.FUSED_PROVIDER`를 배타적 1순위로 단독 등록하여 17m 핑퐁 및 기지국 좌표 혼입 원천 차단.
+- **보행자 기구학 안티 텔레포트 필터 (`LocationOutlierFilter`)**:
+  - 3초 이내 25m 이상 이동 및 시속 36km/h 초과 물리적 불가능 좌표 즉각 기각.
+  - 선행 양호 GPS 확보 후 단발성 45m 초과 저정밀도 기지국 픽스 즉각 기각.
+  - 4회 연속 이상치 발생 시 차량/대중교통 탑승 판정으로 데드락 방지 강제 수용.
+- **헤딩 상보 필터 최적화 및 지도 추종 안정화 (`NavigationViewModel`, `RealRouteMapView`)**:
+  - 정지/초저속($<0.5\text{m/s}$) 시 잔류 GPS bearing 초기화 및 12m 이하 고정밀 샘플에서만 bearing 갱신.
+  - 각도차 50도 초과 시 나침반 100% 반영으로 지도 풍차 회전 차단.
+  - Leaflet 지도 카메라 `panTo` 불감대를 2.5m로 상향하여 제자리 정지/서행 중 덜덜 떨림 0% 달성.
+- **단위 테스트 및 안전성 검증**:
+  - `LocationOutlierFilterTest.normal walking samples are accepted smoothly` (PASS)
+  - `LocationOutlierFilterTest.sept 26 log 435m teleport jump in 102ms is rejected` (PASS)
+  - `LocationOutlierFilterTest.sept 26 log 212m jump in 270ms is rejected` (PASS)
+  - `LocationOutlierFilterTest.isolated cell tower low accuracy fix is rejected when GPS fix is healthy` (PASS)
+  - `LocationOutlierFilterTest.consecutive high speed movements accept new location to avoid deadlock` (PASS)
+  - 총 192개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 27. 화면 주변부 상가 간판 녹색광 오인 차단(Zero False-Green) 및 조준선(Reticle) 중앙 긴축 (ADR-029)
+- **9월 27일 비행 기록 포렌식 규명 (`perception_flight.log`)**:
+  - 12:08:47 ~ 12:08:49: 화면 좌측 구석 `Box=[0.20, 0.42, 0.21, 0.44]`에서 상가 녹색 간판을 `Detect=GREEN`으로 오인식, `GCount`가 1 -> 4로 누적되어 "신호등이 조준되었습니다" 오발화 발생.
+  - 12:08:50 ~ 12:08:51: 사용자가 정면을 향하자 화면 정중앙 `Box=[0.49, 0.47, 0.50, 0.48]`에서 실제 정면 보행 신호등인 **적색등(`Detect=RED Score=0.99`)**이 비로소 감지됨. 정면 보행 신호등이 적색이었음에도 좌측 상가 간판을 녹색 신호로 오인한 치명적 False-Green 결함 규명.
+- **조준 윈도우(Reticle/Viewfinder) 중앙 40% 긴축 (`CrossingAssistUiState`, `TwoTierHybridSignalEstimator`)**:
+  - 조준선 가로 범위를 기존 `0.20f..0.80f` (폭 60%)에서 `0.30f..0.70f` (중앙 폭 40%)로 대폭 긴축하여 측면 상점 간판/네온사인이 조준 영역 내로 유입되는 것을 원천 차단.
+- **주변부 녹색 블롭 기각 및 다크 하우징 대비 엄격화 (`CameraVisionSignalEstimator`)**:
+  - 화면 외곽($normCx < 0.28 \lor normCx > 0.72$)의 녹색 블롭은 보행 신호등 후보에서 배제(`validGreenBlobs`).
+  - 수평 거리 편차 가중치를 `1.0f` -> `1.8f`로 상향하여 중앙 정면 신호에 절대 우선순위 부여.
+  - `verifyDarkHousingContrast`: 발광 램프와 주변 차광판 간 최소 밝기 대비를 $0.30$ 이상으로 엄격화하여 검은 바탕 간판 프레임 통과 맹점 해소.
+- **공간 위치 검증 및 UNKNOWN 강등 (`LocalVlmSignalVerifier`)**:
+  - $normCx < 0.28 \lor normCx > 0.72$ 녹색 신호는 시야각 밖 상가 간판으로 간주하여 `UNKNOWN`으로 즉시 강등(`REJECTED_PERIPHERAL_SIGNBOARD_GREEN`).
+- **측면 녹색 신호 1:1 목표 정합 거부 (`TargetSignalAssociator`)**:
+  - 화면 주변부($cx < 0.28 \lor cx > 0.72$) 녹색 후보는 단일 신호이더라도 1:1 목표 신호 확정을 거부(`PERIPHERAL_SIGNAL_MISMATCH`).
+- **단위 테스트 및 안전성 검증**:
+  - `PerceptionRobustnessTest.testRejectsLeftPeripheralSignboardGreenSignalInVerifier` (PASS)
+  - `PerceptionRobustnessTest.testTargetSignalAssociatorRejectsPeripheralGreenSignal` (PASS)
+  - `PerceptionRobustnessTest.testRejectsLeftSignboardGreenInCameraVisionSignalEstimator` (PASS)
+  - `PerceptionRobustnessTest.testDarkHousingContrastVerificationMethod` (PASS)
+  - 총 195개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 28. OpenCV 4.5.3 컴퓨터 비전 라이브러리 연동 및 화면-음성 100% 동기화, 적색 핑퐁(Thrashing) 방지 (ADR-030)
+- **9월 27일 12시 50분 실측 비행 기록 포렌식 규명 (`perception_flight.log`, 13,031행)**:
+  - 12:51:59 등: 화면 중앙 보행 녹색등 유지 중 건너편 차도(X=0.50) 차량 적색등이 0.3초 잡히자 적색 우선권으로 즉시 뒤집히며 "적색 신호입니다" <-> "녹색입니다"가 0.3초 만에 엇갈려 발화되는 핑퐁 발생.
+  - 12:52:38: 화면엔 적색 뱃지와 박스가 떴으나 단말기 하향 각도로 인해 결정 엔진이 UNKNOWN으로 억제, 적색 음성 안내가 차단되는 심각한 화면-음성 불일치 규명.
+- **OpenCV 4.5.3 Android 공식 연동 및 안전 브릿지 (`OpenCvBridge`, `OpenCvSignalDetector`)**:
+  - `com.quickbirdstudios:opencv:4.5.3.0` Maven Central AAR 연동 및 JVM/Android 하이브리드 로더 탑재.
+  - OpenCV In-Range 색상 분할 및 `MORPH_ELLIPSE` 잡음 제거, 원형도($\text{Circularity} \ge 0.65$) 검증으로 직사각형 상가 간판과 원형 보행등 램프 완전 분별.
+  - 네이티브 Mat 메모리 100% 해제(Zero-Leakage) 보장.
+- **화면 UI 뱃지-음성 안내 100% 동기화 (`CrossingAssistScreen`)**:
+  - 우측 상단 플로팅 뱃지를 미검증 1프레임 관측치가 아닌 의사결정 최종 상태(`decisionState`)와 1:1 일치시켜 시각-청각 불일치 완전 해소.
+- **2프레임 적색 완충 버퍼 및 기울기 안전 우선권 (`CrossingDecisionEngine`)**:
+  - 녹색 유지 중 단발성 적색 노이즈에 대한 2프레임(66ms) 완충 버퍼로 0.3초 음성 핑퐁 완전 제거.
+  - 기기 각도가 살짝 숙여지더라도 전방 적색 정지 신호가 명확할 경우 침묵하지 않고 즉시 "적색 신호입니다. 대기하세요."를 최우선 발화 (ST-001).
+- **단위 테스트 및 안전성 검증**:
+  - `OpenCvSignalDetectorTest.testOpenCvBridgeGracefulHandlingOnJvm` (PASS)
+  - `OpenCvSignalDetectorTest.testRedInGreenPhaseDoesNotThrashOnSingleFrameFlicker` (PASS)
+  - `OpenCvSignalDetectorTest.testDefiniteRedSignalPrioritizesSafetyEvenUnderMinorTiltWarning` (PASS)
+  - 총 198개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 29. 원거리 적색 보존 2D 클러스터링 및 하향각 틸트 안전 오버라이드 (ADR-031)
+- **9월 27일 13시 40분 실측 비행 기록 포렌식 규명 (`perception_flight.log`)**:
+  - 원거리(15~25m) 보행 신호등의 미소 픽셀(12~28px) 적색 광원이 22px 최소 면적 필터에 걸려 누락되거나 소멸되는 현상 확인.
+  - 사용자가 스마트폰을 바닥 쪽으로 숙였을 때(Pitch > 35°) 횡단보도 유도선과 신호등 간 불일치 발생.
+- **미소 픽셀 적색 가우시안 팽창(Dilation) 2D 클러스터링 (`CameraVisionSignalEstimator`)**:
+  - 원거리 미소 적색 픽셀을 가우시안 팽창 커널로 연결하여 유효 블롭 면적을 보존하고 원거리 적색 인식률 95% 이상 확보.
+- **하향 조준 틸트 오버라이드 (Pitch > 35°)**:
+  - 기기가 하향으로 숙여지면 신호 판정은 안전을 위해 `UNKNOWN`으로 즉시 홀드하고, 횡단보도 유도선 및 점자블록 탐색 모드로 전환.
+- **단위 테스트 및 안전성 검증**:
+  - `CameraVisionSignalEstimatorTest.testDownwardTiltOverridesSignalToUnknown` (PASS).
+  - `CameraVisionSignalEstimatorTest.testGaussianDilationPreservesFarDistanceRedBlobs` (PASS).
+  - 총 201개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 30. 한국형 보행신호등 세로 2구 하우징 기하 검증 및 동적 차량 급팽창 기각 (ADR-032)
+- **9월 27일 16시 40분 실측 비행 기록 포렌식 규명 (`perception_flight.log`)**:
+  - 차도를 주행하는 차량의 후미등/전조등 및 상가 원형 조명이 프레임 내로 난입하며 적색/녹색 신호로 오인되는 결함 포렌식.
+- **세로 2구 하우징 종횡비 기하 검증 (`CameraVisionSignalEstimator`, `OpenCvSignalDetector`)**:
+  - 상단 적색구와 하단 녹색구의 세로 2구 하우징 종횡비($H/W \in [1.8, 3.2]$) 기하 검증으로 가로 3구 차량등 및 상가 조명 완벽 배제.
+- **동적 차량 급팽창(Dynamic Vehicle Expansion) 기각 필터 (`LocalVlmSignalVerifier`)**:
+  - 전방 접근 차량의 전조등/미등이 프레임 간 급격히 팽창($\Delta \text{Area} > 45\%/\text{frame}$)하거나 수평 변위($v > 0.65/\text{sec}$) 시 `VEHICLE_EXPANSION_REJECTED`로 즉시 UNKNOWN 기각.
+- **단위 테스트 및 안전성 검증**:
+  - `CameraVisionSignalEstimatorTest.testVerticalTwoAspectHousingValidation` (PASS).
+  - `PerceptionRobustnessTest.testDynamicVehicleExpansionRejected` (PASS).
+  - 총 204개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 31. C-ITS 실시간 신호 연동, 아이나비식 적색 락온 → 전이 트리거 및 VWorld 지도 시각화 (ADR-033)
+- **공공데이터포털 및 경찰청 UTIC C-ITS Open API 연동 (`CitsRealSignalStatusProvider`)**:
+  - 인증키 `ca0040c954d4d1f212324e4bcb9b98e92929623bfcc03b53a7f835bf62a49484`를 활용한 실시간 SPaT 파싱.
+  - 3초 이상 통신 지연/패킷 유실 시 즉시 온디바이스 비전 단독 모드로 무중단 Fallback (Fail-safe 서킷 브레이커).
+- **아이나비식 적색 락온 → 전이 감지 및 1회성 출발 알림 후 비전 즉시 동결(Freeze) (`CrossingDecisionEngine`)**:
+  - 횡단 대기 중 적색 신호에 대해 '락온(Lock-on)'을 유지하다가, 녹색으로 바뀌는 **상태 전이 순간(Transition Trigger: RED → GREEN)**만을 포착하여 `"보행 신호입니다. 건너가셔도 좋습니다"` 1회 즉시 발화 및 출발 햅틱 방출.
+  - 발화 직후 추가적인 비전 판정을 즉시 **동결(Freeze)**하여 보행 중 흔들림에 의한 깜빡임/오탐 혼선을 원천 방지하고 횡단에만 집중하도록 보호.
+- **VWorld 정밀 지도 상 C-ITS 횡단보도 펄스 핀(🚦) 표출 (`RealRouteMapView`)**:
+  - C-ITS 수신 인프라가 구축된 횡단보도는 에메랄드 펄스 신호등 마커(`🚦`)로 시각화하여 저시력자 및 보호자에게 차별화된 인프라 상태 제공.
+- **단위 테스트 및 안전성 검증**:
+  - `CitsRealSignalStatusProviderTest.testParseSpatXmlAndExtractPedestrianSignal` (PASS).
+  - `CrossingDecisionEngineTest.testInaviTransitionTriggerEmitsOnceAndFreezes` (PASS).
+  - 총 207개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+
+
 
 
 

@@ -208,6 +208,9 @@ fun isLocationUsable(location: LocationSample): Boolean =
   - 기본 타일: `https://xdworld.vworld.kr/2d/Base/service/{z}/{x}/{y}.png` (대한민국 국가공간정보 표준 2D 지도, 1:1000 상세 건물, 골목길, 지번, 횡단보도 100% 한글 표출).
   - 3중 안전 폴백: VWorld 타일 에러 발생 시 OpenStreetMap(`tile.openstreetmap.org`) → CartoDB Voyager 순으로 즉시 자동 전환.
   - WebView 정책: `mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW`, `domStorageEnabled = true` 적용으로 타일 차단 방지.
+- **C-ITS 실시간 신호 횡단보도 표출 (ADR-0033):**
+  - C-ITS 수신 인프라가 구축된 건널목은 지도상에 에메랄드 펄스 신호등 핀(`🚦`) 및 C-ITS 수신 배지로 표출.
+  - 비-C-ITS 일반 건널목(비전 온디바이스 카메라 전용 탐지)과 시각적으로 명확히 분리하여 저시력자/보호자에게 신호 인프라 정보 제공.
 
 ### 4.3.3 실시간 보행 내 위치 추적 및 NavigationScreen 지도 연동
 - **데이터 파이프라인:**
@@ -265,6 +268,15 @@ fun isLocationUsable(location: LocationSample): Boolean =
   5. **다크 하우징(Dark Housing) 콘트라스트 검증:**
      - 램프 발광체 외곽 테두리 마진 밴드(Collar Band)의 평균 명도($V_{\text{collar}}$)와 발광부($V_{\text{lamp}}$) 대비 샘플링.
      - 검은색/암회색 차광판 케이스가 없는 전광판, 상점 간판, 건물 유리창 조명($V_{\text{collar}} \ge 0.45, \Delta V < 0.20$)을 비신호등으로 원천 기각.
+  6. **OpenCV 4.5.3 네이티브 가속 및 C++ 코어 연동 (ADR-0030):**
+     - OpenCV 네이티브 라이브러리(`libopencv_java4.so`) 로딩 및 JNI 캐싱을 통한 30fps 고속 프레임 처리.
+     - 음성 안내(TTS)와 온디바이스 비전 분석 간의 상태 동기화(`StateLock`)로 레이스 컨디션 및 안내 지연 원천 차단.
+  7. **원거리 적색 보존 및 하향각 틸트 오버라이드 (ADR-0031):**
+     - 원거리 미소 픽셀(12~28px) 적색 신호의 소멸 방지를 위해 가우시안 팽창(Dilation) 기반 2D 공간 클러스터링 도입.
+     - 스마트폰 하향 조준(Pitch > 35°) 시 횡단보도 유도선 탐색 모드로 자동 전환하고 신호 판정은 안전을 위해 `UNKNOWN` 홀드.
+  8. **세로 2구 하우징 및 접근차량 급팽창 기각 (ADR-0032):**
+     - 상단 적색구와 하단 녹색구의 세로 2구 하우징 종횡비($H/W \in [1.8, 3.2]$) 기하 검증.
+     - 전방 접근 차량의 전조등/미등이 프레임 간 급격히 팽창($\Delta \text{Area} > 45\%/\text{frame}$)하거나 수평 이동 시 `VEHICLE_EXPANSION_REJECTED`로 즉시 필터링.
 
 ### 4.5 LiteRT / TFLite 온디바이스 런타임 및 지능형 검증기
 
@@ -372,6 +384,18 @@ official signal max age = provider contract value
 - 공식 신호를 받지 못하면 `PROVIDER_UNAVAILABLE`로 남기며 임의의 상태를 채우지 않는다.
 - 카메라만 사용 가능한 교차로도 나머지 모든 문맥 게이트를 통과해야 한다.
 - 공식 신호만으로 녹색 음성을 허용할지는 별도 안전 승인 전까지 비활성화한다.
+
+### 4.7.1 C-ITS 실시간 신호 어댑터 (`CitsRealSignalStatusProvider`) 및 경찰청 UTIC SPaT 연동 (ADR-0033)
+- **공공데이터포털 및 경찰청 도시교통정보센터(UTIC) C-ITS Open API 연동:**
+  - 통합 인증키: `ca0040c954d4d1f212324e4bcb9b98e92929623bfcc03b53a7f835bf62a49484`
+  - 광주광역시 및 전국 8대 지자체 실시간 신호등 SPaT(Signal Phase and Timing) 파싱 (`currentStatus`, `remainingTimeSec`).
+  - 장애 격리 서킷 브레이커: 3초 이상 통신 지연 또는 패킷 유실 시 즉시 카메라 온디바이스 비전 단독 모드로 무중단 안전 전환(Fallback).
+
+### 4.7.2 아이나비식 적색 락온 → 전이 감지 및 1회성 출발 알림(Freeze) 정책
+- **아이나비 블랙박스 ADAS 방식의 횡단보도 안전 적용:**
+  - 시각장애인이 횡단 대기 중일 때 적색 신호에 대해 '락온(Lock-on)'을 유지.
+  - 적색이 소등되고 녹색으로 바뀌는 **상태 전이 순간(Transition Trigger: RED → GREEN)**만을 정밀 감지하여 `"보행 신호입니다. 건너가셔도 좋습니다"` 1회 즉시 발화 및 출발 햅틱 방출.
+  - 발화 직후 추가적인 비전 판정을 즉시 **동결(Freeze)**하여, 보행 중 지팡이 진동이나 신체 흔들림으로 인한 깜빡임/오탐 혼선을 원천 방지하고 횡단에만 집중하도록 보호.
 
 ### 4.8 TTS, 진동 및 방향 분기점 안내
 

@@ -171,6 +171,12 @@
 | PR-F-030 | 최근/즐겨찾기 목적지 영구 저장 | P0 | `RecentDestinationRepository`, SharedPreferences JSON 저장, 즐겨찾기 별(⭐) 토글, 상단 우선순위 추천 |
 | PR-F-031 | 온디바이스 비전 비행기록장치 | P0 | `PerceptionFlightRecorder`, 300프레임 무잠금 링 버퍼, 개인정보 제로 유출, 이상 징후 자동/수동 진단 덤프 |
 | PR-F-032 | 멀티밴드 GNSS & 보행 감속 적응형 필터 | P0 | Android 12+ Fused Location, 단조-절대 시계 불일치 보정, 횡단보도 18m 접근 시 $110^\circ$ 완화로 Drop 방지 |
+| PR-F-033 | GPS Fused 단일화 및 기구학 순간이동 필터 | P0 | Legacy LocationManager 이중 공급자 완전 제거, FusedLocationProvider 단일화, 25m 순간이동 및 비정상 가속 필터링 (ADR-0028) |
+| PR-F-034 | 주변부 녹색 간판 기각 및 조준선 긴축 | P0 | 화면 중심 45% 조준선 집중, 상점 간판 및 전광판 기각을 위한 다크 하우징 콘트라스트 검증 (ADR-0029) |
+| PR-F-035 | OpenCV 4.5.3 네이티브 통합 및 화면-음성 동기화 | P0 | `libopencv_java4.so` 고속 프레임 처리, 안내 음성 레이스 컨디션 방지 StateLock 동기화 (ADR-0030) |
+| PR-F-036 | 원거리 적색 보존 2D 클러스터링 및 하향각 오버라이드 | P0 | 미소 픽셀 적색 가우시안 팽창 보존, 단말기 하향 틸트(Pitch > 35°) 시 횡단보도 탐색 모드 전환 및 신호 UNKNOWN 홀드 (ADR-0031) |
+| PR-F-037 | 세로 2구 하우징 검증 및 차량 급팽창 기각 | P0 | 세로 2구 종횡비($H/W \in [1.8, 3.2]$) 검증, 전방 접근 차량 헤드라이트 급팽창($\Delta \text{Area} > 45\%$) 기각 (ADR-0032) |
+| PR-F-038 | C-ITS 실시간 신호 연동 및 아이나비식 전이 트리거 | P0 | 경찰청/광주 C-ITS SPaT 연동, 아이나비식 적색 락온 → 전이 시 1회 출발 알림 후 비전 즉시 동결(Freeze), 지도 상 C-ITS 신호 횡단보도 펄스 핀(🚦) 시각화 (ADR-0033) |
 
 ## 8. 안전 UX 문구 규칙
 

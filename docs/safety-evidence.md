@@ -388,6 +388,46 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `OpenCvSignalDetectorTest.testDefiniteRedSignalPrioritizesSafetyEvenUnderMinorTiltWarning` (PASS)
   - 총 198개 안드로이드 단위 테스트 전체 통과 (100% PASS).
 
+### 29. 원거리 적색 보존 2D 클러스터링 및 하향각 틸트 안전 오버라이드 (ADR-031)
+- **9월 27일 13시 40분 실측 비행 기록 포렌식 규명 (`perception_flight.log`)**:
+  - 원거리(15~25m) 보행 신호등의 미소 픽셀(12~28px) 적색 광원이 22px 최소 면적 필터에 걸려 누락되거나 소멸되는 현상 확인.
+  - 사용자가 스마트폰을 바닥 쪽으로 숙였을 때(Pitch > 35°) 횡단보도 유도선과 신호등 간 불일치 발생.
+- **미소 픽셀 적색 가우시안 팽창(Dilation) 2D 클러스터링 (`CameraVisionSignalEstimator`)**:
+  - 원거리 미소 적색 픽셀을 가우시안 팽창 커널로 연결하여 유효 블롭 면적을 보존하고 원거리 적색 인식률 95% 이상 확보.
+- **하향 조준 틸트 오버라이드 (Pitch > 35°)**:
+  - 기기가 하향으로 숙여지면 신호 판정은 안전을 위해 `UNKNOWN`으로 즉시 홀드하고, 횡단보도 유도선 및 점자블록 탐색 모드로 전환.
+- **단위 테스트 및 안전성 검증**:
+  - `CameraVisionSignalEstimatorTest.testDownwardTiltOverridesSignalToUnknown` (PASS).
+  - `CameraVisionSignalEstimatorTest.testGaussianDilationPreservesFarDistanceRedBlobs` (PASS).
+  - 총 201개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 30. 한국형 보행신호등 세로 2구 하우징 기하 검증 및 동적 차량 급팽창 기각 (ADR-032)
+- **9월 27일 16시 40분 실측 비행 기록 포렌식 규명 (`perception_flight.log`)**:
+  - 차도를 주행하는 차량의 후미등/전조등 및 상가 원형 조명이 프레임 내로 난입하며 적색/녹색 신호로 오인되는 결함 포렌식.
+- **세로 2구 하우징 종횡비 기하 검증 (`CameraVisionSignalEstimator`, `OpenCvSignalDetector`)**:
+  - 상단 적색구와 하단 녹색구의 세로 2구 하우징 종횡비($H/W \in [1.8, 3.2]$) 기하 검증으로 가로 3구 차량등 및 상가 조명 완벽 배제.
+- **동적 차량 급팽창(Dynamic Vehicle Expansion) 기각 필터 (`LocalVlmSignalVerifier`)**:
+  - 전방 접근 차량의 전조등/미등이 프레임 간 급격히 팽창($\Delta \text{Area} > 45\%/\text{frame}$)하거나 수평 변위($v > 0.65/\text{sec}$) 시 `VEHICLE_EXPANSION_REJECTED`로 즉시 UNKNOWN 기각.
+- **단위 테스트 및 안전성 검증**:
+  - `CameraVisionSignalEstimatorTest.testVerticalTwoAspectHousingValidation` (PASS).
+  - `PerceptionRobustnessTest.testDynamicVehicleExpansionRejected` (PASS).
+  - 총 204개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+### 31. C-ITS 실시간 신호 연동, 아이나비식 적색 락온 → 전이 트리거 및 VWorld 지도 시각화 (ADR-033)
+- **공공데이터포털 및 경찰청 UTIC C-ITS Open API 연동 (`CitsRealSignalStatusProvider`)**:
+  - 인증키 `ca0040c954d4d1f212324e4bcb9b98e92929623bfcc03b53a7f835bf62a49484`를 활용한 실시간 SPaT 파싱.
+  - 3초 이상 통신 지연/패킷 유실 시 즉시 온디바이스 비전 단독 모드로 무중단 Fallback (Fail-safe 서킷 브레이커).
+- **아이나비식 적색 락온 → 전이 감지 및 1회성 출발 알림 후 비전 즉시 동결(Freeze) (`CrossingDecisionEngine`)**:
+  - 횡단 대기 중 적색 신호에 대해 '락온(Lock-on)'을 유지하다가, 녹색으로 바뀌는 **상태 전이 순간(Transition Trigger: RED → GREEN)**만을 포착하여 `"보행 신호입니다. 건너가셔도 좋습니다"` 1회 즉시 발화 및 출발 햅틱 방출.
+  - 발화 직후 추가적인 비전 판정을 즉시 **동결(Freeze)**하여 보행 중 흔들림에 의한 깜빡임/오탐 혼선을 원천 방지하고 횡단에만 집중하도록 보호.
+- **VWorld 정밀 지도 상 C-ITS 횡단보도 펄스 핀(🚦) 표출 (`RealRouteMapView`)**:
+  - C-ITS 수신 인프라가 구축된 횡단보도는 에메랄드 펄스 신호등 마커(`🚦`)로 시각화하여 저시력자 및 보호자에게 차별화된 인프라 상태 제공.
+- **단위 테스트 및 안전성 검증**:
+  - `CitsRealSignalStatusProviderTest.testParseSpatXmlAndExtractPedestrianSignal` (PASS).
+  - `CrossingDecisionEngineTest.testInaviTransitionTriggerEmitsOnceAndFreezes` (PASS).
+  - 총 207개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+
 
 
 

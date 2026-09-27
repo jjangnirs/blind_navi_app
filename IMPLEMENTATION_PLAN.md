@@ -400,7 +400,53 @@ flowchart TD
 - E18-S5 `GuidanceArbiter` 녹색 신호 인입 시 현재 발화 중인 비녹색(적색, UNKNOWN 등) 전체 음성 즉시 선점 중단(`PREEMPT_AND_PLAY`) 및 대기 큐의 지연된 낡은 신호 메시지 일괄 영구 폐기
 - E18-S6 전체 단위 테스트 100% 통과 (185개 전수 통과) 및 최신 릴리스 디버그 APK (`app-debug-0927-v26.apk`, 41.5MB) 빌드 및 S25 Ultra 기기 MTP 전송 검증
 
+### Epic E19 — 절전 모드 화면 꺼짐 방지, TMAP 고지문 1회 발화 래치 및 원터치 앱 종료 (ADR-027)
 
+- E19-S1 `FLAG_KEEP_SCREEN_ON` 적용으로 보행 중 OS 절전 모드 진입 방지 및 카메라/GPS 센서 단절 원천 차단
+- E19-S2 `RouteSummaryViewModel` 고지문 발화 래치(`hasSpokenDisclaimer`) 및 30m 거리 임계값 비교로 TMAP 고지문 무한 재발화 루프 제거
+- E19-S3 `DestinationScreen` 및 `NavigationScreen` 최소 64dp 고대비 원터치 앱 종료 버튼 배치 및 `BackHandler` 시스템 연동
+- E19-S4 187개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK 빌드 검증
+
+### Epic E20 — GPS Fused 단일 공급자 우선순위화 및 기구학 이상치(Anti-Teleport) 기각 필터 (ADR-028)
+
+- E20-S1 구형 `LocationManager` 다중 Provider 등록 제거 및 `FUSED_PROVIDER` 단일 등록으로 17m 핑퐁 및 기지국 좌표 혼입 원천 차단
+- E20-S2 `LocationOutlierFilter` 3초 이내 25m 이상 이동 및 시속 36km/h 초과 물리적 불가능 좌표 즉각 기각
+- E20-S3 Leaflet 지도 패닝 불감대 2.5m 상향 및 각도차 50도 초과 시 나침반 100% 반영으로 지도 풍차 회전 차단
+- E20-S4 192개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK 빌드 검증
+
+### Epic E21 — 화면 주변부 상가 간판 녹색광 오인 차단 및 조준선(Reticle) 중앙 긴축 (ADR-029)
+
+- E21-S1 조준 윈도우 가로 범위를 중앙 폭 40%(`0.30f..0.70f`)로 대폭 긴축하여 측면 상가 간판의 유입 기하학적 격리
+- E21-S2 화면 외곽($normCx < 0.28 \lor normCx > 0.72$) 녹색 블롭 기각 및 다크 하우징 명도 대비 0.30 이상 엄격화
+- E21-S3 `LocalVlmSignalVerifier` 주변부 녹색 신호의 `UNKNOWN` 강등 및 `TargetSignalAssociator` 1:1 목표 정합 거부
+- E21-S4 195개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK 빌드 검증
+
+### Epic E22 — OpenCV 4.5.3 C++ 네이티브 가속 연동 및 화면-음성 100% 동기화 (ADR-030)
+
+- E22-S1 `com.quickbirdstudios:opencv:4.5.3.0` 공식 AAR 연동 및 JVM/Android 하이브리드 로더 탑재
+- E22-S2 OpenCV In-Range 색상 분할, `MORPH_ELLIPSE` 잡음 제거 및 원형도($\ge 0.65$) 검증으로 상가 간판과 원형 램프 완전 분별
+- E22-S3 `CrossingAssistScreen` 우측 상단 플로팅 뱃지와 의사결정 최종 상태(`decisionState`) 간 100% 동기화
+- E22-S4 2프레임 적색 완충 버퍼로 0.3초 핑퐁 제거 및 기기 하향 시 적색 안전 최우선 발화
+- E22-S5 198개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK 빌드 검증
+
+### Epic E23 — 원거리 적색 보존 2D 클러스터링 및 하향각 틸트 안전 오버라이드 (ADR-031)
+
+- E23-S1 원거리 미소 픽셀(12~28px) 적색 광원의 가우시안 팽창(Dilation) 2D 클러스터링으로 유효 블롭 면적 보존
+- E23-S2 기기 하향 조준(Pitch > 35°) 시 신호 판정 `UNKNOWN` 즉시 홀드 및 횡단보도 유도선 모드 전환
+- E23-S3 201개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK 빌드 검증
+
+### Epic E24 — 한국형 보행신호등 세로 2구 하우징 기하 검증 및 동적 차량 급팽창 기각 (ADR-032)
+
+- E24-S1 세로 2구 하우징 종횡비($H/W \in [1.8, 3.2]$) 기하 검증으로 가로 3구 차량등 및 상가 조명 배제
+- E24-S2 전방 접근 차량의 급격한 팽창($\Delta \text{Area} > 45\%/\text{frame}$) 또는 수평 변위 시 UNKNOWN 즉각 기각
+- E24-S3 204개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK 빌드 검증
+
+### Epic E25 — C-ITS 실시간 신호 연동, 아이나비식 적색 락온 → 전이 트리거 및 VWorld 지도 시각화 (ADR-033)
+
+- E25-S1 공공데이터포털/경찰청 UTIC C-ITS Open API 실시간 SPaT 파싱 및 3초 통신 지연 서킷 브레이커 탑재
+- E25-S2 아이나비식 적색 락온 후 녹색 전이 순간(RED → GREEN) 1회성 출발 알림 발화 및 비전 즉시 동결(Freeze)
+- E25-S3 Leaflet 기반 VWorld 정밀 지도 상 C-ITS 수신 건널목 에메랄드 펄스 신호등 핀(`🚦`) 및 범례 시각화
+- E25-S4 207개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug-0927-v33.apk`) 빌드 및 기기 MTP 전송 검증
 
 ## 10. 일일 개발 루틴
 

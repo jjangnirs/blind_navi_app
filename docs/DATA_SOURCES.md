@@ -133,6 +133,24 @@ SPaT를 추가할 때도 카메라/현장 신호와 충돌하면 녹색을 선�
 
 아이나비의 내부 모델과 학습자료는 공개되지 않았으므로 특정 알고리즘·정확도·라이선스를 추정해 복제하지 않는다.
 
+### 2.8 공공데이터포털 및 경찰청 UTIC C-ITS 실시간 신호 연동 규격
+
+- 공식 포털: 공공데이터포털(<https://www.data.go.kr>) 및 경찰청 도시교통정보센터 UTIC(<https://www.utic.go.kr>)
+- API 명칭: 경찰청_실시간 신호정보 Open API (교차로별 잔여시간 정보 / SPaT)
+- Base URL: `https://apis.data.go.kr/B553766/realtimeSignal/getSignal`
+- 인증 방식: Open API 일반 인증키 (`ca0040c954d4d1f212324e4bcb9b98e92929623bfcc03b53a7f835bf62a49484`)
+- 앱 내 구현체: `kr.safecross.mobile.signal.CitsRealSignalStatusProvider`
+- 수신 및 정규화 데이터:
+  - 현재 보행신호 상태: `OfficialSignalState.RED` / `OfficialSignalState.GREEN`
+  - 잔여 시간: `optionalRemainingSeconds` (초 단위 정수)
+  - 교차로 및 방향 ID: `intersectionId` (예: `GWANGJU-SANGMU-01`), `movementId` (`PED-01`)
+- 장애 및 안전 보호 정책:
+  - 서킷 브레이커 (`SignalCircuitBreaker`): 연속 3회 실패 시 즉각 차단(Fast-fail) 및 30초 쿨다운
+  - 킬스위치 (`SignalKillSwitchConfig`): 전역·지역·제공자 3단계 원격 차단
+  - Fail-safe 기본 원칙: 네트워크 오류 또는 타임아웃(3초) 시 절대로 임의의 녹색을 발행하지 않고 안전 실패 처리
+- 정밀 지도 연동:
+  - VWorld 지도 상 C-ITS 실시간 신호 연동 건널목(🚦 펄스 핀)과 일반 건널목(🚶) 시각적 분리 표기
+
 ## 3. 보행 경로 및 장소
 
 ### 3.1 TMAP 보행자 경로안내
