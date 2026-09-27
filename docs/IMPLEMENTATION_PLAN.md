@@ -418,6 +418,15 @@ flowchart TD
 - E20-S5 `RealRouteMapView` 지도 카메라 추종 불감대 상향: 2.5m 미만 미세 지터 시 카메라 팬(panTo)을 방지하고 마커만 부드럽게 갱신하여 제자리 정지/서행 중 화면 떨림 완벽 제거
 - E20-S6 `LocationOutlierFilterTest` 신설 및 전체 단위 테스트 100% 통과 (192개 전수 통과, 0 failure), 최신 디버그 APK (`app-debug-0927-v28.apk`, 41.5MB) 빌드 및 S25 Ultra 기기 MTP 전송 검증 완료 (ADR-028)
 
+### Epic 21 — 화면 주변부 상가 간판 녹색광 오인 차단(Zero False-Green) 및 조준선(Reticle) 중앙 긴축 (2026-09-27 완료)
+
+- E21-S1 2026-09-27 횡단보도 대기 비행 기록 포렌식 분석(`perception_flight.log`, 41.6KB): 화면 좌측 구석(X=0.20~0.25) 상가 녹색 간판을 `Detect=GREEN`으로 오인하여 조준 확정 및 펄스가 발생했으나, 정면을 비추자 화면 정중앙(X=0.50)에서 실제 보행 신호등이 **적색(`Detect=RED Score=0.99`)**으로 검출된 중대한 False-Green 결함 및 4대 원인 규명
+- E21-S2 `CrossingAssistUiState` 및 `TwoTierHybridSignalEstimator` 조준선(Reticle/Viewfinder) 가로폭을 기존 60%(`0.20..0.80`)에서 중앙 40%(`0.30..0.70`)로 긴축하여 좌/우측 인도 상가 간판 노이즈 원천 격리
+- E21-S3 `CameraVisionSignalEstimator` 주변부 녹색 블롭 기각(`normCx < 0.28 || normCx > 0.72`), 수평 편차 가중치 1.8배 강화, `verifyDarkHousingContrast` 최소 밝기 대비 $0.30$ 이상으로 엄격화
+- E21-S4 `LocalVlmSignalVerifier` 주변부($normCx < 0.28 || normCx > 0.72$) 녹색 후보 `UNKNOWN` 즉시 강등(`REJECTED_PERIPHERAL_SIGNBOARD_GREEN`)
+- E21-S5 `TargetSignalAssociator` 주변부 녹색 후보 1:1 목표 신호기 결합 거부(`PERIPHERAL_SIGNAL_MISMATCH`)
+- E21-S6 `PerceptionRobustnessTest` 3종 테스트 추가 및 전체 단위 테스트 100% 통과 (195개 전수 통과, 0 failure), 최신 디버그 APK (`app-debug-0927-v29.apk`, 41.5MB) 빌드 및 S25 Ultra 기기 MTP 전송 검증 완료 (ADR-029)
+
 ## 10. 일일 개발 루틴
 
 신입 개발자는 매 작업일 다음 순서를 반복한다.

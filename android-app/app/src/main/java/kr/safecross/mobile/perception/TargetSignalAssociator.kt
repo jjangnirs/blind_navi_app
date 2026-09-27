@@ -102,10 +102,22 @@ class FakeSignalAssociator(
                     )
                 }
 
-                // 5. 단일 신호 정상 정합
+                // 5. 화면 측면 주변부 신호 배제 (cx < 0.28 또는 cx > 0.72는 전방 신호등이 아닌 인도변 간판)
+                val target = signals.first()
+                val targetCx = (target.box.left + target.box.right) / 2f
+                if (target.state == ObservedSignalState.GREEN && (targetCx < 0.28f || targetCx > 0.72f)) {
+                    return TargetSignalAssociation(
+                        isUnique = false,
+                        targetSignal = null,
+                        reason = "PERIPHERAL_SIGNAL_MISMATCH",
+                        confidence = 0.20f
+                    )
+                }
+
+                // 6. 단일 신호 정상 정합
                 return TargetSignalAssociation(
                     isUnique = true,
-                    targetSignal = signals.first(),
+                    targetSignal = target,
                     reason = "SINGLE_TARGET_CONFIRMED",
                     confidence = 0.92f
                 )

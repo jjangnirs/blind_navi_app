@@ -35,7 +35,7 @@ class TwoTierHybridSignalEstimator(
         if (targetSignal == null) {
             // 뷰파인더 폴백 활성화 시: 뷰파인더 가이드 박스(0.20..0.80, 0.10..0.60) 내부를 정밀 분석
             if (fallbackToViewfinder) {
-                val viewfinderBox = NormalizedBox(left = 0.20f, top = 0.10f, right = 0.80f, bottom = 0.60f)
+                val viewfinderBox = NormalizedBox(left = 0.30f, top = 0.12f, right = 0.70f, bottom = 0.65f)
                 val roiObservations = colorAnalyzer.estimateWithinRoi(frame, viewfinderBox)
                 val candidate = roiObservations.firstOrNull()
                 if (candidate != null && candidate.state != ObservedSignalState.UNKNOWN) {
@@ -149,7 +149,7 @@ class TwoTierHybridSignalEstimator(
  * 온디바이스 TFLite 로드 불가 시 화면 중앙 뷰파인더 가이드 박스를 타깃 영역으로 제공하는 폴백 검출기
  */
 class DefaultViewfinderDetector(
-    private val defaultBox: NormalizedBox = NormalizedBox(left = 0.20f, top = 0.10f, right = 0.80f, bottom = 0.60f)
+    private val defaultBox: NormalizedBox = NormalizedBox(left = 0.30f, top = 0.12f, right = 0.70f, bottom = 0.65f)
 ) : PedestrianSignalEstimator {
     override suspend fun estimate(frame: FrameRef): List<SignalObservation> {
         return listOf(

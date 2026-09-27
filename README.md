@@ -110,6 +110,12 @@ MVP에 포함한다.
     - 보행자 기구학 안티 텔레포트 필터(`LocationOutlierFilter`): 3초 이내 25m 이상 이동 및 시속 36km/h 초과 물리적 불가능 좌표 즉각 기각, 선행 GPS 확보 후 단발성 45m 초과 저정밀도 기지국 픽스 기각 (4회 연속 시 데드락 방지 수용)
     - 나침반-GPS 헤딩 상보 필터 안정화: 정지/초저속($<0.5\text{m/s}$) 시 잔류 GPS bearing 초기화, 12m 이하 고정밀 샘플에서만 bearing 갱신, 각도차 50도 초과 시 나침반 100% 반영으로 지도 풍차 회전 차단
     - 지도 카메라 추종 불감대 상향(`RealRouteMapView`): 2.5m 미만 미세 지터 시 카메라 팬(panTo)을 방지하고 마커만 부드럽게 갱신하여 제자리 정지/서행 중 화면 떨림 완벽 제거
+34. 화면 주변부 상가 간판 녹색광 오인 차단(Zero False-Green) 및 조준선(Reticle) 중앙 긴축 (`CrossingAssistUiState`, `TwoTierHybridSignalEstimator`, `CameraVisionSignalEstimator`, `LocalVlmSignalVerifier`, `TargetSignalAssociator`, ADR-029):
+    - 조준선(Reticle/Viewfinder) 중앙 40% 긴축: 기존 가로 60%(0.20..0.80)에서 중앙 40%(0.30..0.70)로 대폭 긴축하여, 정면 횡단보도 대기 시 좌/우측 인도 상가 간판, 네온사인, 편의점 녹색 LED가 조준 영역 내부로 들어오는 결함 원천 격리
+    - 주변부 녹색 블롭 기각 및 수평 가중치 강화: 화면 외곽($normCx < 0.28 \lor normCx > 0.72$)의 녹색 블롭은 보행 신호등 후보에서 배제(`validGreenBlobs`), 수평 거리 편차 가중치를 1.8배로 상향하여 화면 중앙 신호에 절대 우선순위 부여
+    - 다크 하우징(차광판 케이스) 콘트라스트 엄격화(`verifyDarkHousingContrast`): 발광 램프와 주변 차광판 간 최소 밝기 대비를 $0.30$ 이상으로 엄격화하여 검은 바탕 간판 프레임 통과 맹점 해소
+    - 공간 위치 검증 및 UNKNOWN 강등(`LocalVlmSignalVerifier`): $normCx < 0.28 \lor normCx > 0.72$ 녹색 신호는 시야각 밖 상가 간판으로 간주하여 `UNKNOWN`으로 즉시 강등(`REJECTED_PERIPHERAL_SIGNBOARD_GREEN`)
+    - 측면 녹색 신호 1:1 목표 정합 거부(`TargetSignalAssociator`): 화면 주변부($cx < 0.28 \lor cx > 0.72$) 녹색 후보는 단일 신호이더라도 1:1 목표 신호 확정을 거부(`PERIPHERAL_SIGNAL_MISMATCH`)
 
 MVP에서 제외한다.
 

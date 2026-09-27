@@ -118,7 +118,7 @@ class LocalVlmSignalVerifier(
                 // 또한 신호등이 중앙 뷰파인더 관심 영역(cx in 0.15..0.85, cy in 0.10..0.75)에 머무는 경우 동일 Track으로 간주.
                 val isSmallBox = minOf(candidate.box.width, prev.box.width) < 0.12f ||
                         minOf(candidate.box.height, prev.box.height) < 0.15f
-                val isInCentralViewfinder = cx2 in 0.15f..0.85f && cy2 in 0.10f..0.75f
+                val isInCentralViewfinder = cx2 in 0.25f..0.75f && cy2 in 0.10f..0.70f
                 val isSameStateCandidate = candidate.state == prev.state && candidate.state != ObservedSignalState.UNKNOWN
                 val isContinuous = if (isSmallBox) {
                     iou >= 0.10f || centerDist <= 0.18f || (isInCentralViewfinder && (centerDist <= 0.28f || (isSameStateCandidate && centerDist <= 0.35f)))
@@ -140,9 +140,17 @@ class LocalVlmSignalVerifier(
         lastObservation = trackedCandidate
         val smoothedState = evaluateTemporalStability()
 
-        // 5. Zero False-Green 보장: 녹색 신호가 최근 기록에서 불안정하면 즉시 UNKNOWN으로 안전 강등
-        // 한손 파지 순간 블러 완충: 최근 5프레임 중 3개 이상이 확실한 녹색이면 녹색 유지
-        val finalState = if (candidate.state == ObservedSignalState.GREEN && smoothedState != ObservedSignalState.GREEN) {
+        // 5. Zero False-Green 보장:
+        // (1) 화면 좌우 측면(cx < 0.28 또는 cx > 0.72)의 녹색 신호는 횡단보도 전방 신호등이 아닌 인도변 간판이므로 즉각 UNKNOWN 강등
+        // (2) 녹색 신호가 최근 기록에서 불안정하면 즉시 UNKNOWN으로 안전 강등
+        // (3) 한손 파지 순간 블러 완충: 최근 5프레임 중 3개 이상이 확실한 녹색이면 녹색 유지
+        val cxCandidate = (candidate.box.left + candidate.box.right) / 2f
+        val isPeripheralGreen = (candidate.state == ObservedSignalState.GREEN || smoothedState == ObservedSignalState.GREEN) &&
+                (cxCandidate < 0.28f || cxCandidate > 0.72f)
+
+        val finalState = if (isPeripheralGreen) {
+            ObservedSignalState.UNKNOWN
+        } else if (candidate.state == ObservedSignalState.GREEN && smoothedState != ObservedSignalState.GREEN) {
             ObservedSignalState.UNKNOWN
         } else if (candidate.state == ObservedSignalState.UNKNOWN && smoothedState == ObservedSignalState.GREEN && history.count { it.state == ObservedSignalState.GREEN } >= 3) {
             ObservedSignalState.GREEN

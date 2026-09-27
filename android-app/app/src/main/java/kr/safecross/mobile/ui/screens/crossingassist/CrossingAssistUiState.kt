@@ -18,10 +18,10 @@ data class CrossingAssistUiState(
     val detectedSignalColor: kr.safecross.mobile.perception.ObservedSignalState? = null,
     val isSignalInReticle: Boolean = false,
     val reticleBox: kr.safecross.mobile.perception.NormalizedBox = kr.safecross.mobile.perception.NormalizedBox(
-        left = 0.20f,
-        top = 0.10f,
-        right = 0.80f,
-        bottom = 0.70f
+        left = 0.30f,
+        top = 0.12f,
+        right = 0.70f,
+        bottom = 0.65f
     ),
     val debugDiagnosticText: String? = null
 )

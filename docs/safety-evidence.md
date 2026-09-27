@@ -348,6 +348,28 @@ SR-NF-022, SR-NF-041 및 PRD 3.2 비목표 규정에 따른 개인정보 보호 
   - `LocationOutlierFilterTest.consecutive high speed movements accept new location to avoid deadlock` (PASS)
   - 총 192개 안드로이드 단위 테스트 전체 통과 (100% PASS).
 
+### 27. 화면 주변부 상가 간판 녹색광 오인 차단(Zero False-Green) 및 조준선(Reticle) 중앙 긴축 (ADR-029)
+- **9월 27일 비행 기록 포렌식 규명 (`perception_flight.log`)**:
+  - 12:08:47 ~ 12:08:49: 화면 좌측 구석 `Box=[0.20, 0.42, 0.21, 0.44]`에서 상가 녹색 간판을 `Detect=GREEN`으로 오인식, `GCount`가 1 -> 4로 누적되어 "신호등이 조준되었습니다" 오발화 발생.
+  - 12:08:50 ~ 12:08:51: 사용자가 정면을 향하자 화면 정중앙 `Box=[0.49, 0.47, 0.50, 0.48]`에서 실제 정면 보행 신호등인 **적색등(`Detect=RED Score=0.99`)**이 비로소 감지됨. 정면 보행 신호등이 적색이었음에도 좌측 상가 간판을 녹색 신호로 오인한 치명적 False-Green 결함 규명.
+- **조준 윈도우(Reticle/Viewfinder) 중앙 40% 긴축 (`CrossingAssistUiState`, `TwoTierHybridSignalEstimator`)**:
+  - 조준선 가로 범위를 기존 `0.20f..0.80f` (폭 60%)에서 `0.30f..0.70f` (중앙 폭 40%)로 대폭 긴축하여 측면 상점 간판/네온사인이 조준 영역 내로 유입되는 것을 원천 차단.
+- **주변부 녹색 블롭 기각 및 다크 하우징 대비 엄격화 (`CameraVisionSignalEstimator`)**:
+  - 화면 외곽($normCx < 0.28 \lor normCx > 0.72$)의 녹색 블롭은 보행 신호등 후보에서 배제(`validGreenBlobs`).
+  - 수평 거리 편차 가중치를 `1.0f` -> `1.8f`로 상향하여 중앙 정면 신호에 절대 우선순위 부여.
+  - `verifyDarkHousingContrast`: 발광 램프와 주변 차광판 간 최소 밝기 대비를 $0.30$ 이상으로 엄격화하여 검은 바탕 간판 프레임 통과 맹점 해소.
+- **공간 위치 검증 및 UNKNOWN 강등 (`LocalVlmSignalVerifier`)**:
+  - $normCx < 0.28 \lor normCx > 0.72$ 녹색 신호는 시야각 밖 상가 간판으로 간주하여 `UNKNOWN`으로 즉시 강등(`REJECTED_PERIPHERAL_SIGNBOARD_GREEN`).
+- **측면 녹색 신호 1:1 목표 정합 거부 (`TargetSignalAssociator`)**:
+  - 화면 주변부($cx < 0.28 \lor cx > 0.72$) 녹색 후보는 단일 신호이더라도 1:1 목표 신호 확정을 거부(`PERIPHERAL_SIGNAL_MISMATCH`).
+- **단위 테스트 및 안전성 검증**:
+  - `PerceptionRobustnessTest.testRejectsLeftPeripheralSignboardGreenSignalInVerifier` (PASS)
+  - `PerceptionRobustnessTest.testTargetSignalAssociatorRejectsPeripheralGreenSignal` (PASS)
+  - `PerceptionRobustnessTest.testRejectsLeftSignboardGreenInCameraVisionSignalEstimator` (PASS)
+  - `PerceptionRobustnessTest.testDarkHousingContrastVerificationMethod` (PASS)
+  - 총 195개 안드로이드 단위 테스트 전체 통과 (100% PASS).
+
+
 
 
 

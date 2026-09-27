@@ -3,11 +3,15 @@ package kr.safecross.mobile
 import kotlinx.coroutines.test.runTest
 import kr.safecross.mobile.camera.FrameRef
 import kr.safecross.mobile.perception.CameraVisionSignalEstimator
+import kr.safecross.mobile.perception.CrosswalkObservation
+import kr.safecross.mobile.perception.DevicePose
+import kr.safecross.mobile.perception.FakeSignalAssociator
 import kr.safecross.mobile.perception.FrameQuality
 import kr.safecross.mobile.perception.LocalVlmSignalVerifier
 import kr.safecross.mobile.perception.NormalizedBox
 import kr.safecross.mobile.perception.ObservedSignalState
 import kr.safecross.mobile.perception.SignalObservation
+import kr.safecross.mobile.perception.VerifiedCrossingContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -472,5 +476,81 @@ class PerceptionRobustnessTest {
         // 시간적 완충에 의해 GREEN이 유지되어야 하며, 신뢰도 점수가 0.88 이상(0.90f 이상)으로 보존되어야 함
         assertEquals("시간 평활화로 녹색이 유지되어야 함", ObservedSignalState.GREEN, blurRes.verifiedState)
         assertTrue("신뢰도 점수가 minCalibratedScore(0.88) 이상이어야 함: ${blurRes.confidenceScore}", blurRes.confidenceScore >= 0.90f)
+    }
+
+    @Test
+    fun testRejectsLeftPeripheralSignboardGreenSignalInVerifier() {
+        val verifier = LocalVlmSignalVerifier()
+        val dummyBuffer = ByteBuffer.allocateDirect(320 * 240 * 4)
+
+        // 2026-09-27 실측 로그: 화면 좌측(X=0.20~0.22)에 위치한 상가 간판 녹색 불빛
+        val signboardGreen = SignalObservation(
+            ephemeralTrackId = "track-dyn-1",
+            state = ObservedSignalState.GREEN,
+            score = 0.95f,
+            box = NormalizedBox(left = 0.20f, top = 0.42f, right = 0.22f, bottom = 0.44f),
+            frameTimestampNanos = 100_000_000L,
+            quality = FrameQuality(1.0f, 1.0f, true),
+            modelVersion = "test"
+        )
+
+        val result = verifier.verify(signboardGreen, dummyBuffer, 320, 240)
+        assertEquals("화면 좌측(X=0.21) 주변부 간판 녹색 신호는 UNKNOWN으로 강등되어야 함", ObservedSignalState.UNKNOWN, result.verifiedState)
+        assertFalse("주변부 간판 녹색은 승인되어서는 안 됨", result.isVerified)
+    }
+
+    @Test
+    fun testTargetSignalAssociatorRejectsPeripheralGreenSignal() {
+        val associator = FakeSignalAssociator(FakeSignalAssociator.Scenario.AUTO_EVALUATE)
+        val crossing = VerifiedCrossingContext("CW-TEST-1", 0.0f, isFieldVerified = true)
+        val pose = DevicePose(0f, 0f, 0f)
+        val crosswalk = CrosswalkObservation(true, null, null, 0f, 0.9f, 0.9f)
+
+        // 화면 좌측(X=0.20~0.23)의 녹색 신호 후보
+        val peripheralGreen = SignalObservation(
+            ephemeralTrackId = "track-dyn-1",
+            state = ObservedSignalState.GREEN,
+            score = 0.95f,
+            box = NormalizedBox(left = 0.20f, top = 0.41f, right = 0.23f, bottom = 0.45f),
+            frameTimestampNanos = 100_000_000L,
+            quality = FrameQuality(1.0f, 1.0f, true)
+        )
+
+        val assoc = associator.associate(crossing, pose, crosswalk, listOf(peripheralGreen))
+        assertFalse("화면 좌측 간판 녹색 신호는 목표 신호로 1:1 연결되어서는 안 됨", assoc.isUnique)
+        assertEquals("PERIPHERAL_SIGNAL_MISMATCH", assoc.reason)
+    }
+
+    @Test
+    fun testRejectsLeftSignboardGreenInCameraVisionSignalEstimator() = runTest {
+        val width = 320
+        val height = 240
+        val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+
+        // 어두운 배경 (하우징 배경)
+        for (i in 0 until width * height) {
+            buffer.put(30.toByte())
+            buffer.put(30.toByte())
+            buffer.put(30.toByte())
+            buffer.put(255.toByte())
+        }
+
+        // 화면 좌측 X=65..75 (X_norm = 0.20..0.23)에 위치한 초록색 간판 LED
+        for (y in 80..95) {
+            for (x in 65..75) {
+                val offset = (y * width + x) * 4
+                buffer.put(offset, 15.toByte())
+                buffer.put(offset + 1, 230.toByte())
+                buffer.put(offset + 2, 130.toByte())
+                buffer.put(offset + 3, 255.toByte())
+            }
+        }
+        buffer.rewind()
+
+        val frame = FrameRef.createForTesting(width = width, height = height, rgbaBuffer = buffer)
+        val observations = estimator.estimate(frame)
+
+        assertEquals(1, observations.size)
+        assertEquals("화면 좌측(X=0.22)의 녹색 간판은 보행 신호등으로 인정되지 않고 UNKNOWN이어야 함", ObservedSignalState.UNKNOWN, observations.first().state)
     }
 }

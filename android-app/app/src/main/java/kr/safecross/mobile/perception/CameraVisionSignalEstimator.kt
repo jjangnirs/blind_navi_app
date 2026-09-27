@@ -119,12 +119,12 @@ class CameraVisionSignalEstimator(
         val startX = if (targetRoi != null) {
             (width * targetRoi.left).toInt().coerceAtLeast(0)
         } else {
-            (width * 0.05f).toInt()
+            (width * 0.20f).toInt()
         }
         val endX = if (targetRoi != null) {
             (width * targetRoi.right).toInt().coerceAtMost(width)
         } else {
-            (width * 0.95f).toInt()
+            (width * 0.80f).toInt()
         }
 
         if (endY <= startY || endX <= startX) {
@@ -242,9 +242,13 @@ class CameraVisionSignalEstimator(
         }
 
         // 녹색 유효 블롭 필터링 (가로수/간판 배제 및 다크 하우징 검증)
-        // 2자리 숫자형 잔여시간 표시기(W <= H * 1.65)를 정상 수용하도록 임계값 최적화
+        // 1. 화면 좌우 측면 주변부(Peripheral) 녹색 배제 (X < 0.28 또는 X > 0.72는 전방 신호등이 아닌 인도변 상가 간판)
+        // 2. 2자리 숫자형 잔여시간 표시기(W <= H * 1.65)를 정상 수용하도록 임계값 최적화
         val validGreenBlobs = greenBlobs.filter { blob ->
             if (blob.pixelCount < minClusterPixels) return@filter false
+            val normCx = blob.centerX / width
+            if (normCx < 0.28f || normCx > 0.72f) return@filter false
+
             val isHorizontalVehicle = (blob.width > blob.height * 1.65f) && (blob.width >= 18)
             if (isHorizontalVehicle) return@filter false
             verifyDarkHousingContrast(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, blob.avgV)
@@ -261,11 +265,11 @@ class CameraVisionSignalEstimator(
         val refTargetX = if (isTrackActive) lastLockedCenterNorm!!.first * width else defaultTargetX
         val refTargetY = if (isTrackActive) lastLockedCenterNorm!!.second * height else defaultTargetY
 
-        // 2차원 공간 거리 기반 대표 블롭 선택 (수직 이탈 가중치 1.4배 부여로 상/하단 텔레포트 요동 방지)
+        // 2차원 공간 거리 기반 대표 블롭 선택 (수평 이탈 가중치 1.8배 부여로 화면 좌우 구석의 간판 간섭 완벽 차단)
         fun scoreBlob(blob: ColorBlob): Float {
             val dx = (blob.centerX - refTargetX) / width
             val dy = (blob.centerY - refTargetY) / height
-            val dist = kotlin.math.hypot(dx, dy * 1.4f)
+            val dist = kotlin.math.hypot(dx * 1.8f, dy * 1.4f)
             val energyBonus = (minOf(blob.pixelCount, 60) / 60f) * 0.05f
             return dist - energyBonus
         }
@@ -737,7 +741,16 @@ class CameraVisionSignalEstimator(
         val avgCollarV = collarSumV / collarPixelCount
         val contrast = lampBrightness - avgCollarV
 
-        // 테두리가 밝고(>= 0.45) 콘트라스트가 0.20 미만이면 다크 하우징이 없는 간판/배경광으로 기각
-        return !(avgCollarV >= 0.45f && contrast < 0.20f)
+        // 1. 발광부와 테두리의 밝기 대비가 너무 낮으면(0.18 미만) 테두리가 없는 간판/전광판/유리창 반사로 기각
+        if (contrast < 0.18f) {
+            return false
+        }
+
+        // 2. 테두리가 밝고(>= 0.45) 콘트라스트가 0.22 미만이면 다크 하우징이 없는 간판/배경광으로 기각
+        if (avgCollarV >= 0.45f && contrast < 0.22f) {
+            return false
+        }
+
+        return true
     }
 }
