@@ -335,7 +335,9 @@ fun SafeCrossNavHost(
                         signalAssociator = kr.safecross.mobile.perception.FakeSignalAssociator(),
                         decisionEngine = kr.safecross.mobile.decision.CrossingDecisionEngine(),
                         poseTracker = kr.safecross.mobile.sensor.ProductionDevicePoseTracker(context),
-                        guidanceArbiter = kr.safecross.mobile.guidance.GuidanceArbiter()
+                        guidanceArbiter = kr.safecross.mobile.guidance.GuidanceArbiter(),
+                        signalStatusProvider = kr.safecross.mobile.signal.CitsRealSignalStatusProvider(),
+                        enableSignalPolling = true
                     )
                 }
 

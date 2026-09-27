@@ -1,5 +1,6 @@
 package kr.safecross.mobile
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kr.safecross.mobile.camera.FrameRef
 import kr.safecross.mobile.perception.CameraVisionSignalEstimator
@@ -231,7 +232,7 @@ class PerceptionRobustnessTest {
     }
 
     @Test
-    fun testRejectsGreenSignboardWithoutDarkHousingInFullPipeline() = runTest {
+    fun testRejectsGreenSignboardWithoutDarkHousingInFullPipeline() = runBlocking {
         val width = 320
         val height = 240
         val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
@@ -266,7 +267,7 @@ class PerceptionRobustnessTest {
     }
 
     @Test
-    fun testIsolatesPedestrianLightFromCoexistingVehicleLight() = runTest {
+    fun testIsolatesPedestrianLightFromCoexistingVehicleLight() = runBlocking {
         val width = 320
         val height = 240
         val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
@@ -370,7 +371,7 @@ class PerceptionRobustnessTest {
     }
 
     @Test
-    fun testKoreanCyanPedestrianSignalHueDetected() = runTest {
+    fun testKoreanCyanPedestrianSignalHueDetected() = runBlocking {
         val width = 100
         val height = 100
         val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
@@ -522,7 +523,7 @@ class PerceptionRobustnessTest {
     }
 
     @Test
-    fun testRejectsLeftSignboardGreenInCameraVisionSignalEstimator() = runTest {
+    fun testRejectsLeftSignboardGreenInCameraVisionSignalEstimator() = runBlocking {
         val width = 320
         val height = 240
         val buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())

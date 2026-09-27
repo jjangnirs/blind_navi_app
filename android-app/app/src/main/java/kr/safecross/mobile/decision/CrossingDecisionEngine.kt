@@ -3,6 +3,7 @@ package kr.safecross.mobile.decision
 import kr.safecross.mobile.decision.model.CrossingDecisionInput
 import kr.safecross.mobile.decision.model.CrossingDecisionOutput
 import kr.safecross.mobile.decision.model.CrossingState
+import kr.safecross.mobile.decision.model.OfficialSignalObservation
 import kr.safecross.mobile.decision.model.OfficialSignalState
 import kr.safecross.mobile.decision.model.TransitionLogRecord
 import kr.safecross.mobile.decision.model.UserTriggerAction
@@ -569,7 +570,8 @@ class CrossingDecisionEngine(
         devicePose: DevicePose,
         crosswalk: CrosswalkObservation,
         association: TargetSignalAssociation,
-        isTiltSuitable: Boolean
+        isTiltSuitable: Boolean,
+        officialSignal: OfficialSignalObservation? = null
     ): DecisionResult {
         val targetTs = association.targetSignal?.frameTimestampNanos
         val candidateNow = if (targetTs != null && targetTs > lastMonotonicTimeNanos) targetTs else System.nanoTime()
@@ -587,7 +589,8 @@ class CrossingDecisionEngine(
             devicePose = devicePose,
             crosswalk = crosswalk,
             association = fixedAssoc,
-            isTiltSuitable = isTiltSuitable
+            isTiltSuitable = isTiltSuitable,
+            officialSignal = officialSignal
         )
         return evaluate(input)
     }

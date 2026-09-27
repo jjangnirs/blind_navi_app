@@ -9,11 +9,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kr.safecross.mobile.camera.CameraPipeManager
 import kr.safecross.mobile.camera.FakeCameraPipeManager
 import kr.safecross.mobile.camera.FrameRef
 import kr.safecross.mobile.decision.CrossingAssistDecisionState
 import kr.safecross.mobile.decision.CrossingDecisionEngine
+import kr.safecross.mobile.decision.model.OfficialSignalObservation
 import kr.safecross.mobile.guidance.ArbiterAction
 import kr.safecross.mobile.guidance.GuidanceArbiter
 import kr.safecross.mobile.guidance.GuidanceMessage
@@ -29,6 +33,9 @@ import kr.safecross.mobile.perception.VerifiedCrossingContext
 import kr.safecross.mobile.sensor.DevicePoseTracker
 import kr.safecross.mobile.sensor.FakeDevicePoseTracker
 import kr.safecross.mobile.sensor.TiltGuidance
+import kr.safecross.mobile.signal.FakeSignalStatusProvider
+import kr.safecross.mobile.signal.SignalStatusProvider
+import kr.safecross.mobile.signal.model.SignalFetchResult
 
 /**
  * 횡단 보조 화면 뷰모델 (SR-F-040, SR-F-049, SR-F-070).
@@ -40,7 +47,9 @@ class CrossingAssistViewModel(
     val signalAssociator: TargetSignalAssociator = FakeSignalAssociator(),
     val decisionEngine: CrossingDecisionEngine = CrossingDecisionEngine(),
     val poseTracker: DevicePoseTracker = FakeDevicePoseTracker(),
-    val guidanceArbiter: GuidanceArbiter = GuidanceArbiter()
+    val guidanceArbiter: GuidanceArbiter = GuidanceArbiter(),
+    val signalStatusProvider: SignalStatusProvider = FakeSignalStatusProvider(),
+    val enableSignalPolling: Boolean = false
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CrossingAssistUiState())
@@ -59,6 +68,10 @@ class CrossingAssistViewModel(
     private var lastGreenGuidanceTimeMs = 0L
     private var lastLockOnSpeechTimeMs = 0L
     private var hasSpokenCurrentGreenPhase = false
+
+    private var signalPollingJob: Job? = null
+    private var latestOfficialSignal: OfficialSignalObservation? = null
+    private var officialSignalRemainingSec: Int? = null
 
     init {
         // 기기 기울기 모니터링 구독 (과도한 반복 발화 억제를 위한 쿨다운 적용)
@@ -122,6 +135,27 @@ class CrossingAssistViewModel(
             category = "crossing_assist_start",
             hapticType = kr.safecross.mobile.guidance.HapticFeedbackType.UNKNOWN_CAUTION
         )
+
+        // C-ITS 실시간 보행 신호 폴링 시작 (광주광역시 C-ITS / UTIC 연동, 활성화된 경우만)
+        signalPollingJob?.cancel()
+        if (enableSignalPolling) {
+            val intersectionId = context?.crossingId ?: "GWANGJU-DEFAULT-01"
+            val movementId = "PED-01"
+            signalPollingJob = viewModelScope.launch {
+                while (isActive && isAnalyzing) {
+                    val fetchResult = signalStatusProvider.fetchSignalStatus(
+                        intersectionId = intersectionId,
+                        movementId = movementId,
+                        currentElapsedRealtimeNanos = System.nanoTime()
+                    )
+                    if (fetchResult is SignalFetchResult.Success) {
+                        latestOfficialSignal = OfficialSignalObservation.fromNormalized(fetchResult.status)
+                        officialSignalRemainingSec = fetchResult.status.optionalRemainingSeconds
+                    }
+                    delay(1000L)
+                }
+            }
+        }
     }
 
     fun processFrame(frame: FrameRef) {
@@ -145,13 +179,14 @@ class CrossingAssistViewModel(
                     signals = sigObs
                 )
 
-                // 4. 안전 상태기계 판정
+                // 4. 안전 상태기계 판정 (C-ITS 실시간 공식 신호 융합)
                 val decision = decisionEngine.evaluate(
                     crossingContext = activeCrossingContext,
                     devicePose = currentPose,
                     crosswalk = cwObs,
                     association = association,
-                    isTiltSuitable = isTiltOk
+                    isTiltSuitable = isTiltOk,
+                    officialSignal = latestOfficialSignal
                 )
 
                 val targetSignal = association.targetSignal
@@ -209,16 +244,17 @@ class CrossingAssistViewModel(
                         decision.state.description
                 }
 
-                // 진단 HUD 및 Flight Recorder 기록
+                // 진단 HUD 및 Flight Recorder 기록 (C-ITS 정보 포함)
                 val sigStateStr = targetSignal?.state?.name ?: "NONE"
                 val sigScoreStr = targetSignal?.let { "%.2f".format(it.score) } ?: "0.00"
                 val trackIdStr = targetSignal?.ephemeralTrackId?.takeLast(8) ?: "none"
-                val diagText = "SIG: $sigStateStr ($sigScoreStr) [#$trackIdStr] | G-CNT: ${decisionEngine.consecutiveGreenCount}/5 | TILT: ${if (isTiltOk) "OK" else "WARN"} | RET: ${if (isInsideReticle) "IN" else "OUT"}\nDEC: ${decision.state.name} (${decision.reasonCode ?: "OK"})"
+                val citsTag = latestOfficialSignal?.let { "[C-ITS:${it.state}${officialSignalRemainingSec?.let { s -> " ${s}s" } ?: ""}]" } ?: "[C-ITS:OFF]"
+                val diagText = "SIG: $sigStateStr ($sigScoreStr) [#$trackIdStr] $citsTag | G-CNT: ${decisionEngine.consecutiveGreenCount}/5 | TILT: ${if (isTiltOk) "OK" else "WARN"} | RET: ${if (isInsideReticle) "IN" else "OUT"}\nDEC: ${decision.state.name} (${decision.reasonCode ?: "OK"})"
 
                 PerceptionFlightRecorder.updateSummary(diagText)
                 PerceptionFlightRecorder.record(
                     "FRAME",
-                    "Sig=$sigStateStr($sigScoreStr) Trk=$trackIdStr GCount=${decisionEngine.consecutiveGreenCount} Tilt=$isTiltOk Ret=$isInsideReticle Dec=${decision.state} Reason=${decision.reasonCode}"
+                    "Sig=$sigStateStr($sigScoreStr) Trk=$trackIdStr GCount=${decisionEngine.consecutiveGreenCount} Tilt=$isTiltOk Ret=$isInsideReticle Dec=${decision.state} Reason=${decision.reasonCode} CITS=${latestOfficialSignal?.state}"
                 )
 
                 _uiState.value = _uiState.value.copy(
@@ -231,17 +267,25 @@ class CrossingAssistViewModel(
                     debugDiagnosticText = diagText
                 )
 
-                // 5. 발화 안내 이벤트 전송
+                // 5. 발화 안내 이벤트 전송 (아이나비식 1회 출발 신호 알림 & 안전 횡단 진입)
                 if (decision.state == CrossingAssistDecisionState.GREEN_ESTIMATE) {
                     if (!hasSpokenCurrentGreenPhase) {
                         hasSpokenCurrentGreenPhase = true
                         lastGreenGuidanceTimeMs = System.currentTimeMillis()
-                        val textToSpeak = decision.guidanceText ?: "녹색으로 추정됩니다. 앱만으로 안전을 보장할 수 없습니다."
+                        val citsInfo = officialSignalRemainingSec?.let { " (잔여 ${it}초)" } ?: ""
+                        val textToSpeak = "신호가 바뀌었습니다. 건너가세요.$citsInfo 좌우를 살피며 횡단하세요."
                         emitGuidance(
                             text = textToSpeak,
                             priority = GuidancePriority.SAFETY,
                             category = "signal_decision_green",
                             hapticType = decision.hapticType ?: kr.safecross.mobile.guidance.HapticFeedbackType.GREEN_ESTIMATE
+                        )
+
+                        // 아이나비 철학 이식: 출발 알림 후 비전 분석 즉시 동결(Freeze)하여 건너는 도중 스마트폰 흔들림 핑퐁 원천 방지
+                        isAnalyzing = false
+                        signalPollingJob?.cancel()
+                        _uiState.value = _uiState.value.copy(
+                            statusMessage = "안전 횡단 진행 중 (비전 자동 완료)"
                         )
                     }
                 } else {
@@ -327,11 +371,14 @@ class CrossingAssistViewModel(
      */
     fun stopAssistance() {
         isAnalyzing = false
+        signalPollingJob?.cancel()
         poseTracker.stopTracking()
         cameraPipeManager.unbind()
         decisionEngine.reset()
         guidanceArbiter.stopAll()
         hasSpokenCurrentGreenPhase = false
+        latestOfficialSignal = null
+        officialSignalRemainingSec = null
         _uiState.value = _uiState.value.copy(
             isCameraBound = false,
             isTerminated = true,

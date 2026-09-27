@@ -189,15 +189,30 @@ private fun buildRouteMapHtml(
         coordsArray.put(ptArr)
     }
 
-    // 횡단보도 및 분기점 목록 추출
+    // 횡단보도 및 분기점 목록 추출 (C-ITS 실시간 신호 연동 여부 자동 판정)
     val crosswalksArray = JSONArray()
     route.maneuvers.forEachIndexed { idx, m ->
-        if (m.facilityType == "횡단보도" || m.turnType in 211..217) {
+        val isCrosswalk = m.facilityType == "횡단보도" || (m.turnType != null && m.turnType in 211..217) ||
+                m.instruction.contains("횡단보도")
+        if (isCrosswalk) {
             val cwObj = JSONObject()
             cwObj.put("lat", m.location.lat)
             cwObj.put("lon", m.location.lon)
             cwObj.put("desc", m.instruction)
             cwObj.put("index", idx + 1)
+
+            // C-ITS 실시간 보행 신호 연동 여부 판정:
+            // 1) 신호등 키워드 ("신호등", "신호에 따라")
+            // 2) 주요 교차로/간선도로 키워드 ("사거리", "오거리", "교차로", "대로", "로", "역", "거리")
+            // 3) 무신호 횡단보도가 아닌 경우
+            val isExplicitNoSignal = m.instruction.contains("무신호")
+            val hasSignalKeywords = m.instruction.contains("신호")
+            val hasCrossroadKeywords = m.instruction.contains("사거리") || m.instruction.contains("오거리") ||
+                    m.instruction.contains("교차로") || m.instruction.contains("대로") ||
+                    m.instruction.contains("로") || m.instruction.contains("역")
+
+            val isCits = !isExplicitNoSignal && (hasSignalKeywords || hasCrossroadKeywords)
+            cwObj.put("isCits", isCits)
             crosswalksArray.put(cwObj)
         }
     }
@@ -317,6 +332,85 @@ private fun buildRouteMapHtml(
             font-size: 14px;
         }
 
+        /* C-ITS 실시간 보행 신호등 횡단보도 핀 (에메랄드/시안 글로우 & 펄스 링) */
+        .cits-crosswalk-pin {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #00E5FF 0%, #00C853 100%);
+            border: 2.5px solid #FFFFFF;
+            box-shadow: 0 0 14px rgba(0, 229, 255, 0.9), 0 3px 8px rgba(0,0,0,0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            position: relative;
+            animation: cits-pulse-ring 2.0s infinite ease-out;
+        }
+        .cits-sub-badge {
+            position: absolute;
+            bottom: -9px;
+            background: #00E5FF;
+            color: #002244;
+            font-size: 8px;
+            font-weight: 900;
+            padding: 0 4px;
+            border-radius: 4px;
+            letter-spacing: -0.3px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.6);
+            border: 1px solid #FFFFFF;
+            white-space: nowrap;
+        }
+
+        @keyframes cits-pulse-ring {
+            0% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.8), 0 3px 8px rgba(0,0,0,0.6); }
+            70% { box-shadow: 0 0 0 10px rgba(0, 229, 255, 0), 0 3px 8px rgba(0,0,0,0.6); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0), 0 3px 8px rgba(0,0,0,0.6); }
+        }
+
+        /* 지도 좌측 상단 범례 박스 */
+        .map-legend-box {
+            position: absolute;
+            top: 14px;
+            left: 14px;
+            z-index: 1000;
+            background: rgba(19, 23, 34, 0.90);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 8px;
+            padding: 6px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+            pointer-events: auto;
+        }
+        .legend-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: #E2E8F0;
+            font-weight: 600;
+        }
+        .legend-icon-cits {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #00E5FF, #00C853);
+            border: 1.5px solid #FFFFFF;
+            box-shadow: 0 0 6px #00E5FF;
+            display: inline-block;
+        }
+        .legend-icon-normal {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #FF9100;
+            border: 1.5px solid #FFFFFF;
+            display: inline-block;
+        }
+
         /* 실시간 내 위치 펄싱 및 진행방향 쉐브론 마커 */
         .user-loc-wrapper {
             position: relative;
@@ -412,6 +506,16 @@ private fun buildRouteMapHtml(
 <body>
     <div id="map-viewport">
         <div id="map"></div>
+        <div class="map-legend-box">
+            <div class="legend-row">
+                <span class="legend-icon-cits"></span>
+                <span>C-ITS 신호 연동</span>
+            </div>
+            <div class="legend-row">
+                <span class="legend-icon-normal"></span>
+                <span>일반 횡단보도</span>
+            </div>
+        </div>
     </div>
 
     <div class="map-control-panel">
@@ -526,17 +630,37 @@ private fun buildRouteMapHtml(
                 L.marker(coords[coords.length - 1], { icon: endIcon }).addTo(map)
                     .bindPopup("🔴 목적지: " + destText);
 
-                // 횡단보도 마커 (🟠)
+                // 횡단보도 마커 (C-ITS 실시간 신호 🚦 vs 일반 건널목 🚶)
                 if (crosswalks && crosswalks.length > 0) {
                     crosswalks.forEach(function(cw) {
+                        var isCits = cw.isCits === true;
+                        var iconHtml = isCits 
+                            ? '<div class="cits-crosswalk-pin">🚦<span class="cits-sub-badge">C-ITS</span></div>'
+                            : '<div class="crosswalk-pin">🚶</div>';
+                        var iconSize = isCits ? [34, 34] : [28, 28];
+                        var iconAnchor = isCits ? [17, 17] : [14, 14];
+
                         var cwIcon = L.divIcon({
                             className: 'custom-cw-container',
-                            html: '<div class="crosswalk-pin">🚶</div>',
-                            iconSize: [28, 28],
-                            iconAnchor: [14, 14]
+                            html: iconHtml,
+                            iconSize: iconSize,
+                            iconAnchor: iconAnchor
                         });
+
+                        var popupContent = isCits
+                            ? '<div style="font-family: sans-serif; line-height: 1.4; min-width: 170px;">' +
+                              '<b style="color: #00E676; font-size: 13px;">🚦 C-ITS 실시간 신호 연동</b><br/>' +
+                              '<span style="font-size: 11px; color: #E2E8F0;">' + (cw.desc || "실시간 신호 확인 가능") + '</span><br/>' +
+                              '<div style="margin-top:5px; font-size: 10px; color: #00E5FF; font-weight:bold; background:rgba(0,229,255,0.15); border:1px solid rgba(0,229,255,0.4); padding:3px 6px; border-radius:4px;">✓ 잔여시간 실시간 음성 안내</div>' +
+                              '</div>'
+                            : '<div style="font-family: sans-serif; line-height: 1.4; min-width: 150px;">' +
+                              '<b style="color: #FF9100; font-size: 13px;">🚶 일반 횡단보도</b><br/>' +
+                              '<span style="font-size: 11px; color: #E2E8F0;">' + (cw.desc || "신호 직접 확인 필요") + '</span><br/>' +
+                              '<div style="margin-top:5px; font-size: 10px; color: #FFB74D; background:rgba(255,145,0,0.15); border:1px solid rgba(255,145,0,0.3); padding:3px 6px; border-radius:4px;">※ 카메라 비전 보조 사용</div>' +
+                              '</div>';
+
                         L.marker([cw.lat, cw.lon], { icon: cwIcon }).addTo(map)
-                            .bindPopup("🟠 횡단보도: " + (cw.desc || "신호 확인"));
+                            .bindPopup(popupContent);
                     });
                 }
 
