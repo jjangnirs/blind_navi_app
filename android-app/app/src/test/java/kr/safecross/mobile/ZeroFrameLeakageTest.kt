@@ -5,8 +5,8 @@ import kr.safecross.mobile.camera.FrameRef
 import kr.safecross.mobile.decision.CrossingDecisionEngine
 import kr.safecross.mobile.perception.DevicePose
 import kr.safecross.mobile.perception.FakeCrosswalkEstimator
-import kr.safecross.mobile.perception.FakeSignalAssociator
 import kr.safecross.mobile.perception.FakeSignalEstimator
+import kr.safecross.mobile.perception.LockOnSignalAssociator
 import kr.safecross.mobile.perception.VerifiedCrossingContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -65,7 +65,7 @@ class ZeroFrameLeakageTest {
 
             val crosswalkEstimator = FakeCrosswalkEstimator()
             val signalEstimator = FakeSignalEstimator.createStableGreenSequence(10)
-            val signalAssociator = FakeSignalAssociator()
+            val signalAssociator = LockOnSignalAssociator()
             val decisionEngine = CrossingDecisionEngine()
 
             val crossing = VerifiedCrossingContext("CW-101", 0f, true)
@@ -95,7 +95,7 @@ class ZeroFrameLeakageTest {
 
         val crosswalkEstimator = FakeCrosswalkEstimator()
         val signalEstimator = FakeSignalEstimator.createStableGreenSequence(10)
-        val signalAssociator = FakeSignalAssociator()
+        val signalAssociator = LockOnSignalAssociator()
         val decisionEngine = CrossingDecisionEngine()
 
         val crossing = VerifiedCrossingContext("CW-101", 0f, true)
