@@ -2,6 +2,7 @@ package kr.safecross.mobile.ui.screens.crossingassist
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -24,7 +25,10 @@ import kr.safecross.mobile.guidance.GuidanceMessage
 import kr.safecross.mobile.guidance.GuidancePriority
 import kr.safecross.mobile.guidance.HapticFeedbackType
 import kr.safecross.mobile.perception.CrosswalkSceneEstimator
+import kr.safecross.mobile.perception.DepthEstimator
+import kr.safecross.mobile.perception.DepthRoiAnalyzer
 import kr.safecross.mobile.perception.FakeCrosswalkEstimator
+import kr.safecross.mobile.perception.FakeDepthEstimator
 import kr.safecross.mobile.perception.FakeSignalEstimator
 import kr.safecross.mobile.perception.LockOnSignalAssociator
 import kr.safecross.mobile.perception.ObservedSignalState
@@ -47,6 +51,7 @@ class CrossingAssistViewModel(
     val crosswalkEstimator: CrosswalkSceneEstimator = FakeCrosswalkEstimator(),
     val signalEstimator: PedestrianSignalEstimator = FakeSignalEstimator(),
     val signalAssociator: TargetSignalAssociator = LockOnSignalAssociator(),
+    val depthEstimator: DepthEstimator = FakeDepthEstimator(),
     val decisionEngine: CrossingDecisionEngine = CrossingDecisionEngine(),
     val poseTracker: DevicePoseTracker = FakeDevicePoseTracker(),
     val guidanceArbiter: GuidanceArbiter = GuidanceArbiter(),
@@ -83,6 +88,12 @@ class CrossingAssistViewModel(
     // 신호등 판정 상태 디바운스(연속 상태 카운트): 5프레임 연속 동일 판정일 때만 화면/발화에 반영
     private var candidateState: CrossingAssistDecisionState? = null
     private var consecutiveStateCount = 0
+
+    // 깊이 추정 진단용 스로틀 상태 (1단계: 발화/진동 경고 없이 HUD 노출 전용, 매 프레임 실행하지 않음)
+    private var lastDepthEstimateAtMs: Long = 0L
+    private val depthEstimateIntervalMs: Long = 700L
+    private var lastDepthDiagText: String = "DEPTH: n/a"
+    private var isDepthEstimateInFlight = false
 
     init {
         // 기기 기울기 모니터링 구독 (과도한 반복 발화 억제를 위한 쿨다운 적용)
@@ -252,12 +263,35 @@ class CrossingAssistViewModel(
                     else -> decision.state.description
                 }
 
+                // 깊이 추정 진단 (1단계: 발화/진동 경고 없이 HUD 노출 전용).
+                // GPU/NNAPI 가속 없이 CPU만으로 640x384 백본을 돌리는 무거운 연산이라, 신호등/횡단보도
+                // 인식(안전 핵심 경로)을 절대 지연시키지 않도록 별도 백그라운드 코루틴으로 완전히
+                // 분리한다. 여기서 await하지 않고 fire-and-forget으로 던지고, 완료되면 lastDepthDiagText만
+                // 갱신 -> 다음 프레임의 diagText에 반영된다(다소 지연돼 보여도 진단 전용이라 무해함).
+                // isDepthEstimateInFlight로 중첩 실행을 막아 스레드풀 과점유를 방지한다.
+                val nowMs = System.currentTimeMillis()
+                if (!isDepthEstimateInFlight && nowMs - lastDepthEstimateAtMs >= depthEstimateIntervalMs) {
+                    lastDepthEstimateAtMs = nowMs
+                    isDepthEstimateInFlight = true
+                    viewModelScope.launch(Dispatchers.Default) {
+                        try {
+                            val depthObs = depthEstimator.estimate(frame)
+                            val ratio = DepthRoiAnalyzer.nearPathProximityRatio(depthObs)
+                            lastDepthDiagText = if (ratio != null) "DEPTH: near/avg=%.2f".format(ratio) else "DEPTH: n/a"
+                        } catch (_: Exception) {
+                            lastDepthDiagText = "DEPTH: n/a"
+                        } finally {
+                            isDepthEstimateInFlight = false
+                        }
+                    }
+                }
+
                 // 진단 HUD 및 Flight Recorder 기록 (C-ITS 정보 포함)
                 val sigStateStr = targetSignal?.state?.name ?: "NONE"
                 val sigScoreStr = targetSignal?.let { "%.2f".format(it.score) } ?: "0.00"
                 val trackIdStr = targetSignal?.ephemeralTrackId?.takeLast(8) ?: "none"
                 val citsTag = latestOfficialSignal?.let { "[C-ITS:${it.state}${officialSignalRemainingSec?.let { s -> " ${s}s" } ?: ""}]" } ?: "[C-ITS:OFF]"
-                val diagText = "SIG: $sigStateStr ($sigScoreStr) [#$trackIdStr] $citsTag | G-CNT: ${decisionEngine.consecutiveGreenCount}/5 | TILT: ${if (isTiltOk) "OK" else "WARN"} | RET: ${if (isInsideReticle) "IN" else "OUT"}\nDEC: ${decision.state.name} (${decision.reasonCode ?: "OK"})"
+                val diagText = "SIG: $sigStateStr ($sigScoreStr) [#$trackIdStr] $citsTag | G-CNT: ${decisionEngine.consecutiveGreenCount}/5 | TILT: ${if (isTiltOk) "OK" else "WARN"} | RET: ${if (isInsideReticle) "IN" else "OUT"} | $lastDepthDiagText\nDEC: ${decision.state.name} (${decision.reasonCode ?: "OK"})"
 
                 PerceptionFlightRecorder.updateSummary(diagText)
                 PerceptionFlightRecorder.record(

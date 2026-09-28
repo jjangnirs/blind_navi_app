@@ -15,8 +15,8 @@ import kr.safecross.mobile.decision.CrossingAssistDecisionState
 import kr.safecross.mobile.decision.CrossingDecisionEngine
 import kr.safecross.mobile.guidance.GuidanceArbiter
 import kr.safecross.mobile.perception.FakeCrosswalkEstimator
-import kr.safecross.mobile.perception.FakeSignalAssociator
 import kr.safecross.mobile.perception.FakeSignalEstimator
+import kr.safecross.mobile.perception.LockOnSignalAssociator
 import kr.safecross.mobile.perception.ObservedSignalState
 import kr.safecross.mobile.perception.VerifiedCrossingContext
 import kr.safecross.mobile.sensor.FakeDevicePoseTracker
@@ -40,7 +40,7 @@ class CrossingAssistViewModelTest {
     private lateinit var cameraPipe: FakeCameraPipeManager
     private lateinit var crosswalkEstimator: FakeCrosswalkEstimator
     private lateinit var signalEstimator: FakeSignalEstimator
-    private lateinit var signalAssociator: FakeSignalAssociator
+    private lateinit var signalAssociator: LockOnSignalAssociator
     private lateinit var decisionEngine: CrossingDecisionEngine
     private lateinit var poseTracker: FakeDevicePoseTracker
     private lateinit var guidanceArbiter: GuidanceArbiter
@@ -54,7 +54,7 @@ class CrossingAssistViewModelTest {
         cameraPipe = FakeCameraPipeManager()
         crosswalkEstimator = FakeCrosswalkEstimator()
         signalEstimator = FakeSignalEstimator.createStableGreenSequence(6)
-        signalAssociator = FakeSignalAssociator()
+        signalAssociator = LockOnSignalAssociator()
         decisionEngine = CrossingDecisionEngine(minConsecutiveGreenFrames = 5)
         poseTracker = FakeDevicePoseTracker()
         guidanceArbiter = GuidanceArbiter()
@@ -106,8 +106,9 @@ class CrossingAssistViewModelTest {
         viewModel.onCameraPermissionGranted(verifiedCrossing)
         advanceUntilIdle()
 
-        // 5회 연속 GREEN 프레임 처리
-        for (i in 1..5) {
+        // decisionEngine이 GREEN_ESTIMATE로 확정되기까지 5프레임(minConsecutiveGreenFrames)이 필요하고,
+        // 그 뒤로도 ViewModel의 상태 디바운스(동일 판정 5프레임 연속)를 통과해야 UI에 반영되므로 총 9프레임 필요
+        for (i in 1..9) {
             viewModel.processFrame(FrameRef.createForTesting(timestampNanos = i * 33_000_000L))
             advanceUntilIdle()
         }
@@ -147,13 +148,20 @@ class CrossingAssistViewModelTest {
             viewModel.effects.collect { effects.add(it) }
         }
 
+        // 신호 색상 전환 중 GREEN_CANDIDATE 누적 구간을 거치지 않도록 RED로 고정하여
+        // ViewModel의 상태 디바운스(동일 판정 5프레임 연속)를 안정적으로 통과시킨다.
+        signalEstimator.sequence = listOf(ObservedSignalState.RED)
+        signalEstimator.resetSequence()
+
         viewModel.onCameraPermissionGranted(verifiedCrossing)
         advanceUntilIdle()
 
         // FakeSignalEstimator의 기본 박스는 NormalizedBox(0.45f, 0.20f, 0.55f, 0.40f)로
         // UI 기본 reticleBox(0.20f, 0.10f, 0.80f, 0.60f)의 중심에 정확히 위치함
-        viewModel.processFrame(FrameRef.createForTesting(timestampNanos = 100_000_000L))
-        advanceUntilIdle()
+        for (i in 1..5) {
+            viewModel.processFrame(FrameRef.createForTesting(timestampNanos = i * 100_000_000L))
+            advanceUntilIdle()
+        }
 
         val state = viewModel.uiState.value
         assertTrue(state.isSignalInReticle)

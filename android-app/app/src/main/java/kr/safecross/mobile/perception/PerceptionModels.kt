@@ -96,3 +96,30 @@ data class TargetSignalAssociation(
     val reason: String,
     val confidence: Float
 )
+
+/**
+ * 온디바이스 상대 깊이(depth) 추정 관측치 (SR-F-047 계열, TRD 4.5).
+ * depthMap은 행 우선(row-major, mapHeight*mapWidth) 배열이며, FloatArray 특성상
+ * equals/hashCode는 참조 비교로 동작한다(값 비교가 필요하면 depthMap.contentEquals 사용).
+ */
+data class DepthObservation(
+    val isAvailable: Boolean,
+    val depthMap: FloatArray?,
+    val mapWidth: Int,
+    val mapHeight: Int,
+    val minDepth: Float,
+    val maxDepth: Float,
+    val quality: Float
+) {
+    companion object {
+        fun unavailable(): DepthObservation = DepthObservation(
+            isAvailable = false,
+            depthMap = null,
+            mapWidth = 0,
+            mapHeight = 0,
+            minDepth = 0f,
+            maxDepth = 0f,
+            quality = 0f
+        )
+    }
+}

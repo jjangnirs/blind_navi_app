@@ -6,9 +6,9 @@ import kr.safecross.mobile.camera.FrameRef
 import kr.safecross.mobile.perception.CameraVisionSignalEstimator
 import kr.safecross.mobile.perception.CrosswalkObservation
 import kr.safecross.mobile.perception.DevicePose
-import kr.safecross.mobile.perception.FakeSignalAssociator
 import kr.safecross.mobile.perception.FrameQuality
 import kr.safecross.mobile.perception.LocalVlmSignalVerifier
+import kr.safecross.mobile.perception.LockOnSignalAssociator
 import kr.safecross.mobile.perception.NormalizedBox
 import kr.safecross.mobile.perception.ObservedSignalState
 import kr.safecross.mobile.perception.SignalObservation
@@ -502,7 +502,7 @@ class PerceptionRobustnessTest {
 
     @Test
     fun testTargetSignalAssociatorRejectsPeripheralGreenSignal() {
-        val associator = FakeSignalAssociator(FakeSignalAssociator.Scenario.AUTO_EVALUATE)
+        val associator = LockOnSignalAssociator()
         val crossing = VerifiedCrossingContext("CW-TEST-1", 0.0f, isFieldVerified = true)
         val pose = DevicePose(0f, 0f, 0f)
         val crosswalk = CrosswalkObservation(true, null, null, 0f, 0.9f, 0.9f)

@@ -333,6 +333,8 @@ fun SafeCrossNavHost(
                         crosswalkEstimator = kr.safecross.mobile.perception.FakeCrosswalkEstimator(),
                         signalEstimator = kr.safecross.mobile.perception.TwoTierHybridSignalEstimator.createDefault(context),
                         signalAssociator = kr.safecross.mobile.perception.LockOnSignalAssociator(),
+                        depthEstimator = kr.safecross.mobile.ml.LiteRtDepthEstimator.createDefault(context)
+                            ?: kr.safecross.mobile.perception.FakeDepthEstimator(),
                         decisionEngine = kr.safecross.mobile.decision.CrossingDecisionEngine(),
                         poseTracker = kr.safecross.mobile.sensor.ProductionDevicePoseTracker(context),
                         guidanceArbiter = kr.safecross.mobile.guidance.GuidanceArbiter(),
