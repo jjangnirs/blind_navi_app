@@ -89,11 +89,25 @@ class CrossingAssistViewModel(
     private var candidateState: CrossingAssistDecisionState? = null
     private var consecutiveStateCount = 0
 
-    // 깊이 추정 진단용 스로틀 상태 (1단계: 발화/진동 경고 없이 HUD 노출 전용, 매 프레임 실행하지 않음)
+    // 깊이 추정 진단용 스로틀 상태 (매 프레임 실행하지 않음)
     private var lastDepthEstimateAtMs: Long = 0L
     private val depthEstimateIntervalMs: Long = 700L
     private var lastDepthDiagText: String = "DEPTH: n/a"
     private var isDepthEstimateInFlight = false
+
+    // 장애물 근접 추세 경고 (2단계, 데드라인으로 인한 축소 범위).
+    // 절대 거리 임계치(예: "peak > 1.8이면 1m")는 캘리브레이션 실측 결과 조건(각도/배경)마다
+    // 값이 너무 흔들려 신뢰할 수 없었다. 대신 "방금 전 몇 초 대비 지금 값이 뚜렷하게 오르고
+    // 있는가"라는 상대적 추세만 본다 - 절대 보정 없이도 "무언가 가까워지고 있다"는 정성적
+    // 신호는 비교적 안정적으로 잡을 수 있다는 판단.
+    private val depthTrendWindow: ArrayDeque<Pair<Long, Float>> = ArrayDeque() // (timestampMs, peakRatio)
+    private val depthTrendWindowMs: Long = 8_000L       // 추세 판단에 사용할 최근 이력 범위
+    private val depthTrendRecentMs: Long = 2_000L       // "지금"으로 취급할 최근 구간
+    private val depthTrendRiseFactor: Float = 1.20f     // 기준 대비 20% 이상 상승 시 "다가옴" 후보
+    private val depthTrendMinRecentValue: Float = 1.0f  // 잡음 방지: 절대값이 너무 낮으면 무시
+    private var consecutiveProximityTrendCount = 0
+    private var lastObstacleWarningAtMs: Long = 0L
+    private val obstacleWarningCooldownMs: Long = 12_000L
 
     init {
         // 기기 기울기 모니터링 구독 (과도한 반복 발화 억제를 위한 쿨다운 적용)
@@ -118,6 +132,15 @@ class CrossingAssistViewModel(
                 } else if (guidance.isSuitable) {
                     lastSpokenTiltGuidance = null
                 }
+            }
+        }
+
+        // 실시간 기울기 각도(pitch) 구독: 깊이 캘리브레이션 패널에서 "지금 몇 도로 숙였는지"를
+        // 눈으로 확인하고, 태깅 시 그 값을 근접도 비율과 함께 기록하기 위함 (근접 거리는 신호등용
+        // 허용 각도(-35도)보다 훨씬 더 숙여야 지면 물체가 프레임에 들어온다).
+        viewModelScope.launch {
+            poseTracker.currentPose.collect { pose ->
+                _uiState.value = _uiState.value.copy(currentPitchDegrees = pose.pitchDegrees)
             }
         }
     }
@@ -148,6 +171,9 @@ class CrossingAssistViewModel(
         isAnalyzing = true
         candidateState = null
         consecutiveStateCount = 0
+        depthTrendWindow.clear()
+        consecutiveProximityTrendCount = 0
+        lastObstacleWarningAtMs = 0L
         _uiState.value = _uiState.value.copy(
             isCameraBound = true,
             isTerminated = false,
@@ -184,7 +210,16 @@ class CrossingAssistViewModel(
     }
 
     fun processFrame(frame: FrameRef) {
-        if (!isAnalyzing || _uiState.value.isTerminated) return
+        if (_uiState.value.isTerminated) return
+
+        // 깊이 추정은 신호 판정 동결(GREEN_ESTIMATE 확정 후 isAnalyzing=false)과 완전히
+        // 독립적으로 항상 최신 상태를 유지해야 한다. 예전엔 이 로직이 아래 isAnalyzing 게이트
+        // 안에 있어서, 실제 신호등이 녹색으로 확정돼 신호 분석이 동결되면 근접도 값까지 그
+        // 순간에 영원히 멈춰버리는 버그가 있었다 (2026-09-30 실측 캘리브레이션 데이터에서
+        // 발견: 같은 세션 내 모든 거리 태그에서 near/avg 값이 완전히 동일하게 찍힘).
+        maybeRunDepthEstimate(frame)
+
+        if (!isAnalyzing) return
 
         viewModelScope.launch {
             try {
@@ -263,29 +298,6 @@ class CrossingAssistViewModel(
                     else -> decision.state.description
                 }
 
-                // 깊이 추정 진단 (1단계: 발화/진동 경고 없이 HUD 노출 전용).
-                // GPU/NNAPI 가속 없이 CPU만으로 640x384 백본을 돌리는 무거운 연산이라, 신호등/횡단보도
-                // 인식(안전 핵심 경로)을 절대 지연시키지 않도록 별도 백그라운드 코루틴으로 완전히
-                // 분리한다. 여기서 await하지 않고 fire-and-forget으로 던지고, 완료되면 lastDepthDiagText만
-                // 갱신 -> 다음 프레임의 diagText에 반영된다(다소 지연돼 보여도 진단 전용이라 무해함).
-                // isDepthEstimateInFlight로 중첩 실행을 막아 스레드풀 과점유를 방지한다.
-                val nowMs = System.currentTimeMillis()
-                if (!isDepthEstimateInFlight && nowMs - lastDepthEstimateAtMs >= depthEstimateIntervalMs) {
-                    lastDepthEstimateAtMs = nowMs
-                    isDepthEstimateInFlight = true
-                    viewModelScope.launch(Dispatchers.Default) {
-                        try {
-                            val depthObs = depthEstimator.estimate(frame)
-                            val ratio = DepthRoiAnalyzer.nearPathProximityRatio(depthObs)
-                            lastDepthDiagText = if (ratio != null) "DEPTH: near/avg=%.2f".format(ratio) else "DEPTH: n/a"
-                        } catch (_: Exception) {
-                            lastDepthDiagText = "DEPTH: n/a"
-                        } finally {
-                            isDepthEstimateInFlight = false
-                        }
-                    }
-                }
-
                 // 진단 HUD 및 Flight Recorder 기록 (C-ITS 정보 포함)
                 val sigStateStr = targetSignal?.state?.name ?: "NONE"
                 val sigScoreStr = targetSignal?.let { "%.2f".format(it.score) } ?: "0.00"
@@ -328,17 +340,22 @@ class CrossingAssistViewModel(
                             lastGreenGuidanceTimeMs = System.currentTimeMillis()
                             val citsInfo = officialSignalRemainingSec?.let { " (잔여 ${it}초)" } ?: ""
                             emitGuidance(
-                                text = "신호가 바뀌었습니다. 건너가세요.$citsInfo 좌우를 살피며 횡단하세요.",
+                                text = "신호가 바뀌었습니다. 건너가세요.$citsInfo 좌우를 살피며 횡단하세요. 다 건너신 후에는 화면 아래 종료 버튼을 눌러 길안내로 돌아가세요.",
                                 priority = GuidancePriority.SAFETY,
                                 category = "signal_decision_green",
                                 hapticType = decision.hapticType ?: HapticFeedbackType.GREEN_ESTIMATE
                             )
 
-                            // 출발 알림 후 비전 분석 즉시 동결: 건너는 도중 스마트폰 흔들림으로 인한 판정 핑퐁 방지
+                            // 출발 알림 후 비전 분석 즉시 동결: 건너는 도중 스마트폰 흔들림으로 인한 판정 핑퐁 방지.
+                            // 동결 이후 화면이 마지막 프레임에 "박제"된 것처럼 보이지 않도록 신호등 관련
+                            // 표시(바운딩 박스/조준 상태)는 여기서 명시적으로 비운다.
                             isAnalyzing = false
                             signalPollingJob?.cancel()
                             _uiState.value = _uiState.value.copy(
-                                statusMessage = "안전 횡단 진행 중 (비전 자동 완료)"
+                                statusMessage = "안전 횡단 진행 중입니다. 다 건너면 아래 종료 버튼을 눌러주세요.",
+                                detectedSignalBox = null,
+                                detectedSignalColor = null,
+                                isSignalInReticle = false
                             )
                         }
                     } else {
@@ -370,6 +387,102 @@ class CrossingAssistViewModel(
                 )
             }
         }
+    }
+
+    /**
+     * 깊이 추정을 스로틀링(700ms)하며 백그라운드 코루틴에서 실행한다.
+     * GPU/NNAPI 가속 없이 CPU만으로 640x384 백본을 돌리는 무거운 연산이라, 신호등/횡단보도
+     * 인식(안전 핵심 경로)을 절대 지연시키지 않도록 별도 코루틴으로 완전히 분리한다. 여기서
+     * await하지 않고 fire-and-forget으로 던지고, 완료되면 lastDepthDiagText/lastDepthRatio만
+     * 갱신한다. isDepthEstimateInFlight로 중첩 실행을 막아 스레드풀 과점유를 방지한다.
+     * processFrame()의 isAnalyzing 게이트보다 앞에서 호출되므로, 신호 판정이 동결된 상태에서도
+     * 계속 최신 값을 유지한다.
+     */
+    private fun maybeRunDepthEstimate(frame: FrameRef) {
+        val nowMs = System.currentTimeMillis()
+        if (isDepthEstimateInFlight || nowMs - lastDepthEstimateAtMs < depthEstimateIntervalMs) return
+
+        lastDepthEstimateAtMs = nowMs
+        isDepthEstimateInFlight = true
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val depthObs = depthEstimator.estimate(frame)
+                val ratio = DepthRoiAnalyzer.nearPathProximityRatio(depthObs)
+                val peakRatio = DepthRoiAnalyzer.nearPathPeakRatio(depthObs)
+                lastDepthDiagText = if (ratio != null && peakRatio != null) {
+                    "DEPTH: avg=%.2f peak=%.2f".format(ratio, peakRatio)
+                } else "DEPTH: n/a"
+                _uiState.value = _uiState.value.copy(lastDepthRatio = ratio, lastDepthPeakRatio = peakRatio)
+                if (peakRatio != null) {
+                    evaluateObstacleProximityTrend(System.currentTimeMillis(), peakRatio)
+                }
+            } catch (_: Exception) {
+                lastDepthDiagText = "DEPTH: n/a"
+            } finally {
+                isDepthEstimateInFlight = false
+            }
+        }
+    }
+
+    /**
+     * 근접도(peak) 값이 최근 대비 뚜렷하게 오르고 있는지(=무언가 가까워지고 있는지) 판단한다.
+     * 절대 임계치가 아니라 상대 추세만 보므로, 조건(각도/배경)에 따라 절대값이 흔들려도
+     * "지금이 조금 전보다 확실히 가까워졌는가"는 비교적 안정적으로 판단할 수 있다.
+     * 2회 연속 추세가 확인되고 쿨다운이 지났을 때만 SAFETY 경고를 1회 발화한다.
+     */
+    private fun evaluateObstacleProximityTrend(nowMs: Long, peakRatio: Float) {
+        depthTrendWindow.addLast(nowMs to peakRatio)
+        while (depthTrendWindow.isNotEmpty() && nowMs - depthTrendWindow.first().first > depthTrendWindowMs) {
+            depthTrendWindow.removeFirst()
+        }
+
+        val recentCutoff = nowMs - depthTrendRecentMs
+        val recent = depthTrendWindow.filter { it.first >= recentCutoff }
+        val baseline = depthTrendWindow.filter { it.first < recentCutoff }
+
+        if (recent.size < 2 || baseline.size < 3) {
+            consecutiveProximityTrendCount = 0
+            return
+        }
+
+        val recentAvg = recent.map { it.second }.average().toFloat()
+        val baselineAvg = baseline.map { it.second }.average().toFloat()
+        val isRising = recentAvg >= baselineAvg * depthTrendRiseFactor && recentAvg >= depthTrendMinRecentValue
+
+        consecutiveProximityTrendCount = if (isRising) consecutiveProximityTrendCount + 1 else 0
+
+        if (consecutiveProximityTrendCount >= 2 && nowMs - lastObstacleWarningAtMs >= obstacleWarningCooldownMs) {
+            lastObstacleWarningAtMs = nowMs
+            consecutiveProximityTrendCount = 0
+            emitGuidance(
+                text = "전방에 장애물이 가까워지고 있습니다. 주의하세요.",
+                priority = GuidancePriority.SAFETY,
+                category = "obstacle_proximity",
+                hapticType = HapticFeedbackType.SAFETY_WARNING
+            )
+        }
+    }
+
+    /**
+     * 깊이 임계치 캘리브레이션용 수동 태깅. 테스터가 실측 거리에 물체를 놓고 버튼을 누르면
+     * 그 순간의 near/avg 비율을 (실측 거리, 비율) 쌍으로 FlightRecorder 로그에 남긴다.
+     * 이 값들을 모아 나중에 2단계(SAFETY 경고) 임계치를 실측 기반으로 정한다.
+     */
+    fun tagCalibrationPoint(distanceLabel: String) {
+        val ratio = _uiState.value.lastDepthRatio
+        val ratioText = ratio?.let { "%.4f".format(it) } ?: "N/A"
+        val peakRatio = _uiState.value.lastDepthPeakRatio
+        val peakRatioText = peakRatio?.let { "%.4f".format(it) } ?: "N/A"
+        val pitchDeg = _uiState.value.currentPitchDegrees
+        val pitchText = "%.1f".format(pitchDeg)
+        PerceptionFlightRecorder.record(
+            "CALIBRATION",
+            "distance=$distanceLabel near_avg_ratio=$ratioText near_peak_ratio=$peakRatioText pitch_deg=$pitchText"
+        )
+        val nowLabel = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.KOREA).format(java.util.Date())
+        _uiState.value = _uiState.value.copy(
+            calibrationStatusText = "기록됨: $distanceLabel (avg=$ratioText, peak=$peakRatioText, 기울기=$pitchText°) $nowLabel"
+        )
     }
 
     private fun emitGuidance(
@@ -434,6 +547,8 @@ class CrossingAssistViewModel(
         officialSignalRemainingSec = null
         candidateState = null
         consecutiveStateCount = 0
+        depthTrendWindow.clear()
+        consecutiveProximityTrendCount = 0
         _uiState.value = _uiState.value.copy(
             isCameraBound = false,
             isTerminated = true,

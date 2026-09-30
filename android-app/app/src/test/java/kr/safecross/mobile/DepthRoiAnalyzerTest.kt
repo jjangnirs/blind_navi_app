@@ -55,4 +55,28 @@ class DepthRoiAnalyzerTest {
         val ratio = DepthRoiAnalyzer.nearPathProximityRatio(observationOf(4, 4, map))
         assertNull(ratio)
     }
+
+    @Test
+    fun uniformDepthMap_peakRatioIsOne() {
+        val map = FloatArray(16) { 5f }
+        val peakRatio = DepthRoiAnalyzer.nearPathPeakRatio(observationOf(4, 4, map))
+        assertEquals(1.0f, peakRatio!!, 0.001f)
+    }
+
+    @Test
+    fun smallSpikeInNearRoi_peakRatioCatchesItEvenWhenDiluted() {
+        // 4x4: 배경은 전부 2, 하단 중앙 ROI(행2-3, 열1-2) 중 단 1칸만 50으로 튐(작은 물체 시뮬레이션)
+        val map = FloatArray(16) { 2f }
+        map[2 * 4 + 1] = 50f // near ROI 내부 좌상단 셀 하나만 스파이크
+
+        val peakRatio = DepthRoiAnalyzer.nearPathPeakRatio(observationOf(4, 4, map))
+        // frameAvg = (15*2 + 50)/16 = 5.0, nearPeak = 50 -> peakRatio = 10.0
+        assertEquals(10.0f, peakRatio!!, 0.001f)
+    }
+
+    @Test
+    fun peakRatioUnavailableObservation_returnsNull() {
+        val peakRatio = DepthRoiAnalyzer.nearPathPeakRatio(DepthObservation.unavailable())
+        assertNull(peakRatio)
+    }
 }

@@ -49,4 +49,48 @@ object DepthRoiAnalyzer {
         if (frameAvg <= 1e-6f) return null
         return nearAvg / frameAvg
     }
+
+    /**
+     * 프레임 하단 중앙(보행 경로 전방) ROI 안에서 가장 가까운 단일 지점(최댓값, MiDaS 관례상
+     * 클수록 가까움)을 전체 프레임 평균으로 나눈 비율.
+     *
+     * nearPathProximityRatio는 ROI 전체를 "평균"내기 때문에, ROI의 일부만 차지하는 작거나
+     * 중간 크기의 물체(의자 등)의 신호가 주변 배경(바닥/벽)에 희석되어 거리 변화가 잘 안 잡힐
+     * 수 있다. 이 함수는 ROI 안의 단일 최댓값만 보므로, 물체가 ROI의 일부만 차지해도 그 지점이
+     * 만드는 "튀는 값"을 훨씬 민감하게 포착한다.
+     */
+    fun nearPathPeakRatio(
+        observation: DepthObservation,
+        nearBandTopFraction: Float = 0.70f,
+        nearBandCenterFraction: Float = 0.5f
+    ): Float? {
+        val map = observation.depthMap
+        val width = observation.mapWidth
+        val height = observation.mapHeight
+        if (!observation.isAvailable || map == null || width <= 0 || height <= 0) return null
+
+        val rowStart = (height * nearBandTopFraction).toInt().coerceIn(0, height - 1)
+        val colMargin = ((width * (1f - nearBandCenterFraction)) / 2f).toInt()
+        val colStart = colMargin.coerceIn(0, width - 1)
+        val colEnd = (width - colMargin).coerceIn(colStart + 1, width)
+
+        var nearPeak = Float.NEGATIVE_INFINITY
+        var nearCount = 0
+        for (y in rowStart until height) {
+            val rowOffset = y * width
+            for (x in colStart until colEnd) {
+                val v = map[rowOffset + x]
+                if (v > nearPeak) nearPeak = v
+                nearCount++
+            }
+        }
+        if (nearCount == 0) return null
+
+        var frameSum = 0f
+        for (v in map) frameSum += v
+        val frameAvg = frameSum / map.size
+
+        if (frameAvg <= 1e-6f) return null
+        return nearPeak / frameAvg
+    }
 }

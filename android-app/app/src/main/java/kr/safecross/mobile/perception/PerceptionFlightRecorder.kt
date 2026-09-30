@@ -116,6 +116,28 @@ object PerceptionFlightRecorder {
     }
 
     /**
+     * 캘리브레이션([CALIBRATION]) 로그만 걸러서 시간순으로 반환합니다.
+     * 일반 진단 로그(readRecentLogs)는 [FRAME]/[OPENCV]/[VISION] 등이 프레임마다 대량으로
+     * 쌓여서 최근 N줄 안에 오래된 캘리브레이션 기록이 밀려날 수 있다(실측 확인됨: 세션 하나에서
+     * 17,000줄 이상 쌓여 앞쪽 태그가 최근 150줄 밖으로 밀려난 사례). 이 함수는 회전 백업
+     * 파일(.1)까지 포함해 전체를 훑으므로 세션 길이와 무관하게 모든 캘리브레이션 기록을 보존한다.
+     */
+    fun readCalibrationLogs(context: Context): String {
+        return try {
+            val dir = context.getExternalFilesDir("logs") ?: File(context.filesDir, "logs")
+            val backup = File(dir, "$LOG_FILE_NAME.1")
+            val current = File(dir, LOG_FILE_NAME)
+            val lines = mutableListOf<String>()
+            if (backup.exists()) lines += backup.readLines(Charsets.UTF_8)
+            if (current.exists()) lines += current.readLines(Charsets.UTF_8)
+            val calibrationLines = lines.filter { it.contains("[CALIBRATION]") }
+            if (calibrationLines.isEmpty()) "기록된 캘리브레이션 로그가 없습니다." else calibrationLines.joinToString("\n")
+        } catch (e: Exception) {
+            "캘리브레이션 로그 읽기 실패: ${e.message}"
+        }
+    }
+
+    /**
      * 로그 파일 초기화
      */
     fun clearLogs(context: Context) {

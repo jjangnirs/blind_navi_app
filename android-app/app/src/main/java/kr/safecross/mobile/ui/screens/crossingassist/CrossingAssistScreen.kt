@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -68,6 +69,12 @@ import kr.safecross.mobile.ui.theme.HighContrastWhite
 import kr.safecross.mobile.ui.theme.HighContrastYellow
 import kr.safecross.mobile.ui.theme.WarningBannerBackground
 import kr.safecross.mobile.ui.theme.WarningBorder
+
+/**
+ * 개발/캘리브레이션용 진단 HUD 및 로그 공유 UI 노출 스위치.
+ * 실측 튜닝이나 현장 디버깅이 다시 필요해지면 true로 되돌려 화면에 노출한다 (기능 자체는 삭제하지 않음).
+ */
+private const val SHOW_DIAGNOSTIC_TEST_UI = false
 
 @Composable
 fun CrossingAssistScreen(
@@ -377,8 +384,8 @@ fun CrossingAssistScreen(
                 )
             }
 
-            // [실시간 인지 진단 HUD]
-            if (uiState.debugDiagnosticText != null) {
+            // [실시간 인지 진단 HUD] - 제출 빌드에서는 숨김 (SHOW_DIAGNOSTIC_TEST_UI)
+            if (SHOW_DIAGNOSTIC_TEST_UI && uiState.debugDiagnosticText != null) {
                 Surface(
                     color = Color(0xDD000000),
                     shape = RoundedCornerShape(8.dp),
@@ -406,46 +413,101 @@ fun CrossingAssistScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f, fill = false))
-
-            // G. 진단 로그 공유 버튼
-            Button(
-                onClick = {
-                    val logs = kr.safecross.mobile.perception.PerceptionFlightRecorder.readRecentLogs(context, 150)
-                    val sendIntent = android.content.Intent().apply {
-                        action = android.content.Intent.ACTION_SEND
-                        putExtra(android.content.Intent.EXTRA_TEXT, logs)
-                        type = "text/plain"
-                    }
-                    val shareIntent = android.content.Intent.createChooser(sendIntent, "신호 인식 진단 로그 공유")
-                    context.startActivity(shareIntent)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF263238),
-                    contentColor = HighContrastWhite
-                )
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint = Color(0xFF81D4FA)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "신호 인식 진단 로그 공유/저장",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF81D4FA)
-                    )
+            // [깊이 캘리브레이션 패널 - 테스트용] - 제출 빌드에서는 숨김 (SHOW_DIAGNOSTIC_TEST_UI)
+            if (SHOW_DIAGNOSTIC_TEST_UI && uiState.isCameraBound) {
+                DepthCalibrationPanel(
+                    lastDepthRatio = uiState.lastDepthRatio,
+                    lastDepthPeakRatio = uiState.lastDepthPeakRatio,
+                    currentPitchDegrees = uiState.currentPitchDegrees,
+                    calibrationStatusText = uiState.calibrationStatusText,
+                    onTag = { label -> viewModel.tagCalibrationPoint(label) }
                 )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            // [캘리브레이션 로그 전용 공유 버튼] - 제출 빌드에서는 숨김 (SHOW_DIAGNOSTIC_TEST_UI)
+            // 일반 진단 로그 공유(아래 G)는 최근 150줄만 보내는데, [FRAME]/[OPENCV]/[VISION] 로그가
+            // 프레임마다 쌓여서 앞쪽 캘리브레이션 기록이 밀려날 수 있다(실측 확인됨). 이 버튼은 회전
+            // 백업 파일까지 포함해 [CALIBRATION] 줄만 걸러 세션 길이와 무관하게 전체를 보낸다.
+            if (SHOW_DIAGNOSTIC_TEST_UI && uiState.isCameraBound) {
+                Button(
+                    onClick = {
+                        val logs = kr.safecross.mobile.perception.PerceptionFlightRecorder.readCalibrationLogs(context)
+                        val sendIntent = android.content.Intent().apply {
+                            action = android.content.Intent.ACTION_SEND
+                            putExtra(android.content.Intent.EXTRA_TEXT, logs)
+                            type = "text/plain"
+                        }
+                        val shareIntent = android.content.Intent.createChooser(sendIntent, "깊이 캘리브레이션 로그 공유")
+                        context.startActivity(shareIntent)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF311B4D),
+                        contentColor = HighContrastWhite
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFFB39DDB)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "캘리브레이션 로그만 공유 (전체 세션)",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFB39DDB)
+                        )
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
+            Spacer(modifier = Modifier.weight(1f, fill = false))
+
+            // G. 진단 로그 공유 버튼 - 제출 빌드에서는 숨김 (SHOW_DIAGNOSTIC_TEST_UI)
+            if (SHOW_DIAGNOSTIC_TEST_UI) {
+                Button(
+                    onClick = {
+                        val logs = kr.safecross.mobile.perception.PerceptionFlightRecorder.readRecentLogs(context, 150)
+                        val sendIntent = android.content.Intent().apply {
+                            action = android.content.Intent.ACTION_SEND
+                            putExtra(android.content.Intent.EXTRA_TEXT, logs)
+                            type = "text/plain"
+                        }
+                        val shareIntent = android.content.Intent.createChooser(sendIntent, "신호 인식 진단 로그 공유")
+                        context.startActivity(shareIntent)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF263238),
+                        contentColor = HighContrastWhite
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFF81D4FA)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "신호 인식 진단 로그 공유/저장",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF81D4FA)
+                        )
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
 
             // F. 대형 "횡단 보조 즉시 종료" 버튼 (최소 64dp, Red, SR-F-049)
             Button(
@@ -545,6 +607,87 @@ fun DecisionStateBadge(
                 fontSize = 16.sp
             )
         )
+    }
+}
+
+/**
+ * 깊이 모델 근접도(near/avg) 임계치 캘리브레이션용 테스트 패널.
+ * 실측 거리에 물체를 놓고 해당 버튼을 누르면 그 순간의 near/avg 비율이 FlightRecorder
+ * 로그에 (거리, 비율) 쌍으로 기록된다. 이 로그를 모아 2단계(SAFETY 경고) 임계치를 정한다.
+ */
+@Composable
+fun DepthCalibrationPanel(
+    lastDepthRatio: Float?,
+    lastDepthPeakRatio: Float?,
+    currentPitchDegrees: Float,
+    calibrationStatusText: String?,
+    onTag: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color(0xDD000000),
+        shape = RoundedCornerShape(8.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7E57C2)),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Text(
+                text = "📏 깊이 캘리브레이션 (테스트용)",
+                color = Color(0xFFB39DDB),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "실측 거리에 물체를 놓고, 미리보기에 물체가 보이는 각도까지 숙인 뒤 해당 버튼을 누르세요. " +
+                    "가까운 거리일수록 신호등용 각도 안내(-35도 제한)보다 훨씬 더 숙여야 물체가 보입니다.",
+                color = Color(0xFFCCCCCC),
+                fontSize = 11.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "avg: ${lastDepthRatio?.let { "%.2f".format(it) } ?: "측정 중..."}  |  " +
+                    "peak: ${lastDepthPeakRatio?.let { "%.2f".format(it) } ?: "측정 중..."}  |  " +
+                    "기울기: %.1f°".format(currentPitchDegrees),
+                color = HighContrastWhite,
+                fontSize = 12.sp,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val presets = listOf("무장애물", "0.5m", "1m", "1.5m", "2m", "3m")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                presets.forEach { label ->
+                    Button(
+                        onClick = { onTag(label) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF4527A0),
+                            contentColor = HighContrastWhite
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.semantics {
+                            contentDescription = "$label 거리 깊이값 기록"
+                        }
+                    ) {
+                        Text(text = label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            if (calibrationStatusText != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = calibrationStatusText,
+                    color = Color(0xFF80DEEA),
+                    fontSize = 11.sp
+                )
+            }
+        }
     }
 }
 

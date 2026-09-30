@@ -23,7 +23,11 @@ data class CrossingAssistUiState(
         right = 0.70f,
         bottom = 0.65f
     ),
-    val debugDiagnosticText: String? = null
+    val debugDiagnosticText: String? = null,
+    val lastDepthRatio: Float? = null,
+    val lastDepthPeakRatio: Float? = null,
+    val calibrationStatusText: String? = null,
+    val currentPitchDegrees: Float = 0f
 )
 
 sealed interface CrossingAssistEffect {
