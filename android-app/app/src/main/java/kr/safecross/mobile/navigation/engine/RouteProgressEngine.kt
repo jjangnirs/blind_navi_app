@@ -190,6 +190,33 @@ class RouteProgressEngine(
     }
 
     /**
+     * 각 분기점(Maneuver)의 경로상 거리. 분기점 좌표를 경로선에 투영하되, 경로가 같은 길을
+     * 되돌아오는 경우를 대비해 앞 분기점보다 뒤쪽(단조 증가)에서만 찾는다.
+     */
+    val maneuverAlongDistances: List<Double> by lazy {
+        val result = mutableListOf<Double>()
+        var minAlong = 0.0
+        for (m in route.maneuvers) {
+            var bestAlong = minAlong
+            var bestCte = Double.MAX_VALUE
+            for (i in 0 until pathPoints.size - 1) {
+                if (cumulativeDistances[i + 1] < minAlong - 1.0) continue
+                val p1 = pathPoints[i]
+                val p2 = pathPoints[i + 1]
+                val proj = GeoMath.projectPointOnSegment(m.location.lat, m.location.lon, p1.lat, p1.lon, p2.lat, p2.lon)
+                val along = cumulativeDistances[i] + proj.alongTrackDistanceMeters
+                if (along >= minAlong - 1.0 && proj.crossTrackDistanceMeters < bestCte) {
+                    bestCte = proj.crossTrackDistanceMeters
+                    bestAlong = along
+                }
+            }
+            result.add(bestAlong)
+            minAlong = bestAlong
+        }
+        result
+    }
+
+    /**
      * 상태 초기화 (재탐색 또는 프로세스 복구 시).
      */
     fun reset() {

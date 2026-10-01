@@ -59,6 +59,11 @@ class NavigationViewModel(
     private var routeProgressEngine: RouteProgressEngine? = null
     private var crossingApproachEngine: CrossingApproachEngine? = null
 
+    // 횡단보도 접근 시 카메라 신호 확인 화면 자동 전환 (경로상 15m / 30m 내 정지)
+    private var crossingAutoTrigger: kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerPolicy? = null
+    // 이미 자동 전환한 횡단보도 위치 (재탐색으로 경로가 바뀌어도 같은 횡단보도에서 다시 전환하지 않음)
+    private val autoTriggeredCrosswalkLocations = mutableListOf<LocationPoint>()
+
     private var locationJob: Job? = null
     private var poseJob: Job? = null
     private var serviceStopJob: Job? = null
@@ -113,6 +118,8 @@ class NavigationViewModel(
 
         routeProgressEngine = RouteProgressEngine(route, offRouteThresholdMeters = 35.0, minConsecutiveOffRoute = 4)
         crossingApproachEngine = CrossingApproachEngine(facilities)
+        autoTriggeredCrosswalkLocations.clear()
+        crossingAutoTrigger = buildCrossingAutoTrigger(route, routeProgressEngine!!)
         guidanceArbiter.stopAll()
         lastApproachAnnouncedManeuverIndex = -1
         lastApproachStage = 0
@@ -467,6 +474,9 @@ class NavigationViewModel(
                 )
             }
 
+            // 1-0-1. 횡단보도 접근 시 카메라 신호 확인 화면 자동 전환
+            evaluateCrossingAutoTrigger(progress, sample, currentTimeMs)
+
             // 1-1. 방향 분기점 도달/변경 시 즉시 음성 안내 (SR-F-070, 즉시 발화)
             if (isManeuverChanged) {
                 lastApproachAnnouncedManeuverIndex = progress.currentManeuverIndex
@@ -602,12 +612,8 @@ class NavigationViewModel(
                             currentTimeMs
                         )
                     }
-                    // 횡단보도 정지 준비 또는 진입 상태 도달 시 카메라 보조 화면 자동 트리거
-                    if (alert.targetMode == WalkingMode.CROSSING || alert.targetMode == WalkingMode.APPROACHING_CROSSING) {
-                        viewModelScope.launch {
-                            _effects.emit(NavigationEffect.TriggerCrossingAssist)
-                        }
-                    }
+                    // 카메라 보조 화면 자동 전환은 경로상 거리 기반 CrossingAutoTriggerPolicy가 단독으로 담당한다
+                    // (이 엔진은 직선거리 40m 사전 알림 구간에서도 같은 상태를 내므로 전환 근거로 쓰지 않음)
                 }
             }
         }
@@ -828,6 +834,7 @@ class NavigationViewModel(
                 onSuccess = { newRoute ->
                     NavigationFlightRecorder.recordRerouteSuccess(newRoute.totalDistanceMeters, newRoute.maneuvers.size)
                     routeProgressEngine = RouteProgressEngine(newRoute, offRouteThresholdMeters = 35.0, minConsecutiveOffRoute = 4)
+                    crossingAutoTrigger = buildCrossingAutoTrigger(newRoute, routeProgressEngine!!)
                     hasCalibratedInitialStart = true
                     smoothedGuidanceBearing = null
                     lastAlongTrackMeters = null
@@ -903,6 +910,92 @@ class NavigationViewModel(
     /** 샘플 간격에 무관한 시간상수 기반 평활화 계수 */
     private fun smoothingAlpha(dtSec: Double, tauSec: Double): Double =
         (1.0 - kotlin.math.exp(-dtSec / tauSec)).coerceIn(0.02, 1.0)
+
+    /**
+     * 경로의 횡단보도 분기점(TMAP turnType 211~217, 시설 유형 "횡단보도" 등)을 경로상 거리와 함께 추출해
+     * 자동 전환 정책을 만든다. 이미 전환했던 횡단보도(15m 이내 동일 위치)는 제외한다.
+     */
+    private fun buildCrossingAutoTrigger(
+        route: PedestrianRoute,
+        engine: RouteProgressEngine
+    ): kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerPolicy {
+        val alongs = engine.maneuverAlongDistances
+        val crosswalks = route.maneuvers.mapIndexedNotNull { idx, m ->
+            if (kr.safecross.mobile.domain.model.DirectionAction.fromManeuver(m) != kr.safecross.mobile.domain.model.DirectionAction.CROSSWALK) {
+                return@mapIndexedNotNull null
+            }
+            val alreadyTriggered = autoTriggeredCrosswalkLocations.any { calculateDistanceMeters(it, m.location) <= 15.0 }
+            if (alreadyTriggered) return@mapIndexedNotNull null
+            kr.safecross.mobile.navigation.crossing.RouteCrosswalk(
+                maneuverIndex = idx,
+                alongRouteMeters = alongs.getOrElse(idx) { 0.0 },
+                instruction = m.instruction
+            )
+        }
+        NavigationFlightRecorder.record(
+            "CROSSING_AUTO",
+            "횡단보도 ${crosswalks.size}개 등록: " + crosswalks.joinToString { "#${it.maneuverIndex}@${it.alongRouteMeters.toInt()}m" }
+        )
+        return kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerPolicy(crosswalks)
+    }
+
+    private fun evaluateCrossingAutoTrigger(
+        progress: kr.safecross.mobile.navigation.engine.RouteProgressState,
+        sample: LocationSample,
+        currentTimeMs: Long
+    ) {
+        val policy = crossingAutoTrigger ?: return
+        val decision = policy.evaluate(
+            userAlongRouteMeters = progress.distanceAlongRouteMeters,
+            speedMps = sample.speedMps,
+            accuracyMeters = sample.accuracyMeters,
+            isOffRoute = progress.isOffRoute,
+            nowMs = currentTimeMs
+        ) ?: return
+        val route = _uiState.value.route ?: return
+
+        when (decision) {
+            is kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerDecision.Trigger -> {
+                val remaining = decision.remainingMeters.coerceAtLeast(0.0).toInt()
+                route.maneuvers.getOrNull(decision.crosswalk.maneuverIndex)?.let { autoTriggeredCrosswalkLocations.add(it.location) }
+                NavigationFlightRecorder.record(
+                    "CROSSING_AUTO",
+                    "TRIGGER #${decision.crosswalk.maneuverIndex} reason=${decision.reason} remaining=${String.format(Locale.US, "%.1f", decision.remainingMeters)}m " +
+                            "acc=${sample.accuracyMeters}m spd=${sample.speedMps ?: -1f}m/s"
+                )
+                enqueueGuidance(
+                    GuidanceMessage(
+                        id = "crossing_auto_${decision.crosswalk.maneuverIndex}_${currentTimeMs}",
+                        text = if (remaining >= 3) "약 ${remaining}미터 앞 횡단보도입니다. 신호 확인으로 전환합니다." else "횡단보도 앞입니다. 신호 확인으로 전환합니다.",
+                        priority = GuidancePriority.CROSSING,
+                        category = "crossing_auto_trigger",
+                        hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+                    ),
+                    currentTimeMs
+                )
+                viewModelScope.launch {
+                    _effects.emit(NavigationEffect.TriggerCrossingAssist)
+                }
+            }
+            is kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerDecision.SuggestManual -> {
+                val remaining = decision.remainingMeters.coerceAtLeast(0.0).toInt()
+                NavigationFlightRecorder.record(
+                    "CROSSING_AUTO",
+                    "SUGGEST_MANUAL #${decision.crosswalk.maneuverIndex} remaining=${remaining}m acc=${decision.accuracyMeters}m"
+                )
+                enqueueGuidance(
+                    GuidanceMessage(
+                        id = "crossing_suggest_${decision.crosswalk.maneuverIndex}_${currentTimeMs}",
+                        text = "약 ${remaining}미터 앞 횡단보도입니다. 위치 신호가 불안정해 자동 전환하지 않습니다. 신호 확인이 필요하면 화면의 신호 확인 버튼을 누르세요.",
+                        priority = GuidancePriority.CROSSING,
+                        category = "crossing_auto_suggest",
+                        hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+                    ),
+                    currentTimeMs
+                )
+            }
+        }
+    }
 
     private fun calculateDistanceMeters(p1: kr.safecross.mobile.domain.model.LocationPoint, p2: kr.safecross.mobile.domain.model.LocationPoint): Double {
         val r = 6371000.0
