@@ -115,7 +115,7 @@ flowchart TD
 6. 실시간 GPS 신호 품질(%) 및 정확도 반경(±m) 상태 배지와 TalkBack 낭독을 구현한다.
 7. `NavigationForegroundService`를 통해 화면 잠금 상태에서도 백그라운드 위치 추적 및 영구 알림(Foreground Notification, 1-Tap 즉시 정지)을 구현한다.
 8. 방향 분기점 도달 시 즉시 음성 안내(`QUEUE_FLUSH` 우선순위) 및 30m/15m 전방 접근 사전 안내 큐를 구현한다.
-9. 저시력자를 위한 고대비 대형 방향 표시기(`LowVisionDirectionIndicator`: 80dp+ 심볼, 36sp+ 거리, 4dp 황색 테두리 `#FFD600`, 200% 폰트 스케일링)를 구현한다.
+9. 저시력자를 위한 고대비 대형 방향 표시기(`LowVisionDirectionIndicator`: 84dp 원형 회전 화살표(몸 기준 상대 방향 + "N시 방향"), 36sp+ 거리, 4dp 황색 테두리 `#FFD600`, 200% 폰트 스케일링)를 구현한다.
 10. 경로 선 투영, 진행도, 이탈·재탐색을 구현한다.
 11. 주변 시설을 Room에 캐시하고 접근 알림을 구현한다.
 12. TTS 우선순위 큐, 다시 듣기, 중지, 4대 진동 어휘 체계(`DANGER_STOP`, `CAUTION_APPROACH`, `CONFIRM_TURN`, `ORIENTATION_ALIGNED`)를 구현한다.
@@ -124,7 +124,7 @@ flowchart TD
     - TMAP 상호명/출구 등 시각 랜드마크 필터링 및 능동적 신체 회전각 안내.
 14. 지자기 회전 센서(`Sensor.TYPE_ROTATION_VECTOR`) 기반 실시간 방위각 추적 및 경로 정대(Orientation Alignment) 분석을 구현한다:
     - 진행 방향 정대(±18° 이내) 시 음성("올바른 진행 방향입니다. 전방을 주의하며 걸으세요.") 및 햅틱 콤파스 피드백(60ms-60ms-60ms 2회 진동, 6초 쿨다운).
-15. 횡단보도 접근 시(`APPROACHING_CROSSING` 15m/8m) 카메라 보조 화면 자동 전환 이벤트(`TriggerCrossingAssist`)를 구현한다.
+15. 횡단보도 접근 시(경로상 15m 이내 또는 30m 이내 2초 정지) 카메라 보조 화면 자동 전환 이벤트(`TriggerCrossingAssist`, `CrossingAutoTriggerPolicy`)를 구현한다.
 16. 실시간 경로 정대 고대비 상태 카드(🟢 정대 완료 / 🧭 회전 필요) 및 LiveRegion 접근성을 적용한다.
 17. 모든 화면에 Compose semantics와 48/64dp 영역을 적용한다.
 18. TalkBack을 켜고 화면을 보지 않은 채 E2E 시험한다.
@@ -267,7 +267,7 @@ flowchart TD
 - E2-S9 NavigationForegroundService 영구 알림 및 1-Tap 즉시 중지
 - E2-S10 방향 분기점 즉시 음성 안내(QUEUE_FLUSH) 및 30m/15m 접근 사전 안내
 - E2-S11 시각장애인 특화 음성 길안내 포맷터(`BlindGuidanceFormatter.kt`: 1~12시 시계 방향, 보폭 0.65m 걸음수 병기, 랜드마크 필터링)
-- E2-S12 횡단보도 15m 접근 시 화면 터치 없는 카메라 보조 화면 자동 연동(`NavigationEffect.TriggerCrossingAssist`)
+- E2-S12 경로상 횡단보도 15m 접근 또는 30m 내 정지 시 화면 터치 없는 카메라 보조 화면 자동 연동(`NavigationEffect.TriggerCrossingAssist`, ADR-036)
 
 ### Epic E3 — 접근성
 
@@ -276,7 +276,7 @@ flowchart TD
 - E3-S3 haptic vocabulary (4대 진동 어휘 체계 확립)
 - E3-S4 글꼴·고대비
 - E3-S5 접근성 회귀 테스트
-- E3-S6 저시력자용 고대비 대형 방향 표시기(`LowVisionDirectionIndicator`: 80dp+ 심볼, 36sp+ 거리, 4dp 황색 테두리)
+- E3-S6 저시력자용 고대비 대형 방향 표시기(`LowVisionDirectionIndicator`: 몸 기준 회전 화살표 + 시계 방향, 36sp+ 거리, 4dp 황색 테두리)
 - E3-S7 지자기 회전 센서(`ROTATION_VECTOR`) 기반 실시간 경로 정대(Orientation Alignment) 분석 및 햅틱 콤파스 피드백 (`ORIENTATION_ALIGNED`)
 - E3-S8 실시간 경로 정대 고대비 상태 카드 UI (🟢 정대 완료 / 🧭 회전 필요) 및 LiveRegion 낭독
 
@@ -447,6 +447,27 @@ flowchart TD
 - E25-S2 아이나비식 적색 락온 후 녹색 전이 순간(RED → GREEN) 1회성 출발 알림 발화 및 비전 즉시 동결(Freeze)
 - E25-S3 Leaflet 기반 VWorld 정밀 지도 상 C-ITS 수신 건널목 에메랄드 펄스 신호등 핀(`🚦`) 및 범례 시각화
 - E25-S4 207개 전체 단위 테스트 100% 통과 및 최신 릴리스 디버그 APK (`app-debug-0927-v33.apk`) 빌드 및 기기 MTP 전송 검증
+
+### Epic E26 — YOLO 신호등 위치 검출 실연결, 모델·색 분석 교차 융합 및 음성/화면 단일 상태 (ADR-034)
+
+- E26-S1 `YoloPedestrianSignalDetector`: YOLOv8(`[1,3,640,640]`→`[1,6,8400]`) TFLite 실추론, 모델 내장 메타데이터로 클래스 순서 판독, NMS
+- E26-S2 `TwoTierHybridSignalEstimator` 모델·HSV 교차 융합(녹색 두 근거 일치, 적색 우선, 원시 녹색 화소 보조), Lock-on 추종, 1.5초 홀드
+- E26-S3 `LocalVlmSignalVerifier` 프레임당 1회 검증, 기각 사유 기록, 원거리 소형 램프 팽창 검사 제외
+- E26-S4 `CrossingAssistViewModel` 확정 상태 단일화(녹색 5/적색 2/UNKNOWN 6프레임), 녹색 안내 문구 정비, 분석 백그라운드화
+- E26-S5 230개 전체 단위 테스트 통과 및 `app-debug-1001-v36.apk` 기기 배포 (현장 재검증 필요)
+
+### Epic E27 — 몸 기준 방향 가이드 화살표, 경로 복귀 방향 및 지도 안정화 (ADR-035)
+
+- E27-S1 `RouteProgressEngine.pointAtDistance` 기반 look-ahead 목표 방위각 및 원형 평활화
+- E27-S2 `LowVisionDirectionIndicator` 상대 방향 회전 화살표, 시계 방향 표시, 정대/회전/이탈 색상
+- E27-S3 지도 전용 평활화 헤딩, 경로 위 위치 맞춤, 재탐색 시 JS `replaceRoute` 레이어 교체, 출발점 보정 GPS 정확도 조건
+- E27-S4 236개 전체 단위 테스트 통과 및 `app-debug-1001-v37.apk` 기기 배포
+
+### Epic E28 — 횡단보도 카메라 신호 확인 자동 전환 (ADR-036)
+
+- E28-S1 `CrossingAutoTriggerPolicy`: 경로상 15m / 30m 내 2초 정지 / GPS 불량 수동 권유 / 횡단보도당 1회
+- E28-S2 `RouteProgressEngine.maneuverAlongDistances` 분기점 경로상 위치 산출, `[CROSSING_AUTO]` 비행 기록
+- E28-S3 243개 전체 단위 테스트 통과 및 `app-debug-1001-v38.apk` 기기 배포 (현장 전환 거리 검증 필요)
 
 ## 10. 일일 개발 루틴
 

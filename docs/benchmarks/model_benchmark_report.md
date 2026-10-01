@@ -4,6 +4,7 @@
 > 평가 일시: 2026-09-09  
 > 평가 대상 모델: `ped_signal_v1.tflite`, `crosswalk_scene_v1.tflite`  
 > 기준 입력 크기: 320x320x3 (Float32 / INT8)
+> ⚠️ 2026-10-01 주석: 이 보고서의 수치는 80바이트 플레이스홀더 및 테스트용 실행기(`DeterministicTestModelRunner`) 기준으로, 실제 모델 추론 측정이 아니다. 현재 탑재된 YOLOv8 `ped_signal_v1.tflite`(입력 640×640)의 실기기(Galaxy S25 Ultra, CPU 4스레드) 측정값은 평균 142ms, 최대 290ms(약 6fps)이다 (ADR-034).
 
 ---
 

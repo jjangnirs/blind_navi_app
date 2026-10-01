@@ -16,7 +16,7 @@
 
 ## 1. 모델 개요 (Model Overview)
 - **아키텍처**: Multi-Task On-Device LiteRT (Crosswalk Segmentor + Signal Detector/Classifier + Target Associator)
-- **입력 해상도**: 320×320×3 (640×480 원본 프레임 종횡비 보존 Letterbox 패딩 적용)
+- **입력 해상도**: 설계 기준 320×320×3 (640×480 원본 프레임 종횡비 보존 Letterbox 패딩 적용). ※ 현재 앱에 탑재된 `ped_signal_v1.tflite`는 Ultralytics YOLOv8 int8 모델로 입력 `[1,3,640,640]`(NCHW, RGB 0~1, 114 회색 letterbox), 출력 `[1,6,8400]`(cx,cy,w,h + `pedestrian_green`, `pedestrian_red`)이며 클래스 점수는 0.50에서 포화한다. AGPL-3.0 라이선스 검토 필요 (ADR-034).
 - **양자화 방식**: Post-Training Quantization (PTQ) INT8 (바이너리 크기 3.9MB, 지연시간 P50 18ms NPU / 28ms CPU)
 - **원천 라이선스 및 동의**: 로컬 연구 동의(consent=True) 취득 데이터 및 CC-BY-4.0 검증 데이터셋만 사용
 

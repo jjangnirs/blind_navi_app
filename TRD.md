@@ -211,12 +211,18 @@ fun isLocationUsable(location: LocationSample): Boolean =
 - **C-ITS 실시간 신호 횡단보도 표출 (ADR-0033):**
   - C-ITS 수신 인프라가 구축된 건널목은 지도상에 에메랄드 펄스 신호등 핀(`🚦`) 및 C-ITS 수신 배지로 표출.
   - 비-C-ITS 일반 건널목(비전 온디바이스 카메라 전용 탐지)과 시각적으로 명확히 분리하여 저시력자/보호자에게 신호 인프라 정보 제공.
+  - ⚠️ 현재 구현의 `isCits` 판정은 실제 C-ITS 데이터가 아니라 TMAP 안내 문구의 키워드("신호", "사거리", "로", "역" 등) 휴리스틱이어서 대부분의 횡단보도가 C-ITS로 표시된다. 실제 신호 데이터 확보 전까지 "신호 교차로" 등 중립 표기로 바꿔야 한다 (2026-10-01 점검).
+- **재탐색 시 경로 레이어 교체 (ADR-0035):** HTML은 최초 경로로 한 번만 생성하고, 경로가 바뀌면 JS `replaceRoute(coords, crosswalks)`로 경로선·마커만 교체하여 지도 위치·확대·회전이 유지된다.
 
 ### 4.3.3 실시간 보행 내 위치 추적 및 NavigationScreen 지도 연동
 - **데이터 파이프라인:**
   - `NavigationUiState`의 `currentLocation: LocationPoint?`를 실시간 업데이트.
   - Compose `AndroidView.update`에서 전체 WebView 리로드 없이 `evaluateJavascript("updateUserLocation(...)")`로 지도 핀만 부드럽게 실시간 이동 (깜빡임 없음).
   - 마커 시각화: 정상 진행 시 파란색 레이더 펄스 핀(🔵), 경로 이탈(`isOffRoute=true`) 시 빨간색 펄스 핀(🔴) 및 경고 뱃지 전환.
+- **지도 흔들림 안정화 (ADR-0035):**
+  - 지도 회전은 나침반 원값이 아닌 전용 평활화 헤딩 `mapHeadingDegrees`(시간상수 0.8초, 5° 이상 변화 시 최대 0.3초당 1회)를 사용하고, JS 불감대 6°, CSS 회전 전환 0.8초를 적용한다 (현장 나침반 1초 변화량 p90 13°, p95 23°).
+  - 경로 위(이탈 거리 ≤ 15m)에서는 내 위치를 경로선에 맞춘 `mapLocation`으로 표시한다(map-matching).
+  - 지도 이동은 4m 이상 변화 시 0.9초 애니메이션으로만 수행한다.
 
 ### 4.3.4 TMAP 보행로(facilityType 11) 표준 교정 및 육교 오안내 원천 차단
 - TMAP 보행자 API 응답에서 `facilityType == 11`은 일반 평지 보행로를 의미하므로 이를 `"보행로"`로 표준 매핑하고, `12`를 `"지하보도"`, `14`를 `"보도육교"`, `15`를 `"교량"`으로 교정.
@@ -237,6 +243,7 @@ fun isLocationUsable(location: LocationSample): Boolean =
 
 - 사전 알림: 경로상 40m
 - 정지 준비: 15m
+- 카메라 신호 확인 화면 자동 전환: 경로상 15m 이내 또는 30m 이내 2초 정지 (횡단보도당 1회, GPS 정확도 ≤25m, ADR-0036)
 - 사용자 요청 카메라 활성: 거리와 무관하게 가능하되, 조건 미충족 시 상태는 UNKNOWN
 - GREEN_ESTIMATE 공개 가능: 시작점까지 경로상 12m 이내 및 GPS accuracy ≤15m
 - 후보 캐시 반경: 100m
@@ -277,11 +284,22 @@ fun isLocationUsable(location: LocationSample): Boolean =
   8. **세로 2구 하우징 및 접근차량 급팽창 기각 (ADR-0032):**
      - 상단 적색구와 하단 녹색구의 세로 2구 하우징 종횡비($H/W \in [1.8, 3.2]$) 기하 검증.
      - 전방 접근 차량의 전조등/미등이 프레임 간 급격히 팽창($\Delta \text{Area} > 45\%/\text{frame}$)하거나 수평 이동 시 `VEHICLE_EXPANSION_REJECTED`로 즉시 필터링.
+     - 박스 한 변이 0.04 미만인 원거리 소형 램프는 픽셀 분할 차이로 면적이 3배 이상 출렁이므로 팽창 검사에서 제외한다 (ADR-0034).
+  9. **YOLO 위치 검출 ROI와의 교차 융합 (ADR-0034):**
+     - 검출 모델이 하우징을 확인한 ROI에서는 세로 2구 슬롯 밝기 검사를 생략한다(`housingConfirmed`).
+     - ROI 원시 색상 화소 수(`ColorEvidence`)를 함께 산출하여, 픽토그램 LED가 잘게 쪼개져 블롭 필터를 통과하지 못하는 원거리 녹색을 보조 판단한다.
+     - 비행 기록 `[VISION]`에 유효/원시 블롭 수(`R=유효/원시 G=유효/원시`)와 ROI 종류(full/fixed/yolo)를 남긴다.
 
 ### 4.5 LiteRT / TFLite 온디바이스 런타임 및 지능형 검증기
 
 구현 구조:
 
+0. **YOLO 보행신호 위치 검출기 (`YoloPedestrianSignalDetector`, ADR-0034):**
+   - `ped_signal_v1.tflite`는 Ultralytics YOLOv8 int8 모델(입력 `[1,3,640,640]` NCHW RGB 0~1, 출력 `[1,6,8400]` = cx,cy,w,h + 2클래스)이다.
+   - 클래스 순서는 모델 파일 끝 ZIP의 `metadata.json` `names`에서 읽는다(`0=pedestrian_green, 1=pedestrian_red`). 식별 불가 시 모델을 비활성화하고 뷰파인더 검출기로 대체한다.
+   - 114 회색 letterbox, 신뢰도 ≥ 0.25, 클래스 무관 NMS(IoU 0.45). int8 출력 점수는 0.50에서 포화한다.
+   - 실기기(Galaxy S25 Ultra) CPU 4스레드 평균 142ms(약 6fps).
+   - 기존 SSD 형식 `LiteRtPedestrianSignalEstimator`는 기본 실행기가 테스트용 `DeterministicTestModelRunner`여서 실기기 추론이 수행되지 않았으므로 기본 경로에서 제외했다.
 1. **하드웨어 가속 TFLite 러너 (`TfliteModelRunner`):**
    - `org.tensorflow.lite.Interpreter`를 공식 래핑하여 Direct ByteBuffer 입력 및 다중 출력 텐서 매핑(`runForMultipleInputsOutputs`).
    - 플랫폼 NPU(NNAPI) 및 4스레드 멀티스레드 CPU 실행 지원.
@@ -291,10 +309,15 @@ fun isLocationUsable(location: LocationSample): Boolean =
    - **동역학(Motion) 변위 속도 필터:** 프레임 간 중심점 이동 속도($v = \Delta \text{dist} / \Delta t$)를 계산하여, 차도를 가로지르는 고속 이동 차량/버스($v > 0.55/\text{sec}$)를 감지하고 `REJECTED_DYNAMIC_MOTION`으로 즉시 `UNKNOWN` 기각.
    - **시간 일관성 롤링 버퍼(Temporal Rolling Buffer):** 최근 5프레임의 상태 전이를 추적하여 단일 프레임 잡음/반사광 오탐 방지.
    - **Zero False-Green 절대 수호:** 녹색 신호 판정 시 최근 버퍼의 60% 이상 안정적 수신을 요구하며, 미달 시 즉시 UNKNOWN으로 강등.
+   - **프레임당 1회 검증 (ADR-0034):** 이전에는 검증된 결과가 한 번 더 기록되어 녹색 이력이 UNKNOWN으로 희석되었다. 이제 각 프레임은 검증기를 정확히 한 번만 통과하며, 모든 기각 사유(`REJECTED_*`)를 `[VERIFIER]` 비행 기록에 남긴다.
 3. **2단계 하이브리드 보행신호 판정 파이프라인 (`TwoTierHybridSignalEstimator`):**
-   - **Tier 1 (LiteRT 딥러닝 객체 검출):** 보행신호기 형태(Bounding Box)를 선검출. 미검출 시 배경 초록색과 무관하게 즉시 `UNKNOWN` 강등 차단.
-   - **Tier 2 (박스 한정 ROI HSV 정밀 분석):** 확정된 신호등 박스 내부 영역만 스캔하여 연산량 90% 절감 및 배경 잡음 완전 격리.
-   - **Tier 3 (기하·동역학·시간 일관성 검증):** `LocalVlmSignalVerifier`를 통한 3중 교차 검증 통과 시에만 최종 관측치 방출.
+   - **Tier 1 (YOLO 위치 검출):** 보행신호기 위치와 색 분류를 선검출. 여러 후보는 직전 타깃과의 위치 유사도(중심 거리 + IoU)로 Lock-on 추종하고, 모델이 놓친 프레임은 1.5초 동안 직전 위치를 유지(홀드)한다. 1.5초 넘게 미검출이면 뷰파인더 가이드 박스 HSV 분석으로 폴백(녹색은 검증 신뢰도 ≥ 0.90만 승인).
+   - **Tier 2 (박스 주변 ROI HSV/OpenCV 분석 + 교차 융합):** 모델 박스를 하우징 크기로 확장한 영역만 분석하고 모델 분류와 융합한다.
+     - 녹색: 모델·색 분석 모두 녹색이거나, 모델 녹색 + ROI 원시 녹색 화소 ≥ 6 및 적색 화소 ≤ 녹색/3 (홀드 중에는 불허)
+     - 적색: 어느 한쪽이라도 적색이면 적색, 모델 단독 적색은 점수 ≥ 0.30
+     - 모델 적색 + 색 녹색 충돌, 모델 녹색 + 색 근거 없음 → UNKNOWN
+     - 판정 근거는 `[FUSION]` 비행 기록에 남긴다.
+   - **Tier 3 (기하·동역학·시간 일관성 검증):** `LocalVlmSignalVerifier`를 프레임당 1회 통과해야 최종 관측치 방출.
 
 모델 산출물:
 
@@ -386,16 +409,26 @@ official signal max age = provider contract value
 - 공식 신호만으로 녹색 음성을 허용할지는 별도 안전 승인 전까지 비활성화한다.
 
 ### 4.7.1 C-ITS 실시간 신호 어댑터 (`CitsRealSignalStatusProvider`) 및 경찰청 UTIC SPaT 연동 (ADR-0033)
-- **공공데이터포털 및 경찰청 도시교통정보센터(UTIC) C-ITS Open API 연동:**
-  - 통합 인증키: `ca0040c954d4d1f212324e4bcb9b98e92929623bfcc03b53a7f835bf62a49484`
+- **공공데이터포털 및 경찰청 도시교통정보센터(UTIC) C-ITS Open API 연동 (설계):**
+  - 인증키: 저장소·문서에 기재하지 않는다. (현재 코드에 하드코딩되어 있고 git 이력·APK에 노출되어 재발급 및 `BuildConfig`/백엔드 프록시 주입으로의 전환이 필요하다.)
   - 광주광역시 및 전국 8대 지자체 실시간 신호등 SPaT(Signal Phase and Timing) 파싱 (`currentStatus`, `remainingTimeSec`).
   - 장애 격리 서킷 브레이커: 3초 이상 통신 지연 또는 패킷 유실 시 즉시 카메라 온디바이스 비전 단독 모드로 무중단 안전 전환(Fallback).
+- **2026-10-01 점검 결과 (현재 미동작):**
+  - 앱이 호출하는 `apis.data.go.kr/B553766/realtimeSignal/getSignal`은 `HTTP 400 NO_OPENAPI_SERVICE_ERROR`("해당 오픈API 서비스가 없거나 폐기됨")를 반환한다. 따라서 공식 신호는 항상 미수신이며 진단 HUD는 `[C-ITS:OFF]`이다.
+  - 교차로 ID가 모든 횡단보도에서 고정값(`CW-GMC-2026-001`), 보행 방향 ID가 `PED-01`로 고정되어 실제 매핑이 없다.
+  - 광주 C-ITS 공개 API(공공데이터포털 "광주 C-ITS 데이터 조회서비스", 광주교통정보센터 Open API)는 소통 통계·교통 흐름·주정차·스쿨존·주차 정보만 제공하며 신호(SPaT) 정보는 공개하지 않는다. 광주 보행신호 정보는 협약 기업(예: 카카오내비)에만 제공되는 것으로 확인되어 지자체 데이터 제공 협약이 필요하다.
+  - 응답 시각을 원천 데이터가 아닌 수신 시각(`System.currentTimeMillis()`)으로 채우고, 신호 코드 `"3"`을 녹색으로 매핑하는 등(SAE J2735에서 3은 stop-And-Remain) 명세 검증이 필요하다.
 
 ### 4.7.2 아이나비식 적색 락온 → 전이 감지 및 1회성 출발 알림(Freeze) 정책
 - **아이나비 블랙박스 ADAS 방식의 횡단보도 안전 적용:**
   - 시각장애인이 횡단 대기 중일 때 적색 신호에 대해 '락온(Lock-on)'을 유지.
-  - 적색이 소등되고 녹색으로 바뀌는 **상태 전이 순간(Transition Trigger: RED → GREEN)**만을 정밀 감지하여 `"보행 신호입니다. 건너가셔도 좋습니다"` 1회 즉시 발화 및 출발 햅틱 방출.
+  - 적색이 소등되고 녹색으로 바뀌는 **상태 전이 순간(Transition Trigger: RED → GREEN)**을 감지하여 1회 발화 및 출발 햅틱 방출. 발화 문구(ADR-0034): `"녹색 신호로 추정됩니다. 좌우를 살피며 횡단하세요. 앱만으로 안전을 보장할 수 없습니다."` (명령형 "건너가세요/건너가셔도 좋습니다" 미사용)
   - 발화 직후 추가적인 비전 판정을 즉시 **동결(Freeze)**하여, 보행 중 지팡이 진동이나 신체 흔들림으로 인한 깜빡임/오탐 혼선을 원천 방지하고 횡단에만 집중하도록 보호.
+- **음성·화면 단일 확정 상태 (ADR-0034):**
+  - 배지, 박스 색, 상태 문구, 음성은 모두 하나의 확정 상태를 따른다. 확정 조건: 녹색 5프레임 연속, 적색 2프레임, 확정된 적색/녹색에서 UNKNOWN 전환 6프레임.
+  - `GREEN_CANDIDATE`는 사용자에게 UNKNOWN으로만 노출한다(SR-F-062).
+  - 음성은 확정 상태 변경 시 1회, 화면 문구와 같은 문장으로 발화한다.
+  - 영상 분석은 백그라운드 디스패처에서 수행하고 이전 프레임 처리 중 도착한 프레임은 건너뛴다.
 
 ### 4.8 TTS, 진동 및 방향 분기점 안내
 
@@ -414,11 +447,16 @@ official signal max age = provider contract value
   - 동일 분기점에서 중복 발화하지 않도록 단계 플래그(`lastApproachStage`)로 관리한다.
 - **지자기 나침반(Rotation Vector) 실시간 헤딩 및 햅틱 콤파스:**
   - `Sensor.TYPE_ROTATION_VECTOR` 및 지자기 센서를 통해 0.0°~360.0° 실시간 나침반 방위각 추적.
-  - 목표 경로 선분의 방위각(`calculateTargetBearing`)과 단말기 헤딩 오차가 18도 이내로 정렬되면 `ORIENTATION_ALIGNED` 햅틱 및 `"올바른 진행 방향입니다. 전방을 주의하며 걸으세요."` 발화 (쿨다운 6초).
-- **횡단보도 접근 시 카메라 보행 보조 자동 연동 (`TriggerCrossingAssist`):**
-  - 횡단보도 15m/8m 이내 접근 및 대기 모드(`APPROACHING_CROSSING`, `CROSSING`) 진입 시 `TriggerCrossingAssist` 이벤트를 발행하여 지팡이 파지 상태에서 수동 터치 없이 카메라 신호 보조 모드로 자동 전환.
+  - 목표 방위각(`calculateTargetBearing`)과 단말기 헤딩 오차가 18도 이내로 정렬되면 `ORIENTATION_ALIGNED` 햅틱 및 `"올바른 진행 방향입니다. 전방을 주의하며 걸으세요."` 발화 (쿨다운 6초).
+  - 목표 방위각은 "현재 GPS 위치 → 경로상 전방 지점(25m + 경로 이탈 거리, 최대 40m 추가)" 방위각을 원형 평활화(α=0.4)한 값이다. 경로를 벗어나면 비스듬히 경로로 복귀하는 방향을 가리킨다. 위치가 없으면 분기점 간 방위각으로 대체 (ADR-0035).
+- **횡단보도 접근 시 카메라 신호 확인 자동 전환 (`TriggerCrossingAssist`, ADR-0036):**
+  - `CrossingAutoTriggerPolicy`가 TMAP 경로의 횡단보도 분기점(`DirectionAction.CROSSWALK`)까지 **경로상 남은 거리**를 기준으로 판정한다. 분기점 위치는 `RouteProgressEngine.maneuverAlongDistances`(경로선 단조 투영)로 계산한다.
+  - 경로상 15m 이내 진입 또는 30m 이내에서 2초 이상 정지(속도 < 0.3m/s) 시 횡단보도당 1회 자동 전환한다. GPS 정확도 > 25m이면 자동 전환 대신 수동 버튼 사용을 1회 권유하고, 경로 이탈 중에는 동작하지 않는다.
+  - `CrossingApproachEngine`(직선거리 40m 사전 알림 포함)은 음성 접근 안내만 담당하고 화면 전환에는 관여하지 않는다. 카메라 화면은 `launchSingleTop`으로 중복 열림을 막는다.
+  - 비행 기록 `[CROSSING_AUTO]`에 등록 목록, 전환 사유, 남은 거리, GPS 정확도, 속도를 남긴다.
 - **저시력자 전용 방향 안내 표시기 및 정대 카드:**
-  - `LowVisionDirectionIndicator`: 4dp 선명한 황색 테두리(#FFD600), 84dp 원형 배지 내 56dp 심볼 화살표, 38sp 대형 거리 텍스트.
+  - `LowVisionDirectionIndicator`: 4dp 선명한 황색 테두리(#FFD600), 84dp 원형 배지, 38sp 대형 거리 텍스트.
+  - 원 안의 화살표는 몸(기기) 정면 기준 가야 할 방향(`relativeDirectionDegrees`, 시간상수 0.3초 평활화)으로 회전하며 "N시 방향"을 함께 표시한다. 원 색상: 정면 ±20° 녹색 / 회전 필요 노란색 / 경로 이탈 주황색("경로 복귀"). 방향을 산출할 수 없으면 기존 분기 동작 아이콘을 표시한다 (ADR-0035).
   - 실시간 정대 카드: 🟢 "경로 방향 정대 완료" / 🧭 "몸 방향 회전 필요" 고대비 상태 및 TalkBack 시맨틱 제공.
 - **햅틱 진동 피드백 어휘 (`HapticFeedbackType`):**
   - `RED_STOP`: 적색 정지 (400ms-150ms-400ms, 진폭 255)
@@ -917,6 +955,22 @@ TMAP 경로가 “시각장애인에게 안전한 경로”라는 의미는 아�
 - 결과: 일시적 1프레임 블러 시에도 연속 녹색 누적 카운트 보존, 하단 차량 브레이크등 간섭 0% 차단, 녹색 전환 즉시 0ms 지연 음성 선점 발화 달성.
 
 
+
+### ADR-034 — YOLO 위치 검출(Tier 1) 실연결, 모델·색 분석 교차 융합 및 횡단 보조 음성/화면 단일 상태 동기화
+
+- 결정: 팀원 YOLOv8 모델을 실제 TFLite 추론으로 연결하되 위치 제안 용도로만 쓰고, 색 판정은 HSV/OpenCV와 보수적 비대칭 규칙으로 융합한다. 시간 검증기 이중 기록을 제거하고, 음성·화면은 하나의 확정 상태를 따른다.
+- 근거: 10/01 녹색 구간에서 모델은 녹색을 안정 검출했으나 HSV 블롭 필터가 원거리 픽토그램을 모두 기각해 녹색 확정 21%. 재생 추정 87%.
+- 상세: `docs/adr/0034_yolo_tier1_locator_hsv_fusion_and_crossing_voice_screen_sync.md`
+
+### ADR-035 — 몸 기준 방향 가이드 화살표, 경로 복귀 방향 및 지도 안정화
+
+- 결정: 목표 방위각을 "현재 위치 → 경로 전방 지점"으로 바꾸고, 방향 표시기 화살표를 몸 기준 상대 각도로 회전시키며, 지도 회전에는 강하게 평활화한 전용 헤딩을 사용한다. 재탐색 시 경로 레이어만 교체한다.
+- 상세: `docs/adr/0035_body_relative_direction_arrow_route_rejoin_and_map_stabilization.md`
+
+### ADR-036 — 횡단보도 접근 시 카메라 신호 확인 자동 전환
+
+- 결정: 경로상 15m 이내 또는 30m 이내 2초 정지 시 횡단보도당 1회 자동 전환, GPS 정확도 > 25m이면 수동 전환 권유.
+- 상세: `docs/adr/0036_crosswalk_auto_transition_to_camera_signal_check.md`
 
 ## 14. 기술 검증 PoC 순서
 

@@ -138,7 +138,7 @@ SPaT를 추가할 때도 카메라/현장 신호와 충돌하면 녹색을 선�
 - 공식 포털: 공공데이터포털(<https://www.data.go.kr>) 및 경찰청 도시교통정보센터 UTIC(<https://www.utic.go.kr>)
 - API 명칭: 경찰청_실시간 신호정보 Open API (교차로별 잔여시간 정보 / SPaT)
 - Base URL: `https://apis.data.go.kr/B553766/realtimeSignal/getSignal`
-- 인증 방식: Open API 일반 인증키 (`ca0040c954d4d1f212324e4bcb9b98e92929623bfcc03b53a7f835bf62a49484`)
+- 인증 방식: Open API 일반 인증키 (키 값은 문서·저장소에 기재하지 않는다. 현재 코드 하드코딩 및 APK 노출로 재발급 필요)
 - 앱 내 구현체: `kr.safecross.mobile.signal.CitsRealSignalStatusProvider`
 - 수신 및 정규화 데이터:
   - 현재 보행신호 상태: `OfficialSignalState.RED` / `OfficialSignalState.GREEN`
@@ -150,6 +150,12 @@ SPaT를 추가할 때도 카메라/현장 신호와 충돌하면 녹색을 선�
   - Fail-safe 기본 원칙: 네트워크 오류 또는 타임아웃(3초) 시 절대로 임의의 녹색을 발행하지 않고 안전 실패 처리
 - 정밀 지도 연동:
   - VWorld 지도 상 C-ITS 실시간 신호 연동 건널목(🚦 펄스 핀)과 일반 건널목(🚶) 시각적 분리 표기
+- 2026-10-01 점검 결과:
+  - 위 Base URL 호출 시 `HTTP 400`, `NO_OPENAPI_SERVICE_ERROR`("해당 오픈API 서비스가 없거나 폐기됨") 응답 → 앱의 공식 신호 수신은 현재 동작하지 않는다.
+  - 광주 C-ITS 공개 데이터: 공공데이터포털 "광주 C-ITS 데이터 조회서비스"(`apis.data.go.kr/6290000/gjcitsdata`)와 광주교통정보센터 Open API는 소통 통계, 교통 흐름(LOS), 주정차 단속구간, 스쿨존, 통합주차 정보만 제공하며 신호(SPaT)·보행신호 잔여시간은 공개하지 않는다.
+  - 광주 C-ITS 시스템은 보행신호 상태·잔여시간을 생성하며 2022년부터 협약 기업(카카오내비)에 제공된 것으로 보도되었다. 앱에서 사용하려면 광주시(교통정책과)와의 데이터 제공 협약이 필요하다.
+  - 경찰청 UTIC 신호 개방 데이터는 인천·대전·대구의 신호 계획(TOD) 정보만 제공한다(실시간 아님). 실시간 보행신호를 공개하는 사례는 서울시 "V2X 신호제어기 신호 정보"가 있다.
+  - 지도의 C-ITS 건널목 표기는 실제 데이터가 아니라 TMAP 안내 문구 키워드 휴리스틱이다.
 
 ## 3. 보행 경로 및 장소
 
