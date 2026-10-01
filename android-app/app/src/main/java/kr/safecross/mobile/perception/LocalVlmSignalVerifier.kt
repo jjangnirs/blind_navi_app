@@ -60,31 +60,13 @@ class LocalVlmSignalVerifier(
 
             // 차량용 가로 신호등 (W > H * 1.35) 배제
             if (boxWidth > boxHeight * 1.35f) {
-                val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.25f)
-                recordObservation(rejected)
-                lastObservation = rejected
-                return VerificationResult(
-                    verifiedState = ObservedSignalState.UNKNOWN,
-                    confidenceScore = 0.25f,
-                    isVerified = false,
-                    verificationReason = "REJECTED_HORIZONTAL_VEHICLE_LIGHT",
-                    ephemeralTrackId = currentTrackId
-                )
+                return reject(candidate, 0.25f, "REJECTED_HORIZONTAL_VEHICLE_LIGHT")
             }
 
             // 1-1. 도로 노면(Ground Plane) 아스팔트 위 차량 광원 기각 (보행 신호등은 지상 2.5m 이상 높이에 설치됨, ADR-032)
             val cy = (box.top + box.bottom) / 2f
             if (cy > 0.58f && box.top > 0.52f) {
-                val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
-                recordObservation(rejected)
-                lastObservation = rejected
-                return VerificationResult(
-                    verifiedState = ObservedSignalState.UNKNOWN,
-                    confidenceScore = 0.20f,
-                    isVerified = false,
-                    verificationReason = "REJECTED_ROADWAY_GROUND_PLANE",
-                    ephemeralTrackId = currentTrackId
-                )
+                return reject(candidate, 0.20f, "REJECTED_ROADWAY_GROUND_PLANE")
             }
 
             // 2. 동적 움직임(Motion Vector) 및 고속 이동 차량/정면 접근 차량 기각 (ADR-032)
@@ -106,34 +88,19 @@ class LocalVlmSignalVerifier(
 
                     // (1) 수평 주행 차량 기각 (속도 > 1.5 & 거리 > 0.18)
                     if (!isSamePoleVerticalTransition && !isHandheldShake && dist > 0.18f && velocity > 1.5f) {
-                        val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
-                        recordObservation(rejected)
-                        lastObservation = rejected
-                        return VerificationResult(
-                            verifiedState = ObservedSignalState.UNKNOWN,
-                            confidenceScore = 0.20f,
-                            isVerified = false,
-                            verificationReason = "REJECTED_DYNAMIC_MOTION",
-                            ephemeralTrackId = currentTrackId
-                        )
+                        return reject(candidate, 0.20f, "REJECTED_DYNAMIC_MOTION")
                     }
 
                     // (2) 정면 접근 차량(Scale Expansion) 기각: 중심 위치 이동은 작으나 면적이 단시간에 급팽창하는 광원
+                    // 원거리 소형 램프(박스 한 변 < 0.04, 여백 포함 약 20px 미만)는 몇 픽셀의 분할 차이로도 면적이 3배 이상 출렁이므로
+                    // 팽창률 검사에서 제외한다 (2026-09-28 실측: 동일 신호등 Area 9.5px ~ 193px 변동).
                     val curArea = box.width * box.height
                     val prevArea = prev.box.width * prev.box.height
-                    if (prevArea > 0f && dtSec in 0.03..0.40) {
+                    val isLargeEnoughForScaleCheck = minOf(box.width, box.height, prev.box.width, prev.box.height) >= 0.04f
+                    if (prevArea > 0f && isLargeEnoughForScaleCheck && dtSec in 0.03..0.40) {
                         val expansionRatio = curArea / prevArea
                         if (expansionRatio > 2.4f || expansionRatio < 0.40f) {
-                            val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = 0.20f)
-                            recordObservation(rejected)
-                            lastObservation = rejected
-                            return VerificationResult(
-                                verifiedState = ObservedSignalState.UNKNOWN,
-                                confidenceScore = 0.20f,
-                                isVerified = false,
-                                verificationReason = "REJECTED_APPROACHING_VEHICLE_SCALE_EXPANSION",
-                                ephemeralTrackId = currentTrackId
-                            )
+                            return reject(candidate, 0.20f, "REJECTED_APPROACHING_VEHICLE_SCALE_EXPANSION")
                         }
                     }
                 }
@@ -228,6 +195,23 @@ class LocalVlmSignalVerifier(
             confidenceScore = boostedScore,
             isVerified = (finalState != ObservedSignalState.UNKNOWN),
             verificationReason = "TEMPORAL_GEOMETRIC_VERIFIED",
+            ephemeralTrackId = currentTrackId
+        )
+    }
+
+    private fun reject(candidate: SignalObservation, score: Float, reason: String): VerificationResult {
+        val rejected = candidate.copy(state = ObservedSignalState.UNKNOWN, score = score)
+        recordObservation(rejected)
+        lastObservation = rejected
+        PerceptionFlightRecorder.record(
+            "VERIFIER",
+            "Track=$currentTrackId Cand=${candidate.state}(${"%.2f".format(candidate.score)}) -> Final=UNKNOWN Reason=$reason HistSize=${history.size}"
+        )
+        return VerificationResult(
+            verifiedState = ObservedSignalState.UNKNOWN,
+            confidenceScore = score,
+            isVerified = false,
+            verificationReason = reason,
             ephemeralTrackId = currentTrackId
         )
     }

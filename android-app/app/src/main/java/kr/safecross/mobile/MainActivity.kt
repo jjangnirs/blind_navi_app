@@ -339,7 +339,8 @@ fun SafeCrossNavHost(
                         poseTracker = kr.safecross.mobile.sensor.ProductionDevicePoseTracker(context),
                         guidanceArbiter = kr.safecross.mobile.guidance.GuidanceArbiter(),
                         signalStatusProvider = kr.safecross.mobile.signal.CitsRealSignalStatusProvider(),
-                        enableSignalPolling = true
+                        enableSignalPolling = true,
+                        analysisDispatcher = kotlinx.coroutines.Dispatchers.Default
                     )
                 }
 

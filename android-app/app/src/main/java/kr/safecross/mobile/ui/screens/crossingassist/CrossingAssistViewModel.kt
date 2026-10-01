@@ -2,6 +2,7 @@ package kr.safecross.mobile.ui.screens.crossingassist
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -11,8 +12,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kr.safecross.mobile.camera.CameraPipeManager
 import kr.safecross.mobile.camera.FakeCameraPipeManager
 import kr.safecross.mobile.camera.FrameRef
@@ -56,7 +59,10 @@ class CrossingAssistViewModel(
     val poseTracker: DevicePoseTracker = FakeDevicePoseTracker(),
     val guidanceArbiter: GuidanceArbiter = GuidanceArbiter(),
     val signalStatusProvider: SignalStatusProvider = FakeSignalStatusProvider(),
-    val enableSignalPolling: Boolean = false
+    val enableSignalPolling: Boolean = false,
+    // 영상 분석(신호등/횡단보도 추정)을 실행할 디스패처. 실기기에서는 Dispatchers.Default를 주입해
+    // 메인(UI) 스레드를 막지 않게 하고, null이면 호출 코루틴에서 그대로 실행한다(단위 테스트용).
+    private val analysisDispatcher: CoroutineDispatcher? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CrossingAssistUiState())
@@ -85,9 +91,16 @@ class CrossingAssistViewModel(
     private var latestOfficialSignal: OfficialSignalObservation? = null
     private var officialSignalRemainingSec: Int? = null
 
-    // 신호등 판정 상태 디바운스(연속 상태 카운트): 5프레임 연속 동일 판정일 때만 화면/발화에 반영
+    // 녹색 판정 디바운스: GREEN_ESTIMATE가 5프레임 연속 유지될 때만 확정·발화한다.
+    // 적색/UNKNOWN은 안전 방향이므로 지연 없이 즉시 반영한다.
     private var candidateState: CrossingAssistDecisionState? = null
     private var consecutiveStateCount = 0
+    private val greenConfirmFrames = 5
+
+    // 프레임 처리 중복 방지: 이전 프레임 분석이 끝나기 전에 들어온 프레임은 버린다
+    // (카메라 콜백마다 코루틴이 쌓여 지연이 누적되는 것을 방지).
+    @Volatile
+    private var isFrameInFlight = false
 
     // 깊이 추정 진단용 스로틀 상태 (매 프레임 실행하지 않음)
     private var lastDepthEstimateAtMs: Long = 0L
@@ -219,15 +232,16 @@ class CrossingAssistViewModel(
         // 발견: 같은 세션 내 모든 거리 태그에서 near/avg 값이 완전히 동일하게 찍힘).
         maybeRunDepthEstimate(frame)
 
-        if (!isAnalyzing) return
+        if (!isAnalyzing || isFrameInFlight) return
+        isFrameInFlight = true
 
         viewModelScope.launch {
             try {
-                // 1. 횡단보도 형상 인식
-                val cwObs = crosswalkEstimator.estimate(frame)
-
-                // 2. 보행신호기 인식
-                val sigObs = signalEstimator.estimate(frame)
+                // 1. 횡단보도 형상 인식, 2. 보행신호기 인식 (무거운 영상 연산은 분석 디스패처에서 실행)
+                val (cwObs, sigObs) = runAnalysis {
+                    crosswalkEstimator.estimate(frame) to signalEstimator.estimate(frame)
+                }
+                if (!isAnalyzing) return@launch
 
                 // 3. 목표 신호 1:1 연결 (Lock-on)
                 val currentPose = poseTracker.currentPose.value
@@ -290,103 +304,154 @@ class CrossingAssistViewModel(
                     }
                 }
 
-                // 횡단보도는 감지되었으나 신호등이 감지되지 않는 경우 직관적인 상태 메시지 제공
-                val resolvedStatusMessage = when {
-                    decision.state == CrossingAssistDecisionState.UNKNOWN && cwObs.hasCrosswalk && !isActualSignalDetected ->
-                        "횡단보도 감지됨 (신호등 미인식 / 무신호 주의)"
-                    decision.guidanceText != null -> decision.guidanceText
-                    else -> decision.state.description
-                }
-
                 // 진단 HUD 및 Flight Recorder 기록 (C-ITS 정보 포함)
                 val sigStateStr = targetSignal?.state?.name ?: "NONE"
                 val sigScoreStr = targetSignal?.let { "%.2f".format(it.score) } ?: "0.00"
                 val trackIdStr = targetSignal?.ephemeralTrackId?.takeLast(8) ?: "none"
                 val citsTag = latestOfficialSignal?.let { "[C-ITS:${it.state}${officialSignalRemainingSec?.let { s -> " ${s}s" } ?: ""}]" } ?: "[C-ITS:OFF]"
-                val diagText = "SIG: $sigStateStr ($sigScoreStr) [#$trackIdStr] $citsTag | G-CNT: ${decisionEngine.consecutiveGreenCount}/5 | TILT: ${if (isTiltOk) "OK" else "WARN"} | RET: ${if (isInsideReticle) "IN" else "OUT"} | $lastDepthDiagText\nDEC: ${decision.state.name} (${decision.reasonCode ?: "OK"})"
 
-                PerceptionFlightRecorder.updateSummary(diagText)
-                PerceptionFlightRecorder.record(
-                    "FRAME",
-                    "Sig=$sigStateStr($sigScoreStr) Trk=$trackIdStr GCount=${decisionEngine.consecutiveGreenCount} Tilt=$isTiltOk Ret=$isInsideReticle Dec=${decision.state} Reason=${decision.reasonCode} CITS=${latestOfficialSignal?.state}"
-                )
-
-                // 상태 디바운스(연속 상태 카운트): 동일 판정이 5프레임 연속 유지될 때만 화면/발화에 반영 (오탐 깜빡임 억제)
-                val rawState = decision.state
+                // 판정 상태 확정(히스테리시스): 화면 배지·박스 색·상태 문구·음성 안내는 모두 이 확정 상태 하나만 따른다.
+                // (실측 10/01: 박스 색은 프레임 원시 색, 배지는 판정 상태, 음성은 판정 변화마다 발화해 서로 어긋났음)
+                val rawState = normalizeForUser(decision.state)
                 if (rawState == candidateState) {
                     consecutiveStateCount++
                 } else {
                     candidateState = rawState
                     consecutiveStateCount = 1
                 }
+                val previousConfirmedState = _uiState.value.decisionState
+                val requiredFrames = requiredConfirmFrames(rawState, previousConfirmedState)
+                val confirmedState = if (consecutiveStateCount >= requiredFrames) rawState else previousConfirmedState
+                val isNewlyConfirmed = confirmedState != previousConfirmedState
 
-                if (consecutiveStateCount >= 5) {
-                    val previousConfirmedState = _uiState.value.decisionState
+                val diagText = "SIG: $sigStateStr ($sigScoreStr) [#$trackIdStr] $citsTag | G-CNT: ${decisionEngine.consecutiveGreenCount}/5 | TILT: ${if (isTiltOk) "OK" else "WARN"} | RET: ${if (isInsideReticle) "IN" else "OUT"} | $lastDepthDiagText\nDEC: ${decision.state.name} (${decision.reasonCode ?: "OK"}) -> SHOWN: ${confirmedState.name}"
 
-                    _uiState.value = _uiState.value.copy(
-                        decisionState = rawState,
+                PerceptionFlightRecorder.updateSummary(diagText)
+                PerceptionFlightRecorder.record(
+                    "FRAME",
+                    "Sig=$sigStateStr($sigScoreStr) Trk=$trackIdStr GCount=${decisionEngine.consecutiveGreenCount} Tilt=$isTiltOk Ret=$isInsideReticle Dec=${decision.state} Reason=${decision.reasonCode} Shown=$confirmedState CITS=${latestOfficialSignal?.state}"
+                )
+
+                // 박스 색은 확정 상태 기준으로만 표시 (적색 확정 = 적색 박스, 녹색 확정 = 녹색 박스, 그 외 박스 없음)
+                val shownColor = when (confirmedState) {
+                    CrossingAssistDecisionState.RED_ESTIMATE -> ObservedSignalState.RED
+                    CrossingAssistDecisionState.GREEN_ESTIMATE -> ObservedSignalState.GREEN
+                    else -> null
+                }
+                _uiState.update {
+                    it.copy(
+                        decisionState = confirmedState,
+                        statusMessage = statusTextFor(confirmedState),
                         crosswalkDetected = cwObs.hasCrosswalk,
-                        statusMessage = resolvedStatusMessage,
-                        detectedSignalBox = if (isActualSignalDetected) targetBox else null,
-                        detectedSignalColor = if (isActualSignalDetected) targetSignal?.state else null,
+                        detectedSignalBox = if (shownColor != null) targetBox else null,
+                        detectedSignalColor = shownColor,
                         isSignalInReticle = isInsideReticle,
                         debugDiagnosticText = diagText
                     )
+                }
 
-                    // 5. 발화 안내: 녹색 신호는 1회만 알리고 이후 비전 분석을 동결(아이나비식), 그 외 상태는 상태 전환 시 1회 발화
-                    if (rawState == CrossingAssistDecisionState.GREEN_ESTIMATE) {
-                        if (!hasSpokenCurrentGreenPhase) {
+                // 5. 발화 안내: 확정 상태가 바뀔 때만, 화면 문구와 같은 내용으로 1회 발화
+                if (isNewlyConfirmed) {
+                    PerceptionFlightRecorder.record("ANNOUNCE", "$previousConfirmedState -> $confirmedState")
+                    when (confirmedState) {
+                        CrossingAssistDecisionState.GREEN_ESTIMATE -> if (!hasSpokenCurrentGreenPhase) {
                             hasSpokenCurrentGreenPhase = true
                             lastGreenGuidanceTimeMs = System.currentTimeMillis()
-                            val citsInfo = officialSignalRemainingSec?.let { " (잔여 ${it}초)" } ?: ""
+                            val citsInfo = officialSignalRemainingSec?.let { " 잔여 ${it}초." } ?: ""
                             emitGuidance(
-                                text = "신호가 바뀌었습니다. 건너가세요.$citsInfo 좌우를 살피며 횡단하세요. 다 건너신 후에는 화면 아래 종료 버튼을 눌러 길안내로 돌아가세요.",
+                                text = "녹색 신호로 추정됩니다.$citsInfo 좌우를 살피며 횡단하세요. 앱만으로 안전을 보장할 수 없습니다. 다 건너신 후에는 화면 아래 종료 버튼을 눌러 길안내로 돌아가세요.",
                                 priority = GuidancePriority.SAFETY,
                                 category = "signal_decision_green",
-                                hapticType = decision.hapticType ?: HapticFeedbackType.GREEN_ESTIMATE
+                                hapticType = HapticFeedbackType.GREEN_ESTIMATE
                             )
 
                             // 출발 알림 후 비전 분석 즉시 동결: 건너는 도중 스마트폰 흔들림으로 인한 판정 핑퐁 방지.
-                            // 동결 이후 화면이 마지막 프레임에 "박제"된 것처럼 보이지 않도록 신호등 관련
-                            // 표시(바운딩 박스/조준 상태)는 여기서 명시적으로 비운다.
+                            // 동결 이후 화면이 마지막 프레임에 "박제"된 것처럼 보이지 않도록 신호등 박스/조준 표시는 비운다.
                             isAnalyzing = false
                             signalPollingJob?.cancel()
-                            _uiState.value = _uiState.value.copy(
-                                statusMessage = "안전 횡단 진행 중입니다. 다 건너면 아래 종료 버튼을 눌러주세요.",
-                                detectedSignalBox = null,
-                                detectedSignalColor = null,
-                                isSignalInReticle = false
-                            )
+                            _uiState.update {
+                                it.copy(
+                                    statusMessage = "녹색 신호(추정) · 횡단 중입니다. 다 건너면 아래 종료 버튼을 눌러주세요.",
+                                    detectedSignalBox = null,
+                                    detectedSignalColor = null,
+                                    isSignalInReticle = false
+                                )
+                            }
                         }
-                    } else {
-                        hasSpokenCurrentGreenPhase = false
-                        if (resolvedStatusMessage.isNotBlank() && rawState != previousConfirmedState) {
-                            val priority = when (rawState) {
-                                CrossingAssistDecisionState.RED_ESTIMATE -> GuidancePriority.SAFETY
-                                CrossingAssistDecisionState.UNKNOWN -> GuidancePriority.CROSSING
-                                else -> GuidancePriority.INFO
-                            }
-                            val category = when (rawState) {
-                                CrossingAssistDecisionState.RED_ESTIMATE -> "signal_decision_red"
-                                CrossingAssistDecisionState.UNKNOWN -> "signal_decision_unknown"
-                                else -> "signal_decision_info"
-                            }
+                        CrossingAssistDecisionState.RED_ESTIMATE -> {
+                            hasSpokenCurrentGreenPhase = false
                             emitGuidance(
-                                text = resolvedStatusMessage,
-                                priority = priority,
-                                category = category,
-                                hapticType = decision.hapticType
+                                text = statusTextFor(confirmedState),
+                                priority = GuidancePriority.SAFETY,
+                                category = "signal_decision_red",
+                                hapticType = HapticFeedbackType.RED_STOP
                             )
                         }
+                        CrossingAssistDecisionState.UNKNOWN -> {
+                            hasSpokenCurrentGreenPhase = false
+                            // 확정된 신호를 놓친 경우에만 알린다 (탐색 시작 직후의 UNKNOWN은 시작 안내로 충분)
+                            if (previousConfirmedState == CrossingAssistDecisionState.RED_ESTIMATE ||
+                                previousConfirmedState == CrossingAssistDecisionState.GREEN_ESTIMATE
+                            ) {
+                                emitGuidance(
+                                    text = statusTextFor(confirmedState),
+                                    priority = GuidancePriority.CROSSING,
+                                    category = "signal_decision_unknown",
+                                    hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+                                )
+                            }
+                        }
+                        else -> Unit
                     }
                 }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    decisionState = CrossingAssistDecisionState.UNKNOWN,
-                    statusMessage = "분석 오류가 발생했습니다. 주변을 직접 확인하세요."
-                )
+                _uiState.update {
+                    it.copy(
+                        decisionState = CrossingAssistDecisionState.UNKNOWN,
+                        statusMessage = "분석 오류가 발생했습니다. 주변을 직접 확인하세요."
+                    )
+                }
+            } finally {
+                isFrameInFlight = false
             }
         }
+    }
+
+    /**
+     * 사용자에게 노출하는 상태로 정규화한다. GREEN_CANDIDATE는 내부 검증 상태이므로(SR-F-062)
+     * 화면·음성에는 UNKNOWN(확인 중)으로만 반영한다.
+     */
+    private fun normalizeForUser(state: CrossingAssistDecisionState): CrossingAssistDecisionState =
+        if (state == CrossingAssistDecisionState.GREEN_CANDIDATE) CrossingAssistDecisionState.UNKNOWN else state
+
+    /**
+     * 상태별 확정에 필요한 연속 프레임 수 (실기기 약 6fps 기준).
+     * - 녹색: 5프레임(약 0.8초) — 오탐 방지를 위해 가장 엄격
+     * - 적색: 2프레임 — 정지 안내는 빠르게
+     * - 확정된 적색/녹색에서 UNKNOWN으로: 6프레임(약 1초) — 순간적인 검출 누락으로 안내가 흔들리지 않도록
+     */
+    private fun requiredConfirmFrames(
+        target: CrossingAssistDecisionState,
+        current: CrossingAssistDecisionState
+    ): Int = when (target) {
+        CrossingAssistDecisionState.GREEN_ESTIMATE -> greenConfirmFrames
+        CrossingAssistDecisionState.RED_ESTIMATE -> 2
+        CrossingAssistDecisionState.UNKNOWN ->
+            if (current == CrossingAssistDecisionState.RED_ESTIMATE || current == CrossingAssistDecisionState.GREEN_ESTIMATE) 6 else 1
+        else -> 1
+    }
+
+    /** 확정 상태별 화면 문구 (적색/확인 불가는 음성 안내와 동일한 문장) */
+    private fun statusTextFor(state: CrossingAssistDecisionState): String = when (state) {
+        CrossingAssistDecisionState.RED_ESTIMATE -> "적색 신호입니다. 대기하세요."
+        CrossingAssistDecisionState.GREEN_ESTIMATE -> "녹색 신호로 추정됩니다. 좌우를 살피며 횡단하세요."
+        CrossingAssistDecisionState.UNKNOWN -> "신호를 확인할 수 없습니다. 신호등을 화면 가운데에 맞춰 주세요."
+        else -> state.description
+    }
+
+    private suspend fun <T> runAnalysis(block: suspend () -> T): T {
+        val dispatcher = analysisDispatcher ?: return block()
+        return withContext(dispatcher) { block() }
     }
 
     /**
@@ -412,7 +477,7 @@ class CrossingAssistViewModel(
                 lastDepthDiagText = if (ratio != null && peakRatio != null) {
                     "DEPTH: avg=%.2f peak=%.2f".format(ratio, peakRatio)
                 } else "DEPTH: n/a"
-                _uiState.value = _uiState.value.copy(lastDepthRatio = ratio, lastDepthPeakRatio = peakRatio)
+                _uiState.update { it.copy(lastDepthRatio = ratio, lastDepthPeakRatio = peakRatio) }
                 if (peakRatio != null) {
                     evaluateObstacleProximityTrend(System.currentTimeMillis(), peakRatio)
                 }
