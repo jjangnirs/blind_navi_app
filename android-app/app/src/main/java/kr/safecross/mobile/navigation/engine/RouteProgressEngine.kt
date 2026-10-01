@@ -166,6 +166,30 @@ class RouteProgressEngine(
     }
 
     /**
+     * 경로 시작점으로부터 [alongMeters]만큼 떨어진 경로 위의 지점 (선분 보간).
+     * 현재 위치의 투영점 + 전방 거리로 "앞으로 가야 할 지점"(look-ahead)을 구하거나,
+     * 지도 표시용으로 현재 위치를 경로 위에 맞출(map-matching) 때 사용한다.
+     */
+    fun pointAtDistance(alongMeters: Double): LocationPoint? {
+        if (pathPoints.isEmpty()) return null
+        if (pathPoints.size == 1 || alongMeters <= 0.0) return pathPoints.first()
+        if (alongMeters >= totalRouteDistanceMeters) return pathPoints.last()
+
+        for (i in segmentLengths.indices) {
+            val segStart = cumulativeDistances[i]
+            val segEnd = cumulativeDistances[i + 1]
+            if (alongMeters <= segEnd) {
+                val len = segmentLengths[i]
+                val t = if (len <= 0.0) 0.0 else ((alongMeters - segStart) / len).coerceIn(0.0, 1.0)
+                val a = pathPoints[i]
+                val b = pathPoints[i + 1]
+                return LocationPoint(a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t)
+            }
+        }
+        return pathPoints.last()
+    }
+
+    /**
      * 상태 초기화 (재탐색 또는 프로세스 복구 시).
      */
     fun reset() {

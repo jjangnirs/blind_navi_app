@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -51,7 +52,11 @@ fun RealRouteMapView(
     tmapAppKey: String = BuildConfig.TMAP_APP_KEY,
     modifier: Modifier = Modifier
 ) {
-    val htmlContent = remember(route, originName, destinationName) {
+    // HTML은 최초 경로로 한 번만 만든다. 재탐색으로 경로가 바뀌면 페이지를 다시 로드하지 않고
+    // replaceRoute()로 경로 레이어만 교체해 지도 시점(위치·줌·회전)이 튀지 않게 한다.
+    val routeDataJs = remember(route) { buildRouteDataJs(route) }
+    val latestRouteDataJs = rememberUpdatedState(routeDataJs)
+    val htmlContent = remember(originName, destinationName) {
         buildRouteMapHtml(
             route = route,
             originName = originName,
@@ -97,6 +102,14 @@ fun RealRouteMapView(
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
+                            // 로드 중에 경로가 바뀌었을 수 있으므로 최신 경로로 동기화
+                            if (view?.getTag(ROUTE_TAG_KEY) != latestRouteDataJs.value) {
+                                view?.setTag(ROUTE_TAG_KEY, latestRouteDataJs.value)
+                                view?.evaluateJavascript(
+                                    "if (typeof replaceRoute === 'function') { replaceRoute(${latestRouteDataJs.value}); }",
+                                    null
+                                )
+                            }
                             // 페이지 로드 완료 후 현재 위치 및 진행방향 각도 즉시 반영
                             if (currentLocation != null) {
                                 view?.evaluateJavascript(
@@ -125,6 +138,8 @@ fun RealRouteMapView(
                         false
                     }
 
+                    tag = htmlContent
+                    setTag(ROUTE_TAG_KEY, routeDataJs)
                     loadDataWithBaseURL(
                         "https://safecross.kr",
                         htmlContent,
@@ -146,6 +161,14 @@ fun RealRouteMapView(
                         null
                     )
                 } else {
+                    // 재탐색으로 경로가 바뀐 경우: 페이지 재로드 없이 경로 레이어만 교체
+                    if (webView.getTag(ROUTE_TAG_KEY) != routeDataJs) {
+                        webView.setTag(ROUTE_TAG_KEY, routeDataJs)
+                        webView.evaluateJavascript(
+                            "if (typeof replaceRoute === 'function') { replaceRoute($routeDataJs); }",
+                            null
+                        )
+                    }
                     // HTML 재로드 없이 자바스크립트로 내 위치 마커 및 맵 회전 실시간 부드럽게 갱신
                     if (currentLocation != null) {
                         val js = "if (typeof updateUserLocation === 'function') { updateUserLocation(${currentLocation.lat}, ${currentLocation.lon}, $isOffRoute, false, $headingDegrees, $isHeadingUp); }"
@@ -174,22 +197,54 @@ private fun buildRouteMapHtml(
     initialHeadingUp: Boolean = false,
     showControls: Boolean
 ): String {
-    val coords = if (route.fullGeometry.isNotEmpty()) {
-        route.fullGeometry
-    } else {
-        route.maneuvers.map { it.location }
-    }
+    val coords = routeCoords(route)
+    val coordsArray = buildCoordsJson(route)
+    val crosswalksArray = buildCrosswalksJson(route)
 
-    // 경로 좌표 목록을 JSON 배열로 변환 [[lat, lon], [lat, lon], ...]
+    val safeOrigin = JSONObject.quote(originName)
+    val safeDest = JSONObject.quote(destinationName)
+
+    val initLat = initialLocation?.lat ?: (coords.firstOrNull()?.lat ?: 35.1595)
+    val initLon = initialLocation?.lon ?: (coords.firstOrNull()?.lon ?: 126.8526)
+    val hasInitLoc = initialLocation != null
+
+    return buildRouteMapHtmlDocument(
+        coordsArray = coordsArray,
+        crosswalksArray = crosswalksArray,
+        safeOrigin = safeOrigin,
+        safeDest = safeDest,
+        hasInitLoc = hasInitLoc,
+        initLat = initLat,
+        initLon = initLon,
+        initialOffRoute = initialOffRoute,
+        initialHeading = initialHeading,
+        initialHeadingUp = initialHeadingUp
+    )
+}
+
+private const val ROUTE_TAG_KEY = 0x5AFEC055
+
+private fun routeCoords(route: PedestrianRoute): List<LocationPoint> =
+    if (route.fullGeometry.isNotEmpty()) route.fullGeometry else route.maneuvers.map { it.location }
+
+/** replaceRoute(coords, crosswalks) 호출 인자 문자열 */
+private fun buildRouteDataJs(route: PedestrianRoute): String =
+    "${buildCoordsJson(route)}, ${buildCrosswalksJson(route)}"
+
+/** 경로 좌표 목록을 JSON 배열로 변환 [[lat, lon], [lat, lon], ...] */
+private fun buildCoordsJson(route: PedestrianRoute): JSONArray {
     val coordsArray = JSONArray()
-    for (pt in coords) {
+    for (pt in routeCoords(route)) {
         val ptArr = JSONArray()
         ptArr.put(pt.lat)
         ptArr.put(pt.lon)
         coordsArray.put(ptArr)
     }
+    return coordsArray
+}
 
-    // 횡단보도 및 분기점 목록 추출 (C-ITS 실시간 신호 연동 여부 자동 판정)
+/** 횡단보도 및 분기점 목록 추출 (C-ITS 실시간 신호 연동 여부 자동 판정) */
+private fun buildCrosswalksJson(route: PedestrianRoute): JSONArray {
     val crosswalksArray = JSONArray()
     route.maneuvers.forEachIndexed { idx, m ->
         val isCrosswalk = m.facilityType == "횡단보도" || (m.turnType != null && m.turnType in 211..217) ||
@@ -216,14 +271,21 @@ private fun buildRouteMapHtml(
             crosswalksArray.put(cwObj)
         }
     }
+    return crosswalksArray
+}
 
-    val safeOrigin = JSONObject.quote(originName)
-    val safeDest = JSONObject.quote(destinationName)
-
-    val initLat = initialLocation?.lat ?: (coords.firstOrNull()?.lat ?: 35.1595)
-    val initLon = initialLocation?.lon ?: (coords.firstOrNull()?.lon ?: 126.8526)
-    val hasInitLoc = initialLocation != null
-
+private fun buildRouteMapHtmlDocument(
+    coordsArray: JSONArray,
+    crosswalksArray: JSONArray,
+    safeOrigin: String,
+    safeDest: String,
+    hasInitLoc: Boolean,
+    initLat: Double,
+    initLon: Double,
+    initialOffRoute: Boolean,
+    initialHeading: Float,
+    initialHeadingUp: Boolean
+): String {
     return """
 <!DOCTYPE html>
 <html>
@@ -258,7 +320,7 @@ private fun buildRouteMapHtml(
             left: -35%;
             top: -35%;
             transform-origin: 50% 50%;
-            transition: transform 0.20s ease-out;
+            transition: transform 0.8s ease-out;
         }
 
         /* 컨트롤 버튼 플로팅 패널 */
@@ -544,6 +606,7 @@ private fun buildRouteMapHtml(
         var map = null;
         var routePolyline = null;
         var routeBounds = null;
+        var routeLayer = null;
         var userMarker = null;
 
         document.addEventListener("DOMContentLoaded", function() {
@@ -588,7 +651,33 @@ private fun buildRouteMapHtml(
                 });
             });
 
-            // 보행 경로선(Polyline) 렌더링
+            drawRouteLayers();
+            if (!hasInitLoc && routeBounds) {
+                map.fitBounds(routeBounds, {
+                    padding: [36, 36],
+                    maxZoom: 18
+                });
+            }
+
+            // 초기 내 위치 표시 및 진행방향 각도 회전
+            if (hasInitLoc) {
+                updateUserLocation(initLat, initLon, isOffRoute, isHeadingUp, currentHeading, isHeadingUp);
+            } else {
+                applyMapRotation(currentHeading, isHeadingUp);
+            }
+            updateHeadingButtonUi();
+        }
+
+        // 경로선/출발·도착/횡단보도 마커를 그린다. 재탐색 시 지도 시점(위치·줌·회전)을 바꾸지 않고 이 레이어만 교체한다.
+        function drawRouteLayers() {
+            if (!map) return;
+            if (routeLayer) {
+                routeLayer.clearLayers();
+            } else {
+                routeLayer = L.layerGroup().addTo(map);
+            }
+            routePolyline = null;
+            routeBounds = null;
             if (coords && coords.length > 0) {
                 // 외곽 두꺼운 고대비 네이비 블루 테두리선
                 L.polyline(coords, {
@@ -597,7 +686,7 @@ private fun buildRouteMapHtml(
                     opacity: 0.95,
                     lineJoin: 'round',
                     lineCap: 'round'
-                }).addTo(map);
+                }).addTo(routeLayer);
 
                 // 중심 보행 경로선 (고대비 형광 옐로우)
                 routePolyline = L.polyline(coords, {
@@ -606,7 +695,7 @@ private fun buildRouteMapHtml(
                     opacity: 1.0,
                     lineJoin: 'round',
                     lineCap: 'round'
-                }).addTo(map);
+                }).addTo(routeLayer);
 
                 routeBounds = routePolyline.getBounds();
 
@@ -617,7 +706,7 @@ private fun buildRouteMapHtml(
                     iconSize: [32, 32],
                     iconAnchor: [16, 16]
                 });
-                L.marker(coords[0], { icon: startIcon }).addTo(map)
+                L.marker(coords[0], { icon: startIcon }).addTo(routeLayer)
                     .bindPopup("🟢 출발지: " + originText);
 
                 // 도착지 마커 (🔴)
@@ -627,7 +716,7 @@ private fun buildRouteMapHtml(
                     iconSize: [32, 32],
                     iconAnchor: [16, 16]
                 });
-                L.marker(coords[coords.length - 1], { icon: endIcon }).addTo(map)
+                L.marker(coords[coords.length - 1], { icon: endIcon }).addTo(routeLayer)
                     .bindPopup("🔴 목적지: " + destText);
 
                 // 횡단보도 마커 (C-ITS 실시간 신호 🚦 vs 일반 건널목 🚶)
@@ -659,27 +748,19 @@ private fun buildRouteMapHtml(
                               '<div style="margin-top:5px; font-size: 10px; color: #FFB74D; background:rgba(255,145,0,0.15); border:1px solid rgba(255,145,0,0.3); padding:3px 6px; border-radius:4px;">※ 카메라 비전 보조 사용</div>' +
                               '</div>';
 
-                        L.marker([cw.lat, cw.lon], { icon: cwIcon }).addTo(map)
+                        L.marker([cw.lat, cw.lon], { icon: cwIcon }).addTo(routeLayer)
                             .bindPopup(popupContent);
                     });
                 }
 
-                // 시작 시 위치가 없으면 경로 전체에 맞춤
-                if (!hasInitLoc) {
-                    map.fitBounds(routeBounds, {
-                        padding: [36, 36],
-                        maxZoom: 18
-                    });
-                }
             }
+        }
 
-            // 초기 내 위치 표시 및 진행방향 각도 회전
-            if (hasInitLoc) {
-                updateUserLocation(initLat, initLon, isOffRoute, isHeadingUp, currentHeading, isHeadingUp);
-            } else {
-                applyMapRotation(currentHeading, isHeadingUp);
-            }
-            updateHeadingButtonUi();
+        // 네이티브에서 재탐색된 경로를 전달받아 페이지 재로드 없이 교체 (지도 깜빡임/시점 초기화 방지)
+        function replaceRoute(newCoords, newCrosswalks) {
+            coords = newCoords;
+            crosswalks = newCrosswalks;
+            drawRouteLayers();
         }
 
         // 지도 회전 적용 함수: 최단 각도 누적(Unwrap) 및 2.5도 불감대(Deadband) 필터 적용 (360도 풍차 회전 및 잔떨림 원천 방지)
@@ -699,8 +780,9 @@ private fun buildRouteMapHtml(
                 if (delta > 180) delta -= 360;
                 if (delta < -180) delta += 360;
 
-                // 4.5도 미만의 미세 손떨림 및 발걸음 진자 운동은 필터링하여 지도 고정 유지 (보행 진자 흔들림 완벽 차단)
-                if (Math.abs(delta) < 4.5) {
+                // 6도 미만의 미세 손떨림 및 발걸음 진자 운동은 무시하여 지도 고정 유지
+                // (헤딩은 네이티브에서 이미 저역 통과 필터로 평활화되어 들어온다)
+                if (Math.abs(delta) < 6.0) {
                     return;
                 }
                 currentContinuousMapAngle += delta;
@@ -835,14 +917,14 @@ private fun buildRouteMapHtml(
                     var dLat = (lat - lastPannedLatLng[0]) * 111000;
                     var dLon = (lon - lastPannedLatLng[1]) * 111000 * Math.cos(lat * Math.PI / 180);
                     var distM = Math.sqrt(dLat * dLat + dLon * dLon);
-                    // 2.5m 미만의 미세 GPS 지터(Jitter)는 카메라를 이동하지 않고 마커만 갱신 (화면 떨림 완벽 방지)
-                    if (distM >= 2.5) {
+                    // 4m 미만의 미세 GPS 지터(Jitter)는 카메라를 이동하지 않고 마커만 갱신 (화면 떨림 방지)
+                    if (distM >= 4.0) {
                         shouldPan = true;
                     }
                 }
                 if (shouldPan) {
                     lastPannedLatLng = [lat, lon];
-                    map.panTo(latLng, { animate: true, duration: 0.45, easeLinearity: 0.25 });
+                    map.panTo(latLng, { animate: true, duration: 0.9, easeLinearity: 0.5 });
                 }
             }
         }

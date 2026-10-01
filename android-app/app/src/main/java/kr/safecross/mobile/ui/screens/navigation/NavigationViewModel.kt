@@ -75,6 +75,21 @@ class NavigationViewModel(
     private var lastHeadingUiUpdateTimeMs = 0L
     private var lastUiHeading = 0f
 
+    // 현재 위치 기준 전방 경로 지점(look-ahead) 방위각 (GPS 흔들림 평활화)
+    private var smoothedGuidanceBearing: Double? = null
+    private var lastAlongTrackMeters: Double? = null
+
+    // 방향 가이드 화살표 상대 각도 평활화
+    private var smoothedRelativeDirection: Double? = null
+    private var lastRelativeUiValue: Float? = null
+    private var lastRelativeUiTimeMs = 0L
+
+    // 지도 회전 전용 헤딩 평활화 (실측 10/01: 나침반 1초 변화량 p90 13도, p95 23도 → 지도가 계속 흔들림)
+    private var smoothedMapHeading: Double? = null
+    private var lastMapHeadingUiValue: Float? = null
+    private var lastMapHeadingUiTimeMs = 0L
+    private var lastPoseTimeMs = 0L
+
     init {
         serviceStopJob = viewModelScope.launch {
             NavigationForegroundService.stopEventFlow.collect {
@@ -103,6 +118,9 @@ class NavigationViewModel(
         lastApproachStage = 0
         lastAlignmentTimeMs = 0L
         hasCalibratedInitialStart = false
+        smoothedGuidanceBearing = null
+        lastAlongTrackMeters = null
+        smoothedRelativeDirection = null
 
         _uiState.update {
             it.copy(
@@ -180,10 +198,41 @@ class NavigationViewModel(
             _uiState.update { it.copy(currentHeadingDegrees = effectiveHeading) }
         }
 
+        val dtSec = if (lastPoseTimeMs == 0L) 0.1 else ((currentTimeMs - lastPoseTimeMs) / 1000.0).coerceIn(0.0, 1.0)
+        lastPoseTimeMs = currentTimeMs
+
+        // 2-1. 지도 회전 전용 헤딩: 시간상수 0.8초 저역 통과 + 5도/0.3초 이상 변화 시에만 지도에 반영
+        val mapHeading = blendAngle(smoothedMapHeading, effectiveHeading.toDouble(), smoothingAlpha(dtSec, MAP_HEADING_TAU_SEC))
+        smoothedMapHeading = mapHeading
+        val lastMap = lastMapHeadingUiValue
+        val mapDelta = if (lastMap == null) 360.0 else kotlin.math.abs(wrapDegrees(mapHeading - lastMap))
+        if (mapDelta >= 5.0 && currentTimeMs - lastMapHeadingUiTimeMs >= 300L) {
+            lastMapHeadingUiValue = mapHeading.toFloat()
+            lastMapHeadingUiTimeMs = currentTimeMs
+            _uiState.update { it.copy(mapHeadingDegrees = mapHeading.toFloat()) }
+        }
+
         val route = _uiState.value.route ?: return
         if (_uiState.value.isFinished) return
 
         val targetBearing = calculateTargetBearing() ?: return
+
+        // 2-2. 방향 가이드 화살표: 몸 정면 기준 가야 할 방향 (시간상수 0.3초 평활화, 3도 이상 변화 시 갱신)
+        val rawRelative = wrapDegrees(targetBearing - effectiveHeading)
+        val prevRelative = smoothedRelativeDirection
+        val relative = if (prevRelative == null) {
+            rawRelative
+        } else {
+            wrapDegrees(prevRelative + smoothingAlpha(dtSec, ARROW_TAU_SEC) * wrapDegrees(rawRelative - prevRelative))
+        }
+        smoothedRelativeDirection = relative
+        val lastRel = lastRelativeUiValue
+        if (lastRel == null || kotlin.math.abs(wrapDegrees(relative - lastRel)) >= 3.0 || currentTimeMs - lastRelativeUiTimeMs >= 500L) {
+            lastRelativeUiValue = relative.toFloat()
+            lastRelativeUiTimeMs = currentTimeMs
+            _uiState.update { it.copy(relativeDirectionDegrees = relative.toFloat()) }
+        }
+
         val orientationPrompt = BlindGuidanceFormatter.evaluateOrientation(
             currentHeadingDeg = effectiveHeading.toDouble(),
             targetBearingDeg = targetBearing
@@ -226,9 +275,17 @@ class NavigationViewModel(
     }
 
     /**
-     * 현재 스텝에서 향해야 할 목표 지점의 방위각(Bearing)을 산출합니다.
+     * 지금 향해야 할 방위각(Bearing)을 산출합니다.
+     * GPS 위치가 있으면 "현재 위치 → 경로상 전방 지점(look-ahead)" 방위각을 사용합니다.
+     * 경로를 벗어나 있으면 전방 지점이 경로 위에 있으므로 자연스럽게 경로로 복귀하는 방향을 가리킵니다.
+     * 위치가 아직 없으면 현재 분기점 → 다음 분기점 방위각으로 대체합니다.
      */
     fun calculateTargetBearing(): Double? {
+        smoothedGuidanceBearing?.let { return it }
+        return calculateSegmentBearing()
+    }
+
+    private fun calculateSegmentBearing(): Double? {
         val state = _uiState.value
         val route = state.route ?: return null
         val currentM = state.currentManeuver
@@ -316,6 +373,9 @@ class NavigationViewModel(
                 offRouteCount = progress.offRouteConsecutiveCount
             )
 
+            // 1-0. 현재 위치 기준 전방 경로 지점 방위각 (경로 복귀 방향 포함) 및 지도 표시 위치 산출
+            updateGuidanceBearing(progressEngine, progress, sample)
+
             val wasOffRoute = _uiState.value.isOffRoute
             if (progress.isOffRoute) {
                 if (!wasOffRoute) {
@@ -347,7 +407,8 @@ class NavigationViewModel(
                         val startPoint = currentRoute.fullGeometry.firstOrNull() ?: currentRoute.maneuvers.firstOrNull()?.location
                         if (startPoint != null) {
                             val distToStart = calculateDistanceMeters(startPoint, kr.safecross.mobile.domain.model.LocationPoint(sample.lat, sample.lon))
-                            if (distToStart > 25.0) {
+                            // GPS 오차(정확도 15m 초과)로 인한 불필요한 출발점 재탐색 방지 (실측: 정확도 24m에서 27m 오차로 재탐색)
+                            if (distToStart > 25.0 && sample.accuracyMeters <= 15.0f) {
                                 hasCalibratedInitialStart = true
                                 val dStr = String.format(Locale.US, "%.1f", distToStart)
                                 NavigationFlightRecorder.recordRerouteTrigger(
@@ -768,6 +829,8 @@ class NavigationViewModel(
                     NavigationFlightRecorder.recordRerouteSuccess(newRoute.totalDistanceMeters, newRoute.maneuvers.size)
                     routeProgressEngine = RouteProgressEngine(newRoute, offRouteThresholdMeters = 35.0, minConsecutiveOffRoute = 4)
                     hasCalibratedInitialStart = true
+                    smoothedGuidanceBearing = null
+                    lastAlongTrackMeters = null
                     _uiState.update {
                         it.copy(
                             route = newRoute,
@@ -797,6 +860,50 @@ class NavigationViewModel(
         }
     }
 
+    /**
+     * 현재 위치에서 경로상 전방 지점까지의 방위각을 갱신한다.
+     * - 전방 거리: 25m + 경로 이탈 거리(최대 40m) → 경로에서 멀어질수록 더 앞쪽 지점으로 비스듬히 복귀
+     * - GPS 위치 흔들림으로 방위각이 튀지 않도록 원형 지수 평활화(α=0.4)
+     * - 지도 표시 위치: 경로 위(이탈 거리 15m 이하)이면 경로선에 맞춘 위치, 아니면 실제 GPS 위치
+     */
+    private fun updateGuidanceBearing(
+        engine: RouteProgressEngine,
+        progress: kr.safecross.mobile.navigation.engine.RouteProgressState,
+        sample: LocationSample
+    ) {
+        if (progress.isFinished) return
+        val along = progress.distanceAlongRouteMeters
+        lastAlongTrackMeters = along
+        val lookAhead = LOOK_AHEAD_METERS + progress.crossTrackErrorMeters.coerceAtMost(40.0)
+        val target = engine.pointAtDistance(along + lookAhead)
+        if (target != null) {
+            val dist = kr.safecross.mobile.navigation.engine.GeoMath.distanceMeters(sample.lat, sample.lon, target.lat, target.lon)
+            if (dist >= 3.0) {
+                val bearing = kr.safecross.mobile.navigation.engine.GeoMath.initialBearingDegrees(sample.lat, sample.lon, target.lat, target.lon)
+                smoothedGuidanceBearing = blendAngle(smoothedGuidanceBearing, bearing, 0.4)
+            }
+        }
+
+        val mapLocation = if (!progress.isOffRoute && progress.crossTrackErrorMeters <= MAP_MATCH_MAX_CTE_METERS) {
+            engine.pointAtDistance(along) ?: LocationPoint(sample.lat, sample.lon)
+        } else {
+            LocationPoint(sample.lat, sample.lon)
+        }
+        _uiState.update { it.copy(mapLocation = mapLocation) }
+    }
+
+    private fun wrapDegrees(deg: Double): Double = ((deg % 360.0) + 540.0) % 360.0 - 180.0
+
+    /** 원형(각도) 지수 평활화: 359도와 1도 사이를 최단 경로로 보간 */
+    private fun blendAngle(prev: Double?, next: Double, alpha: Double): Double {
+        if (prev == null) return (next % 360.0 + 360.0) % 360.0
+        return ((prev + alpha * wrapDegrees(next - prev)) % 360.0 + 360.0) % 360.0
+    }
+
+    /** 샘플 간격에 무관한 시간상수 기반 평활화 계수 */
+    private fun smoothingAlpha(dtSec: Double, tauSec: Double): Double =
+        (1.0 - kotlin.math.exp(-dtSec / tauSec)).coerceIn(0.02, 1.0)
+
     private fun calculateDistanceMeters(p1: kr.safecross.mobile.domain.model.LocationPoint, p2: kr.safecross.mobile.domain.model.LocationPoint): Double {
         val r = 6371000.0
         val lat1Rad = Math.toRadians(p1.lat)
@@ -820,6 +927,13 @@ class NavigationViewModel(
         devicePoseTracker?.stopTracking()
         routeProgressEngine?.reset()
         crossingApproachEngine?.reset()
+    }
+
+    companion object {
+        private const val LOOK_AHEAD_METERS = 25.0
+        private const val MAP_MATCH_MAX_CTE_METERS = 15.0
+        private const val MAP_HEADING_TAU_SEC = 0.8
+        private const val ARROW_TAU_SEC = 0.3
     }
 
     override fun onCleared() {
