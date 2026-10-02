@@ -293,6 +293,8 @@ fun SafeCrossNavHost(
                     voiceAnnouncer = ttsHelper,
                     hapticFeedbackHelper = hapticHelper,
                     onOpenCrossingAssist = {
+                        // 지금 건너려는 횡단보도를 감시 대상으로 등록 (건너편 도착 시 자동 복귀)
+                        navigationViewModel.onCrossingAssistOpened()
                         // 자동 전환이 연달아 와도 카메라 화면이 겹쳐 열리지 않도록 단일 인스턴스로 이동
                         navController.navigate(Screen.CrossingAssist.route) { launchSingleTop = true }
                     },
@@ -353,13 +355,35 @@ fun SafeCrossNavHost(
                 )
             }
 
+            // 녹색 확정(횡단 시작)을 길안내 쪽 횡단 완료 판정에 알림
+            val crossingUi by crossingAssistViewModel.uiState.collectAsState()
+            androidx.compose.runtime.LaunchedEffect(crossingUi.decisionState) {
+                if (crossingUi.decisionState == kr.safecross.mobile.decision.CrossingAssistDecisionState.GREEN_ESTIMATE) {
+                    navigationViewModel.onCrossingGreenConfirmed()
+                }
+            }
+
+            // 건너편 도착 시 음성 안내 후 이전 지도 길안내 화면으로 자동 복귀
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                navigationViewModel.crossingCompleted.collect { message ->
+                    ttsHelper?.speak(message, android.speech.tts.TextToSpeech.QUEUE_FLUSH)
+                    if (navController.currentDestination?.route == Screen.CrossingAssist.route) {
+                        navController.popBackStack()
+                    }
+                }
+            }
+
             kr.safecross.mobile.ui.screens.crossingassist.CrossingAssistScreen(
                 viewModel = crossingAssistViewModel,
                 crossingContext = activeCrossing,
                 voiceAnnouncer = ttsHelper,
                 hapticHelper = hapticHelper,
                 onClose = {
-                    navController.popBackStack()
+                    navigationViewModel.onCrossingAssistClosed()
+                    // 자동 복귀와 종료 이벤트가 겹쳐 길안내 화면까지 닫히지 않도록 현재 화면일 때만 뒤로 이동
+                    if (navController.currentDestination?.route == Screen.CrossingAssist.route) {
+                        navController.popBackStack()
+                    }
                 }
             )
         }
