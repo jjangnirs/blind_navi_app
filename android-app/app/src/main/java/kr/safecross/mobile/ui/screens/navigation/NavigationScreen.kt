@@ -197,7 +197,9 @@ fun NavigationScreen(
             kr.safecross.mobile.ui.screens.navigation.components.LowVisionDirectionIndicator(
                 action = uiState.currentDirectionAction,
                 distanceMeters = uiState.distanceToNextManeuverMeters,
-                currentManeuver = uiState.currentManeuver
+                currentManeuver = uiState.currentManeuver,
+                relativeDirectionDegrees = uiState.relativeDirectionDegrees,
+                isOffRoute = uiState.isOffRoute
             )
 
             // 3-1. 실시간 나침반/신체 진행 방향 정대(Orientation Alignment) 카드
@@ -233,11 +235,12 @@ fun NavigationScreen(
             }
 
             // 3-2. 맞게 가고 있는지 실시간으로 확인하는 정밀 세부 지도 카드 (진행방향 위로 연동)
-            val currentHeading = uiState.currentHeadingDegrees
+            // 지도 회전은 나침반 흔들림을 강하게 평활화한 전용 헤딩을, 위치는 경로선에 맞춘 위치를 사용
+            val currentHeading = uiState.mapHeadingDegrees
 
             DetailedNavigationMapCard(
                 route = route,
-                currentLocation = uiState.currentLocation,
+                currentLocation = uiState.mapLocation ?: uiState.currentLocation,
                 currentManeuverIndex = uiState.currentManeuverIndex,
                 isOffRoute = uiState.isOffRoute,
                 headingDegrees = currentHeading,

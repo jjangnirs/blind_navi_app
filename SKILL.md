@@ -65,7 +65,7 @@ Every P0 flow must work without seeing the screen, while offering rich high-cont
 - Format pedestrian navigation instructions through `BlindGuidanceFormatter` (1~12 clock-face directions, step count at 0.65m per step, stripping visual landmarks like "OO방면으로", and body turn angle guidance).
 - Continuously track real-time geomagnetic compass heading via `Sensor.TYPE_ROTATION_VECTOR` in `DevicePoseTracker`.
 - Deliver `ORIENTATION_ALIGNED` haptic compass feedback (60ms-60ms-60ms double pulse) and speech when the user aligns their body within 18° of the route path.
-- Automatically trigger camera crossing assist (`TriggerCrossingAssist`) when approaching crosswalks (15m/8m) to avoid requiring white-cane users to touch the screen while walking.
+- Automatically trigger camera crossing assist (`TriggerCrossingAssist`) once per crosswalk when the remaining along-route distance is within 15m, or when the user stops for 2s within 30m (suggest the manual button instead when GPS accuracy is worse than 25m), so white-cane users do not need to touch the screen while walking (ADR-036).
 - Emit immediate speech guidance upon maneuver turn/step transitions (`QUEUE_FLUSH`) and deliver 30m / 15m approach cues.
 - Integrate SK TMAP national POI search API and Geocoder fallback to search any national station, building, or address, displaying distance from GPS and 5km walking threshold badges.
 - Render national standard Ministry of Land, Infrastructure and Transport VWorld 2D precision electronic maps (1:1000 detailed building/alleyway in Korean) with 3-tier fallback (OSM, CartoDB) and live user radar pulse markers (🔵) / off-route feedback (🔴).

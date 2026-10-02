@@ -293,7 +293,8 @@ fun SafeCrossNavHost(
                     voiceAnnouncer = ttsHelper,
                     hapticFeedbackHelper = hapticHelper,
                     onOpenCrossingAssist = {
-                        navController.navigate(Screen.CrossingAssist.route)
+                        // 자동 전환이 연달아 와도 카메라 화면이 겹쳐 열리지 않도록 단일 인스턴스로 이동
+                        navController.navigate(Screen.CrossingAssist.route) { launchSingleTop = true }
                     },
                     onStopNavigation = {
                         // FGS 중지 및 경로 상태 클리어
@@ -339,7 +340,8 @@ fun SafeCrossNavHost(
                         poseTracker = kr.safecross.mobile.sensor.ProductionDevicePoseTracker(context),
                         guidanceArbiter = kr.safecross.mobile.guidance.GuidanceArbiter(),
                         signalStatusProvider = kr.safecross.mobile.signal.CitsRealSignalStatusProvider(),
-                        enableSignalPolling = true
+                        enableSignalPolling = true,
+                        analysisDispatcher = kotlinx.coroutines.Dispatchers.Default
                     )
                 }
 

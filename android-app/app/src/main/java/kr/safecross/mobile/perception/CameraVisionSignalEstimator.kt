@@ -31,6 +31,16 @@ class CameraVisionSignalEstimator(
     private var lastLockedTimestampNanos: Long = 0L
     private var lastSmoothedBox: NormalizedBox? = null
 
+    /**
+     * 직전 분석 ROI의 원시 색상 화소 수 (형상/하우징 필터 적용 전).
+     * 원거리 소형 보행등은 픽토그램 LED가 잘게 쪼개져 블롭 필터를 모두 통과하지 못하는 경우가 많아,
+     * 검출 모델이 위치를 확인한 ROI에서는 이 원시 색상 근거를 보조 판단에 사용한다.
+     */
+    data class ColorEvidence(val redPixels: Int, val greenPixels: Int)
+
+    var lastColorEvidence: ColorEvidence? = null
+        private set
+
     override suspend fun estimate(frame: FrameRef): List<SignalObservation> {
         val rawBuffer = frame.rgbaBuffer
 
@@ -68,8 +78,18 @@ class CameraVisionSignalEstimator(
     /**
      * 딥러닝 객체 검출기(LiteRT)에서 특정된 보행신호기 Bounding Box 영역 내부만 정밀 HSV 분석
      * (2단계 하이브리드 교차 검증 파이프라인용)
+     *
+     * @param verify false이면 시간 일관성 검증기를 거치지 않은 원시 색상 판정을 반환한다.
+     *   호출자가 다른 근거와 융합한 뒤 검증기를 정확히 한 번만 통과시킬 때 사용한다.
+     * @param housingConfirmed true이면 검출 모델이 이미 신호등 하우징을 확인한 ROI이므로
+     *   세로 2구 슬롯 밝기 검사(ADR-032)를 생략한다.
      */
-    suspend fun estimateWithinRoi(frame: FrameRef, targetRoi: NormalizedBox): List<SignalObservation> {
+    suspend fun estimateWithinRoi(
+        frame: FrameRef,
+        targetRoi: NormalizedBox,
+        verify: Boolean = true,
+        housingConfirmed: Boolean = false
+    ): List<SignalObservation> {
         val rawBuffer = frame.rgbaBuffer
         if (rawBuffer == null) {
             val fallbackState = testFallbackState ?: ObservedSignalState.RED
@@ -91,7 +111,7 @@ class CameraVisionSignalEstimator(
             Triple(rawBuffer, frame.width, frame.height)
         }
 
-        return analyzeRgbaFrame(buffer, width, height, frame.timestampNanos, targetRoi)
+        return analyzeRgbaFrame(buffer, width, height, frame.timestampNanos, targetRoi, verify, housingConfirmed)
     }
 
     private fun analyzeRgbaFrame(
@@ -99,8 +119,11 @@ class CameraVisionSignalEstimator(
         width: Int,
         height: Int,
         timestampNanos: Long,
-        targetRoi: NormalizedBox?
+        targetRoi: NormalizedBox?,
+        verify: Boolean = true,
+        housingConfirmed: Boolean = false
     ): List<SignalObservation> {
+        lastColorEvidence = null
         if (width <= 0 || height <= 0 || buffer.remaining() < width * height * 4) {
             return emptyList()
         }
@@ -144,11 +167,12 @@ class CameraVisionSignalEstimator(
                     quality = FrameQuality(lighting = 0.92f, blur = 0.95f, isUsable = true),
                     modelVersion = "opencv-contour-v4.5"
                 )
-                val verified = verifier.verify(rawObs, buffer, width, height)
                 PerceptionFlightRecorder.record(
                     "OPENCV",
                     "State=${cvResult.state} Score=${cvResult.score} Box=[${cvResult.box.left},${cvResult.box.top},${cvResult.box.right},${cvResult.box.bottom}] Circ=${cvResult.circularity} Area=${cvResult.pixelArea}"
                 )
+                if (!verify) return listOf(rawObs)
+                val verified = verifier.verify(rawObs, buffer, width, height)
                 return listOf(
                     rawObs.copy(
                         state = verified.verifiedState,
@@ -252,6 +276,13 @@ class CameraVisionSignalEstimator(
             return emptyList()
         }
 
+        var redPixelCount = 0
+        var greenPixelCount = 0
+        for (cell in grid) {
+            if (cell.toInt() == 1) redPixelCount++ else if (cell.toInt() == 2) greenPixelCount++
+        }
+        lastColorEvidence = ColorEvidence(redPixels = redPixelCount, greenPixels = greenPixelCount)
+
         // 개별 연결 요소(Connected-Component Blob) 분리 식별 (서로 다른 신호등 혼선 방지)
         val redBlobs = findBlobs(grid, vGrid, gridW, gridH, 1, startX, startY, step)
         val rawGreenBlobs = findBlobs(grid, vGrid, gridW, gridH, 2, startX, startY, step)
@@ -268,7 +299,7 @@ class CameraVisionSignalEstimator(
             if (isHorizontalVehicle) return@filter false
             val hasDarkHousing = verifyDarkHousingContrast(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, blob.avgV)
             if (!hasDarkHousing) return@filter false
-            verifyVerticalTwoAspectHousing(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, ObservedSignalState.RED, blob.avgV)
+            housingConfirmed || verifyVerticalTwoAspectHousing(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, ObservedSignalState.RED, blob.avgV)
         }
 
         // 녹색 유효 블롭 필터링 (가로수/간판 배제 및 다크 하우징/세로 2구 슬롯 검증, ADR-032)
@@ -283,7 +314,7 @@ class CameraVisionSignalEstimator(
             if (isHorizontalVehicle) return@filter false
             val hasDarkHousing = verifyDarkHousingContrast(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, blob.avgV)
             if (!hasDarkHousing) return@filter false
-            verifyVerticalTwoAspectHousing(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, ObservedSignalState.GREEN, blob.avgV)
+            housingConfirmed || verifyVerticalTwoAspectHousing(buffer, width, height, blob.minX, blob.maxX, blob.minY, blob.maxY, ObservedSignalState.GREEN, blob.avgV)
         }
 
         // 타깃 참조점 결정:
@@ -310,6 +341,13 @@ class CameraVisionSignalEstimator(
         val primaryGreen = validGreenBlobs.minByOrNull { scoreBlob(it) }
 
         if (primaryRed == null && primaryGreen == null) {
+            if (redBlobs.isNotEmpty() || greenBlobs.isNotEmpty()) {
+                // 색상 화소는 있었지만 형상/하우징 필터에서 모두 기각된 경우 (현장 진단용)
+                PerceptionFlightRecorder.record(
+                    "VISION",
+                    "Blobs: R=0/${redBlobs.size} G=0/${greenBlobs.size} Roi=${if (targetRoi == null) "full" else if (housingConfirmed) "yolo" else "fixed"} -> Detect=UNKNOWN (all blobs filtered)"
+                )
+            }
             val defaultBox = targetRoi ?: NormalizedBox(left = 0.45f, top = 0.20f, right = 0.55f, bottom = 0.40f)
             val unkObs = SignalObservation(
                 ephemeralTrackId = "track-sig-scanning",
@@ -320,6 +358,7 @@ class CameraVisionSignalEstimator(
                 quality = FrameQuality(lighting = 0.80f, blur = 0.85f, isUsable = true),
                 modelVersion = "vision-adaptive-hsv-v2.0"
             )
+            if (!verify) return listOf(unkObs)
             val verified = verifier.verify(unkObs, buffer, width, height)
             return listOf(
                 unkObs.copy(
@@ -487,8 +526,10 @@ class CameraVisionSignalEstimator(
 
         PerceptionFlightRecorder.record(
             "VISION",
-            "Blobs: R=${validRedBlobs.size} G=${validGreenBlobs.size} -> Detect=$detectedState Score=${"%.2f".format(score)} Box=[${"%.2f".format(box.left)},${"%.2f".format(box.top)},${"%.2f".format(box.right)},${"%.2f".format(box.bottom)}]"
+            "Blobs: R=${validRedBlobs.size}/${redBlobs.size} G=${validGreenBlobs.size}/${greenBlobs.size} Roi=${if (targetRoi == null) "full" else if (housingConfirmed) "yolo" else "fixed"} -> Detect=$detectedState Score=${"%.2f".format(score)} Box=[${"%.2f".format(box.left)},${"%.2f".format(box.top)},${"%.2f".format(box.right)},${"%.2f".format(box.bottom)}]"
         )
+
+        if (!verify) return listOf(rawObservation)
 
         // LocalVlmSignalVerifier를 통한 시간/공간 일관성 검증
         val verification = verifier.verify(rawObservation, buffer, width, height)

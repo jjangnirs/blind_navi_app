@@ -27,7 +27,13 @@ data class NavigationUiState(
     val currentHeadingDegrees: Float = 0f,
     val isOrientationAligned: Boolean = true,
     val alignmentPromptMessage: String = "",
-    val currentLocation: kr.safecross.mobile.domain.model.LocationPoint? = null
+    val currentLocation: kr.safecross.mobile.domain.model.LocationPoint? = null,
+    // 저시력 방향 가이드 화살표 각도: 몸(기기) 정면 기준 가야 할 방향 (-180~180, 양수=오른쪽). 산출 불가 시 null
+    val relativeDirectionDegrees: Float? = null,
+    // 지도 회전 전용 헤딩 (나침반 흔들림을 강하게 평활화한 값)
+    val mapHeadingDegrees: Float = 0f,
+    // 지도 표시용 위치 (경로 위에 있을 때는 경로선에 맞춘 위치)
+    val mapLocation: kr.safecross.mobile.domain.model.LocationPoint? = null
 ) {
     val currentManeuver: Maneuver?
         get() = route?.maneuvers?.getOrNull(currentManeuverIndex)

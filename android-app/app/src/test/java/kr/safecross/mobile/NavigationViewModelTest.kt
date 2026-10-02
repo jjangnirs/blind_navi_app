@@ -212,46 +212,47 @@ class NavigationViewModelTest {
     }
 
     @Test
-    fun `crossing facility approach triggers TriggerCrossingAssist effect`() = runTest(testDispatcher) {
+    fun `approaching route crosswalk within 15m triggers TriggerCrossingAssist once`() = runTest(testDispatcher) {
         val effects = mutableListOf<NavigationEffect>()
         val job = launch {
             viewModel.effects.collect { effects.add(it) }
         }
 
-        val route = fakeRepository.getPedestrianRoute(
-            origin = LocationPoint(35.1595, 126.8526),
-            destination = LocationPoint(35.1610, 126.8550)
-        ).getOrThrow()
+        // 가짜 경로: 출발 -> 중간 지점 횡단보도(turnType 211) -> 도착
+        val origin = LocationPoint(35.1595, 126.8526)
+        val destination = LocationPoint(35.1610, 126.8550)
+        val route = fakeRepository.getPedestrianRoute(origin = origin, destination = destination).getOrThrow()
+        val crosswalk = route.maneuvers[1].location
 
-        val facilities = listOf(
-            kr.safecross.mobile.navigation.crossing.CrossingFacility(
-                id = "CW-TEST-1",
-                lat = 35.1600,
-                lon = 126.8530,
-                roadName = "테스트 횡단보도",
-                approachBearingDeg = 45.0
-            )
-        )
-
-        viewModel.setRoute(route, facilities = facilities)
+        viewModel.setRoute(route)
         advanceUntilIdle()
         effects.clear()
 
-        // 횡단보도 정지선 대기 지점 (약 5m 이내)
-        val sampleAtCrossing = kr.safecross.mobile.location.LocationSample(
-            lat = 35.160001,
-            lon = 126.853001,
-            accuracyMeters = 2.0f,
-            bearingDegrees = 45.0f,
-            elapsedRealtimeNanos = System.nanoTime(),
-            signalStrengthPercent = 95
+        fun pointBefore(meters: Double): LocationPoint {
+            val total = kr.safecross.mobile.navigation.engine.GeoMath.distanceMeters(origin.lat, origin.lon, crosswalk.lat, crosswalk.lon)
+            val t = (total - meters) / total
+            return LocationPoint(origin.lat + (crosswalk.lat - origin.lat) * t, origin.lon + (crosswalk.lon - origin.lon) * t)
+        }
+        fun sampleAt(p: LocationPoint) = kr.safecross.mobile.location.LocationSample(
+            lat = p.lat, lon = p.lon, accuracyMeters = 5.0f, speedMps = 1.2f,
+            elapsedRealtimeNanos = System.nanoTime(), signalStrengthPercent = 90
         )
 
-        viewModel.processLocationSample(sampleAtCrossing)
+        // 경로상 40m 앞: 아직 전환하지 않음
+        viewModel.processLocationSample(sampleAt(pointBefore(40.0)))
         advanceUntilIdle()
+        assertTrue("40m에서는 자동 전환하지 않아야 함", effects.none { it is NavigationEffect.TriggerCrossingAssist })
 
-        val triggered = effects.any { it is NavigationEffect.TriggerCrossingAssist }
-        assertTrue("횡단보도 접근 시 자동으로 카메라 보조 트리거가 발생해야 함", triggered)
+        // 경로상 12m 앞: 자동 전환
+        viewModel.processLocationSample(sampleAt(pointBefore(12.0)))
+        advanceUntilIdle()
+        assertEquals(1, effects.count { it is NavigationEffect.TriggerCrossingAssist })
+
+        // 8m, 3m 앞: 같은 횡단보도에서 다시 전환하지 않음
+        viewModel.processLocationSample(sampleAt(pointBefore(8.0)))
+        viewModel.processLocationSample(sampleAt(pointBefore(3.0)))
+        advanceUntilIdle()
+        assertEquals(1, effects.count { it is NavigationEffect.TriggerCrossingAssist })
 
         job.cancel()
     }

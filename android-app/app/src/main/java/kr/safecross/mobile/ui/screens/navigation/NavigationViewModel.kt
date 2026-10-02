@@ -59,6 +59,11 @@ class NavigationViewModel(
     private var routeProgressEngine: RouteProgressEngine? = null
     private var crossingApproachEngine: CrossingApproachEngine? = null
 
+    // 횡단보도 접근 시 카메라 신호 확인 화면 자동 전환 (경로상 15m / 30m 내 정지)
+    private var crossingAutoTrigger: kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerPolicy? = null
+    // 이미 자동 전환한 횡단보도 위치 (재탐색으로 경로가 바뀌어도 같은 횡단보도에서 다시 전환하지 않음)
+    private val autoTriggeredCrosswalkLocations = mutableListOf<LocationPoint>()
+
     private var locationJob: Job? = null
     private var poseJob: Job? = null
     private var serviceStopJob: Job? = null
@@ -74,6 +79,21 @@ class NavigationViewModel(
     private var lastSpeedMps: Float = 0f
     private var lastHeadingUiUpdateTimeMs = 0L
     private var lastUiHeading = 0f
+
+    // 현재 위치 기준 전방 경로 지점(look-ahead) 방위각 (GPS 흔들림 평활화)
+    private var smoothedGuidanceBearing: Double? = null
+    private var lastAlongTrackMeters: Double? = null
+
+    // 방향 가이드 화살표 상대 각도 평활화
+    private var smoothedRelativeDirection: Double? = null
+    private var lastRelativeUiValue: Float? = null
+    private var lastRelativeUiTimeMs = 0L
+
+    // 지도 회전 전용 헤딩 평활화 (실측 10/01: 나침반 1초 변화량 p90 13도, p95 23도 → 지도가 계속 흔들림)
+    private var smoothedMapHeading: Double? = null
+    private var lastMapHeadingUiValue: Float? = null
+    private var lastMapHeadingUiTimeMs = 0L
+    private var lastPoseTimeMs = 0L
 
     init {
         serviceStopJob = viewModelScope.launch {
@@ -98,11 +118,16 @@ class NavigationViewModel(
 
         routeProgressEngine = RouteProgressEngine(route, offRouteThresholdMeters = 35.0, minConsecutiveOffRoute = 4)
         crossingApproachEngine = CrossingApproachEngine(facilities)
+        autoTriggeredCrosswalkLocations.clear()
+        crossingAutoTrigger = buildCrossingAutoTrigger(route, routeProgressEngine!!)
         guidanceArbiter.stopAll()
         lastApproachAnnouncedManeuverIndex = -1
         lastApproachStage = 0
         lastAlignmentTimeMs = 0L
         hasCalibratedInitialStart = false
+        smoothedGuidanceBearing = null
+        lastAlongTrackMeters = null
+        smoothedRelativeDirection = null
 
         _uiState.update {
             it.copy(
@@ -180,10 +205,41 @@ class NavigationViewModel(
             _uiState.update { it.copy(currentHeadingDegrees = effectiveHeading) }
         }
 
+        val dtSec = if (lastPoseTimeMs == 0L) 0.1 else ((currentTimeMs - lastPoseTimeMs) / 1000.0).coerceIn(0.0, 1.0)
+        lastPoseTimeMs = currentTimeMs
+
+        // 2-1. 지도 회전 전용 헤딩: 시간상수 0.8초 저역 통과 + 5도/0.3초 이상 변화 시에만 지도에 반영
+        val mapHeading = blendAngle(smoothedMapHeading, effectiveHeading.toDouble(), smoothingAlpha(dtSec, MAP_HEADING_TAU_SEC))
+        smoothedMapHeading = mapHeading
+        val lastMap = lastMapHeadingUiValue
+        val mapDelta = if (lastMap == null) 360.0 else kotlin.math.abs(wrapDegrees(mapHeading - lastMap))
+        if (mapDelta >= 5.0 && currentTimeMs - lastMapHeadingUiTimeMs >= 300L) {
+            lastMapHeadingUiValue = mapHeading.toFloat()
+            lastMapHeadingUiTimeMs = currentTimeMs
+            _uiState.update { it.copy(mapHeadingDegrees = mapHeading.toFloat()) }
+        }
+
         val route = _uiState.value.route ?: return
         if (_uiState.value.isFinished) return
 
         val targetBearing = calculateTargetBearing() ?: return
+
+        // 2-2. 방향 가이드 화살표: 몸 정면 기준 가야 할 방향 (시간상수 0.3초 평활화, 3도 이상 변화 시 갱신)
+        val rawRelative = wrapDegrees(targetBearing - effectiveHeading)
+        val prevRelative = smoothedRelativeDirection
+        val relative = if (prevRelative == null) {
+            rawRelative
+        } else {
+            wrapDegrees(prevRelative + smoothingAlpha(dtSec, ARROW_TAU_SEC) * wrapDegrees(rawRelative - prevRelative))
+        }
+        smoothedRelativeDirection = relative
+        val lastRel = lastRelativeUiValue
+        if (lastRel == null || kotlin.math.abs(wrapDegrees(relative - lastRel)) >= 3.0 || currentTimeMs - lastRelativeUiTimeMs >= 500L) {
+            lastRelativeUiValue = relative.toFloat()
+            lastRelativeUiTimeMs = currentTimeMs
+            _uiState.update { it.copy(relativeDirectionDegrees = relative.toFloat()) }
+        }
+
         val orientationPrompt = BlindGuidanceFormatter.evaluateOrientation(
             currentHeadingDeg = effectiveHeading.toDouble(),
             targetBearingDeg = targetBearing
@@ -226,9 +282,17 @@ class NavigationViewModel(
     }
 
     /**
-     * 현재 스텝에서 향해야 할 목표 지점의 방위각(Bearing)을 산출합니다.
+     * 지금 향해야 할 방위각(Bearing)을 산출합니다.
+     * GPS 위치가 있으면 "현재 위치 → 경로상 전방 지점(look-ahead)" 방위각을 사용합니다.
+     * 경로를 벗어나 있으면 전방 지점이 경로 위에 있으므로 자연스럽게 경로로 복귀하는 방향을 가리킵니다.
+     * 위치가 아직 없으면 현재 분기점 → 다음 분기점 방위각으로 대체합니다.
      */
     fun calculateTargetBearing(): Double? {
+        smoothedGuidanceBearing?.let { return it }
+        return calculateSegmentBearing()
+    }
+
+    private fun calculateSegmentBearing(): Double? {
         val state = _uiState.value
         val route = state.route ?: return null
         val currentM = state.currentManeuver
@@ -316,6 +380,9 @@ class NavigationViewModel(
                 offRouteCount = progress.offRouteConsecutiveCount
             )
 
+            // 1-0. 현재 위치 기준 전방 경로 지점 방위각 (경로 복귀 방향 포함) 및 지도 표시 위치 산출
+            updateGuidanceBearing(progressEngine, progress, sample)
+
             val wasOffRoute = _uiState.value.isOffRoute
             if (progress.isOffRoute) {
                 if (!wasOffRoute) {
@@ -347,7 +414,8 @@ class NavigationViewModel(
                         val startPoint = currentRoute.fullGeometry.firstOrNull() ?: currentRoute.maneuvers.firstOrNull()?.location
                         if (startPoint != null) {
                             val distToStart = calculateDistanceMeters(startPoint, kr.safecross.mobile.domain.model.LocationPoint(sample.lat, sample.lon))
-                            if (distToStart > 25.0) {
+                            // GPS 오차(정확도 15m 초과)로 인한 불필요한 출발점 재탐색 방지 (실측: 정확도 24m에서 27m 오차로 재탐색)
+                            if (distToStart > 25.0 && sample.accuracyMeters <= 15.0f) {
                                 hasCalibratedInitialStart = true
                                 val dStr = String.format(Locale.US, "%.1f", distToStart)
                                 NavigationFlightRecorder.recordRerouteTrigger(
@@ -405,6 +473,9 @@ class NavigationViewModel(
                     currentLocation = LocationPoint(sample.lat, sample.lon)
                 )
             }
+
+            // 1-0-1. 횡단보도 접근 시 카메라 신호 확인 화면 자동 전환
+            evaluateCrossingAutoTrigger(progress, sample, currentTimeMs)
 
             // 1-1. 방향 분기점 도달/변경 시 즉시 음성 안내 (SR-F-070, 즉시 발화)
             if (isManeuverChanged) {
@@ -541,12 +612,8 @@ class NavigationViewModel(
                             currentTimeMs
                         )
                     }
-                    // 횡단보도 정지 준비 또는 진입 상태 도달 시 카메라 보조 화면 자동 트리거
-                    if (alert.targetMode == WalkingMode.CROSSING || alert.targetMode == WalkingMode.APPROACHING_CROSSING) {
-                        viewModelScope.launch {
-                            _effects.emit(NavigationEffect.TriggerCrossingAssist)
-                        }
-                    }
+                    // 카메라 보조 화면 자동 전환은 경로상 거리 기반 CrossingAutoTriggerPolicy가 단독으로 담당한다
+                    // (이 엔진은 직선거리 40m 사전 알림 구간에서도 같은 상태를 내므로 전환 근거로 쓰지 않음)
                 }
             }
         }
@@ -767,7 +834,10 @@ class NavigationViewModel(
                 onSuccess = { newRoute ->
                     NavigationFlightRecorder.recordRerouteSuccess(newRoute.totalDistanceMeters, newRoute.maneuvers.size)
                     routeProgressEngine = RouteProgressEngine(newRoute, offRouteThresholdMeters = 35.0, minConsecutiveOffRoute = 4)
+                    crossingAutoTrigger = buildCrossingAutoTrigger(newRoute, routeProgressEngine!!)
                     hasCalibratedInitialStart = true
+                    smoothedGuidanceBearing = null
+                    lastAlongTrackMeters = null
                     _uiState.update {
                         it.copy(
                             route = newRoute,
@@ -797,6 +867,136 @@ class NavigationViewModel(
         }
     }
 
+    /**
+     * 현재 위치에서 경로상 전방 지점까지의 방위각을 갱신한다.
+     * - 전방 거리: 25m + 경로 이탈 거리(최대 40m) → 경로에서 멀어질수록 더 앞쪽 지점으로 비스듬히 복귀
+     * - GPS 위치 흔들림으로 방위각이 튀지 않도록 원형 지수 평활화(α=0.4)
+     * - 지도 표시 위치: 경로 위(이탈 거리 15m 이하)이면 경로선에 맞춘 위치, 아니면 실제 GPS 위치
+     */
+    private fun updateGuidanceBearing(
+        engine: RouteProgressEngine,
+        progress: kr.safecross.mobile.navigation.engine.RouteProgressState,
+        sample: LocationSample
+    ) {
+        if (progress.isFinished) return
+        val along = progress.distanceAlongRouteMeters
+        lastAlongTrackMeters = along
+        val lookAhead = LOOK_AHEAD_METERS + progress.crossTrackErrorMeters.coerceAtMost(40.0)
+        val target = engine.pointAtDistance(along + lookAhead)
+        if (target != null) {
+            val dist = kr.safecross.mobile.navigation.engine.GeoMath.distanceMeters(sample.lat, sample.lon, target.lat, target.lon)
+            if (dist >= 3.0) {
+                val bearing = kr.safecross.mobile.navigation.engine.GeoMath.initialBearingDegrees(sample.lat, sample.lon, target.lat, target.lon)
+                smoothedGuidanceBearing = blendAngle(smoothedGuidanceBearing, bearing, 0.4)
+            }
+        }
+
+        val mapLocation = if (!progress.isOffRoute && progress.crossTrackErrorMeters <= MAP_MATCH_MAX_CTE_METERS) {
+            engine.pointAtDistance(along) ?: LocationPoint(sample.lat, sample.lon)
+        } else {
+            LocationPoint(sample.lat, sample.lon)
+        }
+        _uiState.update { it.copy(mapLocation = mapLocation) }
+    }
+
+    private fun wrapDegrees(deg: Double): Double = ((deg % 360.0) + 540.0) % 360.0 - 180.0
+
+    /** 원형(각도) 지수 평활화: 359도와 1도 사이를 최단 경로로 보간 */
+    private fun blendAngle(prev: Double?, next: Double, alpha: Double): Double {
+        if (prev == null) return (next % 360.0 + 360.0) % 360.0
+        return ((prev + alpha * wrapDegrees(next - prev)) % 360.0 + 360.0) % 360.0
+    }
+
+    /** 샘플 간격에 무관한 시간상수 기반 평활화 계수 */
+    private fun smoothingAlpha(dtSec: Double, tauSec: Double): Double =
+        (1.0 - kotlin.math.exp(-dtSec / tauSec)).coerceIn(0.02, 1.0)
+
+    /**
+     * 경로의 횡단보도 분기점(TMAP turnType 211~217, 시설 유형 "횡단보도" 등)을 경로상 거리와 함께 추출해
+     * 자동 전환 정책을 만든다. 이미 전환했던 횡단보도(15m 이내 동일 위치)는 제외한다.
+     */
+    private fun buildCrossingAutoTrigger(
+        route: PedestrianRoute,
+        engine: RouteProgressEngine
+    ): kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerPolicy {
+        val alongs = engine.maneuverAlongDistances
+        val crosswalks = route.maneuvers.mapIndexedNotNull { idx, m ->
+            if (kr.safecross.mobile.domain.model.DirectionAction.fromManeuver(m) != kr.safecross.mobile.domain.model.DirectionAction.CROSSWALK) {
+                return@mapIndexedNotNull null
+            }
+            val alreadyTriggered = autoTriggeredCrosswalkLocations.any { calculateDistanceMeters(it, m.location) <= 15.0 }
+            if (alreadyTriggered) return@mapIndexedNotNull null
+            kr.safecross.mobile.navigation.crossing.RouteCrosswalk(
+                maneuverIndex = idx,
+                alongRouteMeters = alongs.getOrElse(idx) { 0.0 },
+                instruction = m.instruction
+            )
+        }
+        NavigationFlightRecorder.record(
+            "CROSSING_AUTO",
+            "횡단보도 ${crosswalks.size}개 등록: " + crosswalks.joinToString { "#${it.maneuverIndex}@${it.alongRouteMeters.toInt()}m" }
+        )
+        return kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerPolicy(crosswalks)
+    }
+
+    private fun evaluateCrossingAutoTrigger(
+        progress: kr.safecross.mobile.navigation.engine.RouteProgressState,
+        sample: LocationSample,
+        currentTimeMs: Long
+    ) {
+        val policy = crossingAutoTrigger ?: return
+        val decision = policy.evaluate(
+            userAlongRouteMeters = progress.distanceAlongRouteMeters,
+            speedMps = sample.speedMps,
+            accuracyMeters = sample.accuracyMeters,
+            isOffRoute = progress.isOffRoute,
+            nowMs = currentTimeMs
+        ) ?: return
+        val route = _uiState.value.route ?: return
+
+        when (decision) {
+            is kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerDecision.Trigger -> {
+                val remaining = decision.remainingMeters.coerceAtLeast(0.0).toInt()
+                route.maneuvers.getOrNull(decision.crosswalk.maneuverIndex)?.let { autoTriggeredCrosswalkLocations.add(it.location) }
+                NavigationFlightRecorder.record(
+                    "CROSSING_AUTO",
+                    "TRIGGER #${decision.crosswalk.maneuverIndex} reason=${decision.reason} remaining=${String.format(Locale.US, "%.1f", decision.remainingMeters)}m " +
+                            "acc=${sample.accuracyMeters}m spd=${sample.speedMps ?: -1f}m/s"
+                )
+                enqueueGuidance(
+                    GuidanceMessage(
+                        id = "crossing_auto_${decision.crosswalk.maneuverIndex}_${currentTimeMs}",
+                        text = if (remaining >= 3) "약 ${remaining}미터 앞 횡단보도입니다. 신호 확인으로 전환합니다." else "횡단보도 앞입니다. 신호 확인으로 전환합니다.",
+                        priority = GuidancePriority.CROSSING,
+                        category = "crossing_auto_trigger",
+                        hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+                    ),
+                    currentTimeMs
+                )
+                viewModelScope.launch {
+                    _effects.emit(NavigationEffect.TriggerCrossingAssist)
+                }
+            }
+            is kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerDecision.SuggestManual -> {
+                val remaining = decision.remainingMeters.coerceAtLeast(0.0).toInt()
+                NavigationFlightRecorder.record(
+                    "CROSSING_AUTO",
+                    "SUGGEST_MANUAL #${decision.crosswalk.maneuverIndex} remaining=${remaining}m acc=${decision.accuracyMeters}m"
+                )
+                enqueueGuidance(
+                    GuidanceMessage(
+                        id = "crossing_suggest_${decision.crosswalk.maneuverIndex}_${currentTimeMs}",
+                        text = "약 ${remaining}미터 앞 횡단보도입니다. 위치 신호가 불안정해 자동 전환하지 않습니다. 신호 확인이 필요하면 화면의 신호 확인 버튼을 누르세요.",
+                        priority = GuidancePriority.CROSSING,
+                        category = "crossing_auto_suggest",
+                        hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+                    ),
+                    currentTimeMs
+                )
+            }
+        }
+    }
+
     private fun calculateDistanceMeters(p1: kr.safecross.mobile.domain.model.LocationPoint, p2: kr.safecross.mobile.domain.model.LocationPoint): Double {
         val r = 6371000.0
         val lat1Rad = Math.toRadians(p1.lat)
@@ -820,6 +1020,13 @@ class NavigationViewModel(
         devicePoseTracker?.stopTracking()
         routeProgressEngine?.reset()
         crossingApproachEngine?.reset()
+    }
+
+    companion object {
+        private const val LOOK_AHEAD_METERS = 25.0
+        private const val MAP_MATCH_MAX_CTE_METERS = 15.0
+        private const val MAP_HEADING_TAU_SEC = 0.8
+        private const val ARROW_TAU_SEC = 0.3
     }
 
     override fun onCleared() {

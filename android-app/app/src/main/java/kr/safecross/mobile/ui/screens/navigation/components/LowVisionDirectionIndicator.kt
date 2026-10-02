@@ -25,7 +25,13 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -56,9 +62,14 @@ fun LowVisionDirectionIndicator(
     action: DirectionAction,
     distanceMeters: Int,
     currentManeuver: Maneuver?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    relativeDirectionDegrees: Float? = null,
+    isOffRoute: Boolean = false
 ) {
-    val descriptionText = "저시력 방향 안내. ${action.label}, 남은 거리 ${distanceMeters}미터. ${currentManeuver?.instruction ?: ""}"
+    val clockText = relativeDirectionDegrees?.let { clockDirectionText(it) }
+    val descriptionText = "저시력 방향 안내. ${action.label}, 남은 거리 ${distanceMeters}미터. " +
+            (clockText?.let { "가야 할 방향은 $it. " } ?: "") +
+            (currentManeuver?.instruction ?: "")
 
     Column(
         modifier = modifier
@@ -108,8 +119,15 @@ fun LowVisionDirectionIndicator(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 1. 80dp 초대형 고대비 방향 화살표 심볼
-            LargeDirectionSymbol(action = action)
+            // 1. 84dp 초대형 고대비 방향 표시: 몸(기기) 정면 기준 실제로 가야 할 방향으로 화살표가 회전
+            if (relativeDirectionDegrees != null) {
+                RelativeDirectionArrow(
+                    relativeDegrees = relativeDirectionDegrees,
+                    isOffRoute = isOffRoute
+                )
+            } else {
+                LargeDirectionSymbol(action = action)
+            }
 
             Spacer(modifier = Modifier.width(18.dp))
 
@@ -138,7 +156,7 @@ fun LowVisionDirectionIndicator(
 
                 // 방향 동작 명칭 (22sp ExtraBold)
                 Text(
-                    text = action.label,
+                    text = if (isOffRoute) "경로 복귀" else action.label,
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontSize = 24.sp,
                         fontWeight = FontWeight.ExtraBold,
@@ -168,6 +186,85 @@ fun LowVisionDirectionIndicator(
                 )
             }
         }
+    }
+}
+
+/**
+ * 몸 정면 기준 상대 방향(-180~180, 양수=오른쪽)을 시계 방향 표현으로 변환. 예: 0 → "12시 방향", 90 → "3시 방향"
+ */
+internal fun clockDirectionText(relativeDegrees: Float): String {
+    val normalized = ((relativeDegrees % 360f) + 360f) % 360f
+    var hour = Math.round(normalized / 30f) % 12
+    if (hour == 0) hour = 12
+    return "${hour}시 방향"
+}
+
+/**
+ * 몸 정면 기준으로 가야 할 방향을 가리키는 회전 화살표.
+ * - 정면 ±20도 이내: 녹색 원(바른 방향), 그 외: 노란 원, 경로 이탈 중: 주황 원
+ * - 359도↔1도 경계에서 한 바퀴 돌지 않도록 최단 경로 누적 각도로 부드럽게 회전
+ */
+@Composable
+private fun RelativeDirectionArrow(
+    relativeDegrees: Float,
+    isOffRoute: Boolean,
+    modifier: Modifier = Modifier
+) {
+    // 누적 각도는 컴포지션 상태가 아닌 단순 보관값(재구성 루프 방지)
+    val continuousAngle = remember { floatArrayOf(relativeDegrees) }
+    val delta = (((relativeDegrees - continuousAngle[0]) % 360f) + 540f) % 360f - 180f
+    continuousAngle[0] += delta
+    val animatedAngle by animateFloatAsState(
+        targetValue = continuousAngle[0],
+        animationSpec = tween(durationMillis = 350),
+        label = "direction_arrow"
+    )
+
+    val isAligned = kotlin.math.abs(relativeDegrees) <= 20f
+    val bgColor = when {
+        isOffRoute -> Color(0xFFFF9100)
+        isAligned -> Color(0xFF00E676)
+        else -> HighContrastYellow
+    }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = modifier
+                .size(84.dp)
+                .background(bgColor, CircleShape)
+                .border(3.dp, HighContrastWhite, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .size(60.dp)
+                    .rotate(animatedAngle)
+            ) {
+                val w = size.width
+                val h = size.height
+                // 위쪽을 가리키는 굵은 화살표 (머리 삼각형 + 몸통)
+                val arrow = Path().apply {
+                    moveTo(w * 0.5f, 0f)
+                    lineTo(w * 0.95f, h * 0.48f)
+                    lineTo(w * 0.64f, h * 0.48f)
+                    lineTo(w * 0.64f, h)
+                    lineTo(w * 0.36f, h)
+                    lineTo(w * 0.36f, h * 0.48f)
+                    lineTo(w * 0.05f, h * 0.48f)
+                    close()
+                }
+                drawPath(arrow, color = HighContrastBlack)
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = clockDirectionText(relativeDegrees),
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontSize = 15.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = bgColor
+            )
+        )
     }
 }
 
