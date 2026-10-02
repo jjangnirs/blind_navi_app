@@ -64,6 +64,30 @@ class NavigationViewModel(
     // 이미 자동 전환한 횡단보도 위치 (재탐색으로 경로가 바뀌어도 같은 횡단보도에서 다시 전환하지 않음)
     private val autoTriggeredCrosswalkLocations = mutableListOf<LocationPoint>()
 
+    // 현재 경로의 모든 횡단보도 (경로상 시작 위치, 건너편 끝 위치)
+    private data class CrosswalkSpan(val maneuverIndex: Int, val startAlong: Double, val endAlong: Double)
+    private var routeCrosswalkSpans: List<CrosswalkSpan> = emptyList()
+
+    // 카메라 신호 확인 화면이 열려 있는 동안 건너는 중인 횡단보도 감시
+    private data class CrossingWatch(
+        val span: CrosswalkSpan,
+        val startedAtMs: Long,
+        var isGreenConfirmed: Boolean = false,
+        var completeCount: Int = 0
+    )
+    private var crossingWatch: CrossingWatch? = null
+
+    // 마지막으로 setRoute()로 요청된 원본 경로 (화면 재진입 시 재설정 방지용)
+    private var lastRequestedRoute: PedestrianRoute? = null
+
+    private val _crossingCompleted = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 1)
+
+    /**
+     * 횡단 완료 이벤트 (안내 문구). 카메라 신호 확인 화면이 떠 있는 동안에는 길안내 화면의 effects가
+     * 수집되지 않으므로, 카메라 화면 쪽에서 이 흐름을 받아 음성 안내 후 길안내 화면으로 복귀한다.
+     */
+    val crossingCompleted: kotlinx.coroutines.flow.SharedFlow<String> = _crossingCompleted
+
     private var locationJob: Job? = null
     private var poseJob: Job? = null
     private var serviceStopJob: Job? = null
@@ -115,6 +139,8 @@ class NavigationViewModel(
         this.locationSource = source
         this.crossingFacilities = facilities
         this.devicePoseTracker = poseTracker
+        lastRequestedRoute = route
+        crossingWatch = null
 
         routeProgressEngine = RouteProgressEngine(route, offRouteThresholdMeters = 35.0, minConsecutiveOffRoute = 4)
         crossingApproachEngine = CrossingApproachEngine(facilities)
@@ -153,6 +179,15 @@ class NavigationViewModel(
         speakCurrentStep()
         startLocationTracking()
         startPoseTracking()
+    }
+
+    /**
+     * 화면(재)진입 시 호출: 같은 원본 경로로 이미 안내 중이면 다시 초기화하지 않는다.
+     * (카메라 신호 확인 화면에서 돌아올 때 진행 상태·재탐색 경로·자동 전환 이력이 초기화되던 문제 방지)
+     */
+    fun ensureRoute(route: PedestrianRoute) {
+        if (route == lastRequestedRoute && _uiState.value.route != null && !_uiState.value.isFinished) return
+        setRoute(route)
     }
 
     /**
@@ -476,6 +511,9 @@ class NavigationViewModel(
 
             // 1-0-1. 횡단보도 접근 시 카메라 신호 확인 화면 자동 전환
             evaluateCrossingAutoTrigger(progress, sample, currentTimeMs)
+
+            // 1-0-2. 카메라 신호 확인 중 횡단보도를 다 건넜으면 길안내 화면으로 복귀
+            evaluateCrossingCompletion(progress, sample, currentTimeMs)
 
             // 1-1. 방향 분기점 도달/변경 시 즉시 음성 안내 (SR-F-070, 즉시 발화)
             if (isManeuverChanged) {
@@ -920,6 +958,16 @@ class NavigationViewModel(
         engine: RouteProgressEngine
     ): kr.safecross.mobile.navigation.crossing.CrossingAutoTriggerPolicy {
         val alongs = engine.maneuverAlongDistances
+        routeCrosswalkSpans = route.maneuvers.mapIndexedNotNull { idx, m ->
+            if (kr.safecross.mobile.domain.model.DirectionAction.fromManeuver(m) != kr.safecross.mobile.domain.model.DirectionAction.CROSSWALK) {
+                return@mapIndexedNotNull null
+            }
+            val start = alongs.getOrElse(idx) { 0.0 }
+            // 건너편 끝: 다음 분기점 위치 (없거나 비정상이면 시작점 + 20m)
+            val next = alongs.getOrNull(idx + 1)
+            val end = if (next != null && next - start in 3.0..60.0) next else start + DEFAULT_CROSSWALK_LENGTH_METERS
+            CrosswalkSpan(idx, start, end)
+        }
         val crosswalks = route.maneuvers.mapIndexedNotNull { idx, m ->
             if (kr.safecross.mobile.domain.model.DirectionAction.fromManeuver(m) != kr.safecross.mobile.domain.model.DirectionAction.CROSSWALK) {
                 return@mapIndexedNotNull null
@@ -997,6 +1045,65 @@ class NavigationViewModel(
         }
     }
 
+    /**
+     * 카메라 신호 확인 화면이 열릴 때 호출: 지금 건너려는 횡단보도(전방 40m 이내 ~ 10m 지난 지점)를 감시 대상으로 등록.
+     */
+    fun onCrossingAssistOpened(currentTimeMs: Long = System.currentTimeMillis()) {
+        val along = lastAlongTrackMeters ?: return
+        val span = routeCrosswalkSpans
+            .filter { it.startAlong - along in -10.0..40.0 }
+            .minByOrNull { kotlin.math.abs(it.startAlong - along) }
+        crossingWatch = span?.let { CrossingWatch(it, currentTimeMs) }
+        NavigationFlightRecorder.record(
+            "CROSSING_RETURN",
+            if (span != null) "WATCH #${span.maneuverIndex} start=${span.startAlong.toInt()}m end=${span.endAlong.toInt()}m along=${along.toInt()}m"
+            else "NO_CROSSWALK_NEARBY along=${along.toInt()}m"
+        )
+    }
+
+    /** 카메라 화면이 녹색을 확정(횡단 시작)했을 때 호출 */
+    fun onCrossingGreenConfirmed() {
+        crossingWatch?.isGreenConfirmed = true
+    }
+
+    /** 사용자가 카메라 화면을 직접 닫았을 때 호출 */
+    fun onCrossingAssistClosed() {
+        crossingWatch = null
+    }
+
+    /**
+     * 건너편 끝(다음 분기점) 3m 전까지 도달한 GPS 샘플이 2회 연속(정확도 25m 이내)이고,
+     * 카메라가 녹색을 확정했거나 실제로 걷고 있으면(0.6m/s 이상) 횡단 완료로 판단한다.
+     * 적색 대기 중 GPS 흔들림만으로 화면이 닫히지 않도록 이동 근거를 함께 요구한다.
+     */
+    private fun evaluateCrossingCompletion(
+        progress: kr.safecross.mobile.navigation.engine.RouteProgressState,
+        sample: LocationSample,
+        currentTimeMs: Long
+    ) {
+        val watch = crossingWatch ?: return
+        if (currentTimeMs - watch.startedAtMs > CROSSING_WATCH_TIMEOUT_MS) {
+            NavigationFlightRecorder.record("CROSSING_RETURN", "TIMEOUT #${watch.span.maneuverIndex}")
+            crossingWatch = null
+            return
+        }
+
+        val reachedFarSide = progress.distanceAlongRouteMeters >= watch.span.endAlong - 3.0
+        val isMoving = (sample.speedMps ?: 0f) >= 0.6f
+        val isReliable = sample.accuracyMeters <= 25.0f && !progress.isOffRoute
+        watch.completeCount = if (reachedFarSide && isReliable && (watch.isGreenConfirmed || isMoving)) watch.completeCount + 1 else 0
+
+        if (watch.completeCount >= 2) {
+            NavigationFlightRecorder.record(
+                "CROSSING_RETURN",
+                "COMPLETED #${watch.span.maneuverIndex} along=${progress.distanceAlongRouteMeters.toInt()}m end=${watch.span.endAlong.toInt()}m " +
+                        "green=${watch.isGreenConfirmed} spd=${sample.speedMps ?: -1f} acc=${sample.accuracyMeters}"
+            )
+            crossingWatch = null
+            _crossingCompleted.tryEmit("횡단보도를 건넜습니다. 길안내로 돌아갑니다.")
+        }
+    }
+
     private fun calculateDistanceMeters(p1: kr.safecross.mobile.domain.model.LocationPoint, p2: kr.safecross.mobile.domain.model.LocationPoint): Double {
         val r = 6371000.0
         val lat1Rad = Math.toRadians(p1.lat)
@@ -1027,6 +1134,8 @@ class NavigationViewModel(
         private const val MAP_MATCH_MAX_CTE_METERS = 15.0
         private const val MAP_HEADING_TAU_SEC = 0.8
         private const val ARROW_TAU_SEC = 0.3
+        private const val DEFAULT_CROSSWALK_LENGTH_METERS = 20.0
+        private const val CROSSING_WATCH_TIMEOUT_MS = 5 * 60_000L
     }
 
     override fun onCleared() {

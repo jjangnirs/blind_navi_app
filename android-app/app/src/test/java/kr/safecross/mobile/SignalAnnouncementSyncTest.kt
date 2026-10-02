@@ -60,14 +60,17 @@ class SignalAnnouncementSyncTest {
         Dispatchers.resetMain()
     }
 
-    private fun newViewModel(sequence: List<ObservedSignalState>) = CrossingAssistViewModel(
+    private fun newViewModel(
+        sequence: List<ObservedSignalState>,
+        guidanceArbiter: GuidanceArbiter = GuidanceArbiter()
+    ) = CrossingAssistViewModel(
         cameraPipeManager = FakeCameraPipeManager(),
         crosswalkEstimator = FakeCrosswalkEstimator(),
         signalEstimator = FakeSignalEstimator(sequence = sequence),
         signalAssociator = LockOnSignalAssociator(),
         decisionEngine = CrossingDecisionEngine(minConsecutiveGreenFrames = 5),
         poseTracker = FakeDevicePoseTracker(),
-        guidanceArbiter = GuidanceArbiter()
+        guidanceArbiter = guidanceArbiter
     )
 
     private suspend fun TestScope.feed(vm: CrossingAssistViewModel, frames: Int, startIndex: Int = 1) {
@@ -111,7 +114,8 @@ class SignalAnnouncementSyncTest {
 
     @Test
     fun sustainedLossAfterRedAnnouncesUnknownOnceAndClearsRedBox() = runTest {
-        val sequence = List(3) { ObservedSignalState.RED } + List(10) { ObservedSignalState.UNKNOWN }
+        // 확정된 적색에서 UNKNOWN으로 바뀌려면 4초 이상 연속 필요 (150ms 간격 × 30프레임 = 4.5초)
+        val sequence = List(3) { ObservedSignalState.RED } + List(30) { ObservedSignalState.UNKNOWN }
         val vm = newViewModel(sequence)
         val spoken = mutableListOf<String>()
         val job = launch {
@@ -127,6 +131,50 @@ class SignalAnnouncementSyncTest {
         assertEquals(null, vm.uiState.value.detectedSignalColor)
         assertEquals(1, spoken.count { it.startsWith("신호를 확인할 수 없습니다") })
         assertEquals(vm.uiState.value.statusMessage, spoken.last())
+    }
+
+    @Test
+    fun fieldPatternOfAlternatingRedAndUnknownAnnouncesRedOnlyOnce() = runTest {
+        // 10/02 현장 재현: 휴대폰 각도가 경계에서 흔들려 적색(1초)과 확인불가(2초)가 번갈아 나옴
+        val cycle = List(7) { ObservedSignalState.RED } + List(13) { ObservedSignalState.UNKNOWN }
+        val sequence = cycle + cycle + cycle + cycle
+        val vm = newViewModel(sequence)
+        val spoken = mutableListOf<String>()
+        val job = launch {
+            vm.effects.collect { if (it is CrossingAssistEffect.SpeakGuidance) spoken.add(it.text) }
+        }
+
+        vm.onCameraPermissionGranted(verifiedCrossing)
+        advanceUntilIdle()
+        feed(vm, sequence.size)
+        job.cancel()
+
+        assertEquals(CrossingAssistDecisionState.RED_ESTIMATE, vm.uiState.value.decisionState)
+        assertEquals(1, spoken.count { it == "적색 신호입니다. 대기하세요." })
+        assertEquals(0, spoken.count { it.startsWith("신호를 확인할 수 없습니다") })
+    }
+
+    @Test
+    fun redIsAnnouncedAgainAfterUnknownWasAnnounced() = runTest {
+        // 적색 -> 5초 이상 확인불가(안내됨) -> 다시 적색: 8초 쿨다운과 무관하게 적색을 다시 알려야 함
+        val sequence = List(3) { ObservedSignalState.RED } + List(36) { ObservedSignalState.UNKNOWN } + List(3) { ObservedSignalState.RED }
+        // 중재기 쿨다운은 실제 시각(벽시계) 기준이라 테스트의 가상 6초가 몇 ms로 지나가므로 0으로 두고 ViewModel 규칙만 검증
+        val vm = newViewModel(sequence, GuidanceArbiter(safetyCooldownMs = 0L, crossingCooldownMs = 0L))
+        val spoken = mutableListOf<String>()
+        val job = launch {
+            vm.effects.collect { if (it is CrossingAssistEffect.SpeakGuidance) spoken.add(it.text) }
+        }
+
+        vm.onCameraPermissionGranted(verifiedCrossing)
+        advanceUntilIdle()
+        feed(vm, sequence.size)
+        job.cancel()
+
+        val relevant = spoken.filter { it.startsWith("적색") || it.startsWith("신호를 확인할 수 없습니다") }
+        assertEquals(
+            listOf("적색 신호입니다. 대기하세요.", "신호를 확인할 수 없습니다. 신호등을 화면 가운데에 맞춰 주세요.", "적색 신호입니다. 대기하세요."),
+            relevant
+        )
     }
 
     // ---- 인식 파이프라인 회귀 ----

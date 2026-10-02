@@ -82,7 +82,8 @@ fun NavigationScreen(
 
     LaunchedEffect(route) {
         NavigationFlightRecorder.init(context)
-        viewModel.setRoute(route)
+        // 카메라 신호 확인 화면에서 돌아올 때 진행 상태가 초기화되지 않도록 같은 경로면 유지
+        viewModel.ensureRoute(route)
     }
 
     LaunchedEffect(Unit) {

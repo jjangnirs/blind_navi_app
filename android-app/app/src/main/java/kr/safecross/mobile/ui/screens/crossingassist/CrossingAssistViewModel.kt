@@ -95,6 +95,11 @@ class CrossingAssistViewModel(
     // 적색/UNKNOWN은 안전 방향이므로 지연 없이 즉시 반영한다.
     private var candidateState: CrossingAssistDecisionState? = null
     private var consecutiveStateCount = 0
+    private var candidateSinceNanos = 0L
+
+    // 음성 재안내 쿨다운 (프레임 시각 기준). 10/02 현장: 적색↔확인불가가 20초에 6회 번갈아 발화됨
+    private var lastRedAnnounceNanos = Long.MIN_VALUE / 2
+    private var lastUnknownAnnounceNanos = Long.MIN_VALUE / 2
     private val greenConfirmFrames = 5
 
     // 프레임 처리 중복 방지: 이전 프레임 분석이 끝나기 전에 들어온 프레임은 버린다
@@ -184,6 +189,8 @@ class CrossingAssistViewModel(
         isAnalyzing = true
         candidateState = null
         consecutiveStateCount = 0
+        lastRedAnnounceNanos = Long.MIN_VALUE / 2
+        lastUnknownAnnounceNanos = Long.MIN_VALUE / 2
         depthTrendWindow.clear()
         consecutiveProximityTrendCount = 0
         lastObstacleWarningAtMs = 0L
@@ -313,15 +320,16 @@ class CrossingAssistViewModel(
                 // 판정 상태 확정(히스테리시스): 화면 배지·박스 색·상태 문구·음성 안내는 모두 이 확정 상태 하나만 따른다.
                 // (실측 10/01: 박스 색은 프레임 원시 색, 배지는 판정 상태, 음성은 판정 변화마다 발화해 서로 어긋났음)
                 val rawState = normalizeForUser(decision.state)
+                val frameNanos = frame.timestampNanos
                 if (rawState == candidateState) {
                     consecutiveStateCount++
                 } else {
                     candidateState = rawState
                     consecutiveStateCount = 1
+                    candidateSinceNanos = frameNanos
                 }
                 val previousConfirmedState = _uiState.value.decisionState
-                val requiredFrames = requiredConfirmFrames(rawState, previousConfirmedState)
-                val confirmedState = if (consecutiveStateCount >= requiredFrames) rawState else previousConfirmedState
+                val confirmedState = if (isCandidateConfirmed(rawState, previousConfirmedState, frameNanos)) rawState else previousConfirmedState
                 val isNewlyConfirmed = confirmedState != previousConfirmedState
 
                 val diagText = "SIG: $sigStateStr ($sigScoreStr) [#$trackIdStr] $citsTag | G-CNT: ${decisionEngine.consecutiveGreenCount}/5 | TILT: ${if (isTiltOk) "OK" else "WARN"} | RET: ${if (isInsideReticle) "IN" else "OUT"} | $lastDepthDiagText\nDEC: ${decision.state.name} (${decision.reasonCode ?: "OK"}) -> SHOWN: ${confirmedState.name}"
@@ -329,7 +337,7 @@ class CrossingAssistViewModel(
                 PerceptionFlightRecorder.updateSummary(diagText)
                 PerceptionFlightRecorder.record(
                     "FRAME",
-                    "Sig=$sigStateStr($sigScoreStr) Trk=$trackIdStr GCount=${decisionEngine.consecutiveGreenCount} Tilt=$isTiltOk Ret=$isInsideReticle Dec=${decision.state} Reason=${decision.reasonCode} Shown=$confirmedState CITS=${latestOfficialSignal?.state}"
+                    "Sig=$sigStateStr($sigScoreStr) Trk=$trackIdStr GCount=${decisionEngine.consecutiveGreenCount} Tilt=$isTiltOk Pitch=${"%.0f".format(currentPose.pitchDegrees)} Ret=$isInsideReticle Dec=${decision.state} Reason=${decision.reasonCode} Shown=$confirmedState CITS=${latestOfficialSignal?.state}"
                 )
 
                 // 박스 색은 확정 상태 기준으로만 표시 (적색 확정 = 적색 박스, 녹색 확정 = 녹색 박스, 그 외 박스 없음)
@@ -359,7 +367,7 @@ class CrossingAssistViewModel(
                             lastGreenGuidanceTimeMs = System.currentTimeMillis()
                             val citsInfo = officialSignalRemainingSec?.let { " 잔여 ${it}초." } ?: ""
                             emitGuidance(
-                                text = "녹색 신호로 추정됩니다.$citsInfo 좌우를 살피며 횡단하세요. 앱만으로 안전을 보장할 수 없습니다. 다 건너신 후에는 화면 아래 종료 버튼을 눌러 길안내로 돌아가세요.",
+                                text = "녹색 신호로 추정됩니다.$citsInfo 좌우를 살피며 횡단하세요. 앱만으로 안전을 보장할 수 없습니다. 건너편에 도착하면 길안내로 자동으로 돌아갑니다.",
                                 priority = GuidancePriority.SAFETY,
                                 category = "signal_decision_green",
                                 hapticType = HapticFeedbackType.GREEN_ESTIMATE
@@ -371,7 +379,7 @@ class CrossingAssistViewModel(
                             signalPollingJob?.cancel()
                             _uiState.update {
                                 it.copy(
-                                    statusMessage = "녹색 신호(추정) · 횡단 중입니다. 다 건너면 아래 종료 버튼을 눌러주세요.",
+                                    statusMessage = "녹색 신호(추정) · 횡단 중입니다. 건너편에 도착하면 길안내로 자동으로 돌아갑니다. (종료 버튼으로도 돌아갈 수 있습니다)",
                                     detectedSignalBox = null,
                                     detectedSignalColor = null,
                                     isSignalInReticle = false
@@ -380,19 +388,26 @@ class CrossingAssistViewModel(
                         }
                         CrossingAssistDecisionState.RED_ESTIMATE -> {
                             hasSpokenCurrentGreenPhase = false
-                            emitGuidance(
-                                text = statusTextFor(confirmedState),
-                                priority = GuidancePriority.SAFETY,
-                                category = "signal_decision_red",
-                                hapticType = HapticFeedbackType.RED_STOP
-                            )
+                            // 같은 적색을 잠깐 놓쳤다 다시 잡은 경우 8초 이내 재안내는 생략 (화면은 그대로 갱신).
+                            // 단, 그 사이 "확인할 수 없습니다"를 안내했다면 적색을 반드시 다시 알린다.
+                            val unknownAnnouncedSinceRed = lastUnknownAnnounceNanos > lastRedAnnounceNanos
+                            if (unknownAnnouncedSinceRed || frameNanos - lastRedAnnounceNanos >= RED_REANNOUNCE_NANOS) {
+                                lastRedAnnounceNanos = frameNanos
+                                emitGuidance(
+                                    text = statusTextFor(confirmedState),
+                                    priority = GuidancePriority.SAFETY,
+                                    category = "signal_decision_red",
+                                    hapticType = HapticFeedbackType.RED_STOP
+                                )
+                            }
                         }
                         CrossingAssistDecisionState.UNKNOWN -> {
                             hasSpokenCurrentGreenPhase = false
-                            // 확정된 신호를 놓친 경우에만 알린다 (탐색 시작 직후의 UNKNOWN은 시작 안내로 충분)
-                            if (previousConfirmedState == CrossingAssistDecisionState.RED_ESTIMATE ||
-                                previousConfirmedState == CrossingAssistDecisionState.GREEN_ESTIMATE
-                            ) {
+                            // 확정된 신호를 놓친 경우에만, 10초에 1회까지만 알린다 (탐색 시작 직후의 UNKNOWN은 시작 안내로 충분)
+                            val lostConfirmedSignal = previousConfirmedState == CrossingAssistDecisionState.RED_ESTIMATE ||
+                                    previousConfirmedState == CrossingAssistDecisionState.GREEN_ESTIMATE
+                            if (lostConfirmedSignal && frameNanos - lastUnknownAnnounceNanos >= UNKNOWN_REANNOUNCE_NANOS) {
+                                lastUnknownAnnounceNanos = frameNanos
                                 emitGuidance(
                                     text = statusTextFor(confirmedState),
                                     priority = GuidancePriority.CROSSING,
@@ -425,20 +440,26 @@ class CrossingAssistViewModel(
         if (state == CrossingAssistDecisionState.GREEN_CANDIDATE) CrossingAssistDecisionState.UNKNOWN else state
 
     /**
-     * 상태별 확정에 필요한 연속 프레임 수 (실기기 약 6fps 기준).
-     * - 녹색: 5프레임(약 0.8초) — 오탐 방지를 위해 가장 엄격
-     * - 적색: 2프레임 — 정지 안내는 빠르게
-     * - 확정된 적색/녹색에서 UNKNOWN으로: 6프레임(약 1초) — 순간적인 검출 누락으로 안내가 흔들리지 않도록
+     * 후보 상태를 확정할지 판단 (실기기 약 6fps 기준).
+     * - 녹색: 5프레임 연속(약 0.8초) — 오탐 방지를 위해 가장 엄격
+     * - 적색: 2프레임 연속 — 정지 안내는 빠르게
+     * - 확정된 적색/녹색에서 UNKNOWN으로: 6프레임 이상 그리고 4초 이상 연속 — 휴대폰 각도 흔들림이나
+     *   검출 누락으로 안내가 번갈아 바뀌지 않도록 (녹색 전환은 이 지연과 무관하게 5프레임이면 확정)
      */
-    private fun requiredConfirmFrames(
+    private fun isCandidateConfirmed(
         target: CrossingAssistDecisionState,
-        current: CrossingAssistDecisionState
-    ): Int = when (target) {
-        CrossingAssistDecisionState.GREEN_ESTIMATE -> greenConfirmFrames
-        CrossingAssistDecisionState.RED_ESTIMATE -> 2
+        current: CrossingAssistDecisionState,
+        frameNanos: Long
+    ): Boolean = when (target) {
+        CrossingAssistDecisionState.GREEN_ESTIMATE -> consecutiveStateCount >= greenConfirmFrames
+        CrossingAssistDecisionState.RED_ESTIMATE -> consecutiveStateCount >= 2
         CrossingAssistDecisionState.UNKNOWN ->
-            if (current == CrossingAssistDecisionState.RED_ESTIMATE || current == CrossingAssistDecisionState.GREEN_ESTIMATE) 6 else 1
-        else -> 1
+            if (current == CrossingAssistDecisionState.RED_ESTIMATE || current == CrossingAssistDecisionState.GREEN_ESTIMATE) {
+                consecutiveStateCount >= 6 && frameNanos - candidateSinceNanos >= LOSE_SIGNAL_HOLD_NANOS
+            } else {
+                true
+            }
+        else -> true
     }
 
     /** 확정 상태별 화면 문구 (적색/확인 불가는 음성 안내와 동일한 문장) */
@@ -447,6 +468,12 @@ class CrossingAssistViewModel(
         CrossingAssistDecisionState.GREEN_ESTIMATE -> "녹색 신호로 추정됩니다. 좌우를 살피며 횡단하세요."
         CrossingAssistDecisionState.UNKNOWN -> "신호를 확인할 수 없습니다. 신호등을 화면 가운데에 맞춰 주세요."
         else -> state.description
+    }
+
+    private companion object {
+        const val LOSE_SIGNAL_HOLD_NANOS = 4_000_000_000L
+        const val RED_REANNOUNCE_NANOS = 8_000_000_000L
+        const val UNKNOWN_REANNOUNCE_NANOS = 10_000_000_000L
     }
 
     private suspend fun <T> runAnalysis(block: suspend () -> T): T {
