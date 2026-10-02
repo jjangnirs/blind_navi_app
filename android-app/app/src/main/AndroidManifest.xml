@@ -35,6 +35,12 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <!-- ARCore: 선택 사항 (미지원 기기에서도 설치 가능, VPS 정밀 방향만 비활성) -->
+        <meta-data android:name="com.google.ar.core" android:value="optional" />
+        <!-- ARCore Geospatial 인증 키 (빌드 시 .env 의 ARCORE_API_KEY 주입, ADR-0037) -->
+        <meta-data android:name="com.google.android.ar.API_KEY" android:value="${arcoreApiKey}" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -33,7 +33,12 @@ data class NavigationUiState(
     // 지도 회전 전용 헤딩 (나침반 흔들림을 강하게 평활화한 값)
     val mapHeadingDegrees: Float = 0f,
     // 지도 표시용 위치 (경로 위에 있을 때는 경로선에 맞춘 위치)
-    val mapLocation: kr.safecross.mobile.domain.model.LocationPoint? = null
+    val mapLocation: kr.safecross.mobile.domain.model.LocationPoint? = null,
+    // 현재 방향 출처 (ADR-0037): VPS / VPS 보정 나침반 / 나침반
+    val headingSource: HeadingSource = HeadingSource.COMPASS,
+    // 경로상 위치 기준 다음 분기점 (화살표 아래 문구·거리 표시용)
+    val upcomingManeuverIndex: Int? = null,
+    val distanceToUpcomingManeuverMeters: Int = 0
 ) {
     val currentManeuver: Maneuver?
         get() = route?.maneuvers?.getOrNull(currentManeuverIndex)
@@ -43,6 +48,16 @@ data class NavigationUiState(
 
     val currentDirectionAction: kr.safecross.mobile.domain.model.DirectionAction
         get() = kr.safecross.mobile.domain.model.DirectionAction.fromManeuver(currentManeuver)
+
+    /** 아직 도달하지 않은 다음 분기점 (경로상 위치 기준). 산출 전이면 기존 다음 분기점 */
+    val upcomingManeuver: Maneuver?
+        get() = upcomingManeuverIndex?.let { route?.maneuvers?.getOrNull(it) } ?: nextManeuver ?: currentManeuver
+
+    val upcomingDirectionAction: kr.safecross.mobile.domain.model.DirectionAction
+        get() = kr.safecross.mobile.domain.model.DirectionAction.fromManeuver(upcomingManeuver)
+
+    val upcomingDistanceMeters: Int
+        get() = if (upcomingManeuverIndex != null) distanceToUpcomingManeuverMeters else distanceToNextManeuverMeters
 }
 
 sealed interface NavigationEffect {
@@ -52,7 +67,18 @@ sealed interface NavigationEffect {
         val queueFlush: Boolean = false
     ) : NavigationEffect
     data class ShowOffRouteAlert(val message: String) : NavigationEffect
+    /** 음성 없이 진동만 (좌회전 짧은 진동 / 우회전 긴 진동 등) */
+    data class Haptic(val type: kr.safecross.mobile.guidance.HapticFeedbackType) : NavigationEffect
     data class ShowGpsDegradedAlert(val message: String) : NavigationEffect
     data object NavigationFinished : NavigationEffect
     data object TriggerCrossingAssist : NavigationEffect
+}
+
+/**
+ * 보행 방향(헤딩) 출처.
+ */
+enum class HeadingSource(val label: String) {
+    VPS("VPS 정밀 방향"),
+    VPS_CORRECTED_COMPASS("VPS 보정 나침반"),
+    COMPASS("나침반")
 }

@@ -72,6 +72,7 @@ class NavigationViewModel(
     private data class CrossingWatch(
         val span: CrosswalkSpan,
         val startedAtMs: Long,
+        val startAlong: Double = 0.0,
         var isGreenConfirmed: Boolean = false,
         var completeCount: Int = 0
     )
@@ -114,10 +115,20 @@ class NavigationViewModel(
     private var lastRelativeUiTimeMs = 0L
 
     // 지도 회전 전용 헤딩 평활화 (실측 10/01: 나침반 1초 변화량 p90 13도, p95 23도 → 지도가 계속 흔들림)
+    // ARCore Geospatial(VPS) 방향 (ADR-0037). 실측 10/02: 나침반이 VPS 대비 13~30° 틀어짐
+    private var latestVps: kr.safecross.mobile.sensor.VpsHeadingSample? = null
+    private var latestVpsReceivedMs = 0L
+    // VPS를 놓친 뒤(휴대폰을 바닥으로 숙임 등) 나침반에 적용할 보정값 = VPS 방향 - 나침반 방향
+    private var compassBiasDegrees: Double? = null
+    private var compassBiasMeasuredMs = 0L
+    private var compassBiasLocation: LocationPoint? = null
+    private var lastHeadingLogMs = 0L
+
     private var smoothedMapHeading: Double? = null
     private var lastMapHeadingUiValue: Float? = null
     private var lastMapHeadingUiTimeMs = 0L
     private var lastPoseTimeMs = 0L
+    private var lastTurnHapticMs = 0L
 
     init {
         serviceStopJob = viewModelScope.launch {
@@ -215,12 +226,66 @@ class NavigationViewModel(
     /**
      * 기기 헤딩 자세 수신 및 경로 정대(Orientation Alignment) 분석.
      */
+    /** ARCore Geospatial 공급자로부터 VPS 방향 수신 */
+    fun onVpsHeading(sample: kr.safecross.mobile.sensor.VpsHeadingSample?, receivedAtMs: Long = System.currentTimeMillis()) {
+        latestVps = sample
+        latestVpsReceivedMs = receivedAtMs
+    }
+
+    /**
+     * 방향 출처 결정 (ADR-0037):
+     * 1) VPS 방향 오차 ≤ 10°이고 1.5초 이내 → VPS 방향 (휴대폰을 눕혀 든 상태면 나침반 보정값도 갱신)
+     * 2) VPS를 놓쳤지만 60초 이내·30m 이내에서 잰 보정값이 있으면 → 나침반 + 보정값
+     * 3) 그 외 → 나침반 (기존 GPS 진행 방향 융합 적용)
+     */
+    private fun resolveHeading(compassHeading: Float, currentTimeMs: Long): Pair<Float, HeadingSource> {
+        val vps = latestVps
+        val isVpsUsable = vps != null &&
+                currentTimeMs - latestVpsReceivedMs <= VPS_MAX_AGE_MS &&
+                vps.yawAccuracyDegrees <= VPS_MAX_YAW_ACCURACY_DEG
+        if (isVpsUsable) {
+            // 나침반(기기 윗변 방위각)과 같은 축일 때만 보정값을 측정
+            if (vps!!.isTopAxis) {
+                compassBiasDegrees = wrapDegrees(vps.headingDegrees - compassHeading)
+                compassBiasMeasuredMs = currentTimeMs
+                compassBiasLocation = _uiState.value.currentLocation
+            }
+            return vps.headingDegrees.toFloat() to HeadingSource.VPS
+        }
+
+        val bias = compassBiasDegrees
+        if (bias != null && currentTimeMs - compassBiasMeasuredMs <= COMPASS_BIAS_MAX_AGE_MS) {
+            val here = _uiState.value.currentLocation
+            val from = compassBiasLocation
+            val movedMeters = if (here != null && from != null) calculateDistanceMeters(from, here) else 0.0
+            if (movedMeters <= COMPASS_BIAS_MAX_DISTANCE_M) {
+                val corrected = ((compassHeading + bias) % 360.0 + 360.0) % 360.0
+                return corrected.toFloat() to HeadingSource.VPS_CORRECTED_COMPASS
+            }
+        }
+        return compassHeading to HeadingSource.COMPASS
+    }
+
     fun processDevicePose(pose: DevicePose, currentTimeMs: Long = System.currentTimeMillis()) {
-        val heading = pose.headingDegrees
+        val (heading, headingSource) = resolveHeading(pose.headingDegrees, currentTimeMs)
+        if (headingSource != _uiState.value.headingSource) {
+            _uiState.update { it.copy(headingSource = headingSource) }
+        }
+        if (currentTimeMs - lastHeadingLogMs >= 1000L) {
+            lastHeadingLogMs = currentTimeMs
+            NavigationFlightRecorder.record(
+                "HEADING",
+                "source=$headingSource used=${"%.1f".format(heading)} compass=${"%.1f".format(pose.headingDegrees)} " +
+                        "vpsYawAcc=${latestVps?.yawAccuracyDegrees?.let { "%.1f".format(it) } ?: "-"} bias=${compassBiasDegrees?.let { "%.1f".format(it) } ?: "-"}"
+            )
+        }
 
         // 1. 보행 중(속도 >= 0.65m/s) GPS 이동 궤적(Course) 65% + 나침반 35% 상보 필터 융합 (팔 흔들림/발걸음 진자 운동 억제)
         val gpsBrg = lastValidGpsBearing
-        val effectiveHeading: Float = if (lastSpeedMps >= 0.65f && gpsBrg != null) {
+        val effectiveHeading: Float = if (headingSource == HeadingSource.VPS) {
+            // VPS 방향은 GPS 진행 방향보다 정확하므로 융합하지 않는다
+            heading
+        } else if (lastSpeedMps >= 0.65f && gpsBrg != null) {
             val deltaGps = ((gpsBrg - heading + 540.0) % 360.0) - 180.0
             // 급격한 회전(50도 초과)이나 제자리 정지 시에는 나침반을 100% 신뢰하여 지도 흔들림 방지
             if (kotlin.math.abs(deltaGps) <= 50.0) {
@@ -273,6 +338,13 @@ class NavigationViewModel(
             lastRelativeUiValue = relative.toFloat()
             lastRelativeUiTimeMs = currentTimeMs
             _uiState.update { it.copy(relativeDirectionDegrees = relative.toFloat()) }
+        }
+
+        // 2-3. 몸 방향이 30° 이상 어긋나 있으면 3초마다 방향 진동 (왼쪽 = 짧게, 오른쪽 = 길게)
+        if (kotlin.math.abs(relative) >= TURN_HAPTIC_MIN_DEG && currentTimeMs - lastTurnHapticMs >= TURN_HAPTIC_INTERVAL_MS) {
+            lastTurnHapticMs = currentTimeMs
+            val type = if (relative < 0) HapticFeedbackType.TURN_LEFT else HapticFeedbackType.TURN_RIGHT
+            viewModelScope.launch { _effects.emit(NavigationEffect.Haptic(type)) }
         }
 
         val orientationPrompt = BlindGuidanceFormatter.evaluateOrientation(
@@ -502,6 +574,8 @@ class NavigationViewModel(
                     distanceAlongRouteMeters = progress.distanceAlongRouteMeters.toInt(),
                     remainingDistanceMeters = progress.remainingDistanceMeters.toInt(),
                     distanceToNextManeuverMeters = progress.distanceToNextManeuverMeters.toInt(),
+                    upcomingManeuverIndex = progress.upcomingManeuverIndex,
+                    distanceToUpcomingManeuverMeters = progress.distanceToUpcomingManeuverMeters.toInt(),
                     isOffRoute = progress.isOffRoute,
                     gpsSignalStrengthPercent = sample.signalStrengthPercent,
                     gpsAccuracyMeters = sample.accuracyMeters,
@@ -528,13 +602,15 @@ class NavigationViewModel(
                     )
                     val cleaned = BlindGuidanceFormatter.cleanInstruction(newManeuver.instruction)
                     val guidanceText = "${cleaned}. ${_uiState.value.walkingMode.safetyGuidance}"
+                    val stepAction = kr.safecross.mobile.domain.model.DirectionAction.fromManeuver(newManeuver)
                     enqueueGuidance(
                         GuidanceMessage(
                             id = "maneuver_changed_${progress.currentManeuverIndex}_${currentTimeMs}",
                             text = guidanceText,
                             priority = GuidancePriority.ROUTE,
                             category = "maneuver_step",
-                            hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+                            // 좌회전 = 짧은 진동, 우회전 = 긴 진동
+                            hapticType = HapticFeedbackType.forTurn(stepAction) ?: HapticFeedbackType.UNKNOWN_CAUTION
                         ),
                         currentTimeMs
                     )
@@ -565,7 +641,8 @@ class NavigationViewModel(
                                 id = "approach_30m_${progress.currentManeuverIndex}_${currentTimeMs}",
                                 text = text,
                                 priority = GuidancePriority.ROUTE,
-                                category = "maneuver_approach"
+                                category = "maneuver_approach",
+                                hapticType = HapticFeedbackType.forTurn(nextAction)
                             ),
                             currentTimeMs
                         )
@@ -584,7 +661,7 @@ class NavigationViewModel(
                                 text = text,
                                 priority = GuidancePriority.ROUTE,
                                 category = "maneuver_approach",
-                                hapticType = HapticFeedbackType.UNKNOWN_CAUTION
+                                hapticType = HapticFeedbackType.forTurn(nextAction) ?: HapticFeedbackType.UNKNOWN_CAUTION
                             ),
                             currentTimeMs
                         )
@@ -883,6 +960,7 @@ class NavigationViewModel(
                             distanceAlongRouteMeters = 0,
                             remainingDistanceMeters = newRoute.totalDistanceMeters,
                             distanceToNextManeuverMeters = newRoute.segments.firstOrNull()?.distanceMeters ?: 50,
+                            upcomingManeuverIndex = null,
                             isOffRoute = false
                         )
                     }
@@ -1053,7 +1131,7 @@ class NavigationViewModel(
         val span = routeCrosswalkSpans
             .filter { it.startAlong - along in -10.0..40.0 }
             .minByOrNull { kotlin.math.abs(it.startAlong - along) }
-        crossingWatch = span?.let { CrossingWatch(it, currentTimeMs) }
+        crossingWatch = span?.let { CrossingWatch(it, currentTimeMs, startAlong = along) }
         NavigationFlightRecorder.record(
             "CROSSING_RETURN",
             if (span != null) "WATCH #${span.maneuverIndex} start=${span.startAlong.toInt()}m end=${span.endAlong.toInt()}m along=${along.toInt()}m"
@@ -1089,9 +1167,16 @@ class NavigationViewModel(
         }
 
         val reachedFarSide = progress.distanceAlongRouteMeters >= watch.span.endAlong - 3.0
+        // 감시 시작 위치에서 건너편 끝까지 물리적으로 걸릴 최소 시간이 지나야 완료로 인정
+        // (10/02 현장: 경로상 위치 점프로 전환 5~6초 만에 녹색 확인 없이 지도로 복귀한 사례 2건)
+        val minDurationMs = maxOf(
+            MIN_CROSSING_DURATION_MS,
+            ((watch.span.endAlong - watch.startAlong).coerceAtLeast(0.0) / MAX_CROSSING_SPEED_MPS * 1000).toLong()
+        )
+        val isPlausibleTime = currentTimeMs - watch.startedAtMs >= minDurationMs
         val isMoving = (sample.speedMps ?: 0f) >= 0.6f
         val isReliable = sample.accuracyMeters <= 25.0f && !progress.isOffRoute
-        watch.completeCount = if (reachedFarSide && isReliable && (watch.isGreenConfirmed || isMoving)) watch.completeCount + 1 else 0
+        watch.completeCount = if (reachedFarSide && isReliable && isPlausibleTime && (watch.isGreenConfirmed || isMoving)) watch.completeCount + 1 else 0
 
         if (watch.completeCount >= 2) {
             NavigationFlightRecorder.record(
@@ -1131,6 +1216,14 @@ class NavigationViewModel(
 
     companion object {
         private const val LOOK_AHEAD_METERS = 25.0
+        private const val VPS_MAX_AGE_MS = 1_500L
+        private const val TURN_HAPTIC_MIN_DEG = 30.0
+        private const val TURN_HAPTIC_INTERVAL_MS = 3_000L
+        private const val MAX_CROSSING_SPEED_MPS = 2.5
+        private const val MIN_CROSSING_DURATION_MS = 5_000L
+        private const val VPS_MAX_YAW_ACCURACY_DEG = 10.0
+        private const val COMPASS_BIAS_MAX_AGE_MS = 60_000L
+        private const val COMPASS_BIAS_MAX_DISTANCE_M = 30.0
         private const val MAP_MATCH_MAX_CTE_METERS = 15.0
         private const val MAP_HEADING_TAU_SEC = 0.8
         private const val ARROW_TAU_SEC = 0.3

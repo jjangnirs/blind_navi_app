@@ -117,6 +117,14 @@ fun SettingsScreen(
                 onCheckedChange = { viewModel.toggleAcousticSignalAlert(it) }
             )
 
+            // 3-1. ARCore VPS 정밀 방향 (ADR-0037)
+            SettingSwitchCard(
+                title = "VPS 정밀 방향",
+                description = "길안내 중 카메라로 주변 건물을 인식해 방향을 정확히 맞춥니다. 카메라 영상 특징이 Google 서버로 전송됩니다.",
+                isChecked = uiState.isVpsHeadingEnabled,
+                onCheckedChange = { viewModel.toggleVpsHeading(it) }
+            )
+
             // 4. 햅틱 진동 피드백 토글 및 세기 선택 (SR-F-073, TRD 4.8)
             SettingSwitchCard(
                 title = "햅틱 진동 피드백",

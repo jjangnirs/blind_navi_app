@@ -46,6 +46,14 @@ class SettingsViewModel : ViewModel() {
         }
     }
 
+    fun toggleVpsHeading(enabled: Boolean) {
+        _uiState.update { it.copy(isVpsHeadingEnabled = enabled) }
+        val msg = if (enabled) "VPS 정밀 방향이 켜졌습니다." else "VPS 정밀 방향이 꺼졌습니다. 나침반으로 방향을 안내합니다."
+        viewModelScope.launch {
+            _effects.emit(SettingsEffect.SpeakAnnouncement(msg))
+        }
+    }
+
     fun toggleAcousticSignalAlert(enabled: Boolean) {
         _uiState.update { it.copy(isAcousticSignalAlertEnabled = enabled) }
         val msg = if (enabled) "음향신호기 자동 알림이 켜졌습니다." else "음향신호기 자동 알림이 꺼졌습니다."

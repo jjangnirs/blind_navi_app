@@ -107,6 +107,9 @@ fun NavigationScreen(
                 is NavigationEffect.NavigationFinished -> {
                     onStopNavigation()
                 }
+                is NavigationEffect.Haptic -> {
+                    hapticFeedbackHelper?.vibrate(effect.type)
+                }
                 is NavigationEffect.TriggerCrossingAssist -> {
                     onOpenCrossingAssist()
                 }
@@ -196,11 +199,13 @@ fun NavigationScreen(
 
             // 3. 저시력자를 위한 전용 초고대비 대형 방향 안내 표시기 (80dp 심볼, 38sp 대형 거리, 24sp 행동)
             kr.safecross.mobile.ui.screens.navigation.components.LowVisionDirectionIndicator(
-                action = uiState.currentDirectionAction,
-                distanceMeters = uiState.distanceToNextManeuverMeters,
-                currentManeuver = uiState.currentManeuver,
+                // 경로상 위치 기준 아직 도달하지 않은 다음 분기점의 동작·문구·거리 (지난 분기점 문구가 남지 않도록)
+                action = uiState.upcomingDirectionAction,
+                distanceMeters = uiState.upcomingDistanceMeters,
+                currentManeuver = uiState.upcomingManeuver,
                 relativeDirectionDegrees = uiState.relativeDirectionDegrees,
-                isOffRoute = uiState.isOffRoute
+                isOffRoute = uiState.isOffRoute,
+                headingSourceLabel = uiState.headingSource.label
             )
 
             // 3-1. 실시간 나침반/신체 진행 방향 정대(Orientation Alignment) 카드

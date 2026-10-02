@@ -285,6 +285,21 @@ fun SafeCrossNavHost(
             androidx.compose.runtime.LaunchedEffect(poseTracker) {
                 navigationViewModel.setDevicePoseTracker(poseTracker)
             }
+
+            // ARCore VPS 정밀 방향 (ADR-0037): 길안내 화면이 보이는 동안만 실행
+            val vpsHeadingProvider = androidx.compose.runtime.remember {
+                kr.safecross.mobile.sensor.GeospatialHeadingProvider(context.applicationContext)
+            }
+            androidx.compose.runtime.DisposableEffect(settingsState.isVpsHeadingEnabled) {
+                if (settingsState.isVpsHeadingEnabled) vpsHeadingProvider.start()
+                onDispose { vpsHeadingProvider.release() }
+            }
+            androidx.compose.runtime.LaunchedEffect(vpsHeadingProvider) {
+                vpsHeadingProvider.sample.collect { navigationViewModel.onVpsHeading(it) }
+            }
+            androidx.compose.runtime.LaunchedEffect(vpsHeadingProvider) {
+                vpsHeadingProvider.status.collect { kr.safecross.mobile.navigation.NavigationFlightRecorder.record("VPS", it) }
+            }
             val route = routeState.route
             if (route != null) {
                 NavigationScreen(
@@ -293,6 +308,9 @@ fun SafeCrossNavHost(
                     voiceAnnouncer = ttsHelper,
                     hapticFeedbackHelper = hapticHelper,
                     onOpenCrossingAssist = {
+                        // 카메라 신호 확인 화면이 카메라를 쓸 수 있도록 VPS(ARCore) 카메라를 먼저 놓아준다
+                        vpsHeadingProvider.pauseBlocking()
+                        navigationViewModel.onVpsHeading(null)
                         // 지금 건너려는 횡단보도를 감시 대상으로 등록 (건너편 도착 시 자동 복귀)
                         navigationViewModel.onCrossingAssistOpened()
                         // 자동 전환이 연달아 와도 카메라 화면이 겹쳐 열리지 않도록 단일 인스턴스로 이동
