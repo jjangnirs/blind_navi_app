@@ -66,6 +66,9 @@ Every P0 flow must work without seeing the screen, while offering rich high-cont
 - Continuously track real-time geomagnetic compass heading via `Sensor.TYPE_ROTATION_VECTOR` in `DevicePoseTracker`.
 - Deliver `ORIENTATION_ALIGNED` haptic compass feedback (60ms-60ms-60ms double pulse) and speech when the user aligns their body within 18° of the route path.
 - Automatically trigger camera crossing assist (`TriggerCrossingAssist`) once per crosswalk when the remaining along-route distance is within 15m, or when the user stops for 2s within 30m (suggest the manual button instead when GPS accuracy is worse than 25m), so white-cane users do not need to touch the screen while walking (ADR-036).
+- After the user reaches the far side of the crosswalk (two consecutive fixes within 3 m of the far end, green confirmed or walking, and a physically plausible elapsed time), announce and return to map navigation automatically; never close the navigation screen together with the camera screen (ADR-038, ADR-039).
+- Use ARCore Geospatial (VPS) heading when its yaw accuracy is ≤10°, fall back to a bias-corrected compass for 60 s / 30 m, and expose a setting because camera features are sent to Google (ADR-037).
+- Show the next not-yet-reached maneuver (action, instruction, along-route distance) under the direction arrow, and use a short vibration for left and a long vibration for right (ADR-039).
 - Emit immediate speech guidance upon maneuver turn/step transitions (`QUEUE_FLUSH`) and deliver 30m / 15m approach cues.
 - Integrate SK TMAP national POI search API and Geocoder fallback to search any national station, building, or address, displaying distance from GPS and 5km walking threshold badges.
 - Render national standard Ministry of Land, Infrastructure and Transport VWorld 2D precision electronic maps (1:1000 detailed building/alleyway in Korean) with 3-tier fallback (OSM, CartoDB) and live user radar pulse markers (🔵) / off-route feedback (🔴).

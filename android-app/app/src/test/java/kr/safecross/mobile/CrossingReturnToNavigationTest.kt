@@ -68,23 +68,24 @@ class CrossingReturnToNavigationTest {
         vm.setRoute(route)
         advanceUntilIdle()
 
-        vm.processLocationSample(sample(-10.0, 1.1f))
-        vm.onCrossingAssistOpened()
+        val t0 = 1_000_000L
+        vm.processLocationSample(sample(-10.0, 1.1f), currentTimeMs = t0)
+        vm.onCrossingAssistOpened(currentTimeMs = t0)
         vm.onCrossingGreenConfirmed()
 
         // 횡단 중 (건너편 끝 = 시작점 + 20m)
-        vm.processLocationSample(sample(8.0, 1.1f))
+        vm.processLocationSample(sample(8.0, 1.1f), currentTimeMs = t0 + 15_000L)
         advanceUntilIdle()
         assertTrue("아직 건너는 중에는 복귀하지 않음", events.isEmpty())
 
         // 건너편 도착 2회 연속
-        vm.processLocationSample(sample(18.0, 1.0f))
-        vm.processLocationSample(sample(21.0, 1.0f))
+        vm.processLocationSample(sample(18.0, 1.0f), currentTimeMs = t0 + 24_000L)
+        vm.processLocationSample(sample(21.0, 1.0f), currentTimeMs = t0 + 25_000L)
         advanceUntilIdle()
         assertEquals(listOf("횡단보도를 건넜습니다. 길안내로 돌아갑니다."), events)
 
         // 이후 샘플에서 다시 발생하지 않음
-        vm.processLocationSample(sample(26.0, 1.0f))
+        vm.processLocationSample(sample(26.0, 1.0f), currentTimeMs = t0 + 30_000L)
         advanceUntilIdle()
         assertEquals(1, events.size)
         job.cancel()
@@ -103,6 +104,26 @@ class CrossingReturnToNavigationTest {
 
         // 적색 대기 중 GPS가 건너편으로 튄 경우: 녹색 미확정 + 정지 상태이면 복귀하지 않음
         repeat(3) { vm.processLocationSample(sample(22.0, 0.1f)) }
+        advanceUntilIdle()
+        assertTrue(events.isEmpty())
+        job.cancel()
+    }
+
+    @Test
+    fun doesNotReturnWhenFarSideIsReachedImpossiblyFast() = runTest(testDispatcher) {
+        // 10/02 현장 재현: 전환 5초 만에 경로상 위치가 건너편으로 점프 → 녹색 확인 없이 복귀하던 문제
+        val vm = NavigationViewModel()
+        val events = mutableListOf<String>()
+        val job = launch { vm.crossingCompleted.collect { events.add(it) } }
+        vm.setRoute(route)
+        advanceUntilIdle()
+
+        val t0 = 1_000_000L
+        vm.processLocationSample(sample(-15.0, 1.2f), currentTimeMs = t0)
+        vm.onCrossingAssistOpened(currentTimeMs = t0)
+        // 35m(감시 시작 → 건너편 끝)를 4~5초 만에 도달: 걸어서 불가능 (최소 14초)
+        vm.processLocationSample(sample(19.0, 1.2f), currentTimeMs = t0 + 4_000L)
+        vm.processLocationSample(sample(21.0, 1.2f), currentTimeMs = t0 + 5_000L)
         advanceUntilIdle()
         assertTrue(events.isEmpty())
         job.cancel()

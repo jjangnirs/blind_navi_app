@@ -59,5 +59,34 @@ enum class HapticFeedbackType(
         description = "경로 방향 정대 확인 (경쾌한 톡톡 2회 진동)",
         patternMs = longArrayOf(0, 60, 60, 60),
         amplitudes = intArrayOf(0, 160, 0, 160)
-    )
+    ),
+
+    /**
+     * 왼쪽으로 몸을 돌리거나 좌회전해야 함: 짧은 진동 1회 (80ms).
+     */
+    TURN_LEFT(
+        description = "왼쪽 방향 (짧은 진동)",
+        patternMs = longArrayOf(0, 80),
+        amplitudes = intArrayOf(0, 220)
+    ),
+
+    /**
+     * 오른쪽으로 몸을 돌리거나 우회전해야 함: 긴 진동 1회 (600ms).
+     */
+    TURN_RIGHT(
+        description = "오른쪽 방향 (긴 진동)",
+        patternMs = longArrayOf(0, 600),
+        amplitudes = intArrayOf(0, 220)
+    );
+
+    companion object {
+        /** 분기 동작의 좌/우 방향 진동 (좌·우가 아니면 null) */
+        fun forTurn(action: kr.safecross.mobile.domain.model.DirectionAction): HapticFeedbackType? = when (action) {
+            kr.safecross.mobile.domain.model.DirectionAction.LEFT,
+            kr.safecross.mobile.domain.model.DirectionAction.SLIGHT_LEFT -> TURN_LEFT
+            kr.safecross.mobile.domain.model.DirectionAction.RIGHT,
+            kr.safecross.mobile.domain.model.DirectionAction.SLIGHT_RIGHT -> TURN_RIGHT
+            else -> null
+        }
+    }
 }

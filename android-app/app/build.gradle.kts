@@ -31,6 +31,17 @@ android {
             }
         }
         buildConfigField("String", "TMAP_APP_KEY", "\"$tmapAppKey\"")
+
+        // ARCore Geospatial(VPS) 인증 키 (ADR-0037): 루트 .env 의 ARCORE_API_KEY 또는 환경변수
+        var arcoreApiKey = System.getenv("ARCORE_API_KEY") ?: ""
+        if (envFile.exists()) {
+            envFile.readLines().map { it.trim() }
+                .firstOrNull { it.startsWith("ARCORE_API_KEY=") }
+                ?.substringAfter("ARCORE_API_KEY=")?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { arcoreApiKey = it }
+        }
+        manifestPlaceholders["arcoreApiKey"] = arcoreApiKey
     }
 
     buildTypes {
@@ -81,6 +92,11 @@ dependencies {
 
     // LiteRT / TFLite On-Device ML (프롬프트 11)
     implementation(libs.tflite)
+
+    // ARCore Geospatial(VPS) 정밀 방향 (ADR-0037). Geospatial은 Play 서비스 위치 라이브러리가 필요하다.
+    // play-services-location 21.4.0은 Kotlin 2.3 메타데이터를 요구하므로 프로젝트 Kotlin(2.0.21)과 호환되는 21.3.0 사용
+    implementation("com.google.ar:core:1.56.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 
     // OpenCV Android (Computer Vision Pipeline)
     implementation("com.quickbirdstudios:opencv:4.5.3.0")

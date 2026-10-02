@@ -469,6 +469,27 @@ flowchart TD
 - E28-S2 `RouteProgressEngine.maneuverAlongDistances` 분기점 경로상 위치 산출, `[CROSSING_AUTO]` 비행 기록
 - E28-S3 243개 전체 단위 테스트 통과 및 `app-debug-1001-v38.apk` 기기 배포 (현장 전환 거리 검증 필요)
 
+### Epic E29 — 횡단 완료 후 길안내 자동 복귀 및 안내 반복 억제 (ADR-038)
+
+- E29-S1 횡단 감시(시작·건너편 끝) 및 완료 판정, `crossingCompleted` 흐름으로 카메라 화면에서 복귀
+- E29-S2 카메라 화면 이중 닫힘 수정, `ensureRoute()` 재진입 유지
+- E29-S3 확인불가 전환 4초 히스테리시스, 적색 8초·확인불가 10초 재안내 쿨다운
+- E29-S4 249개 단위 테스트 통과, `app-debug-1002-v40.apk`, PR #2 머지
+
+### Epic E30 — ARCore Geospatial(VPS) 정밀 방향 (ADR-037)
+
+- E30-S1 VPS 측정 시험 앱 `vpsprobe` (현장: 위치 오차 1 m 미만, 방향 오차 3° 미만, 나침반 13~30° 오차)
+- E30-S2 `GeospatialHeadingProvider`(오프스크린 EGL ARCore) 및 방향 출처 결정(VPS / 보정 나침반 / 나침반)
+- E30-S3 설정 토글, 카메라 화면 전환 시 카메라 해제, `[HEADING]`·`[VPS]` 기록
+- E30-S4 255개 단위 테스트 통과, `app-debug-1003-v41.apk` (현장: VPS 사용률 77%)
+
+### Epic E31 — 경로상 위치 점프 억제, 다음 분기점 표시, 좌/우 방향 진동 (ADR-039)
+
+- E31-S1 투영 후보 이동 한도 벌점, 횡단 완료 최소 시간
+- E31-S2 방향 표시기를 다음 분기점(경로상 3 m 앞) 기준으로 갱신
+- E31-S3 `TURN_LEFT`(80 ms)/`TURN_RIGHT`(600 ms) 진동
+- E31-S4 260개 단위 테스트 통과, `app-debug-1003-v42.apk` (현장 재검증 필요)
+
 ## 10. 일일 개발 루틴
 
 신입 개발자는 매 작업일 다음 순서를 반복한다.

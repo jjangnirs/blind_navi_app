@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "SafeCrossKR"
 include(":app")
+include(":vpsprobe")

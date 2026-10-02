@@ -18,7 +18,10 @@ data class RouteProgressState(
     val nextManeuver: Maneuver? = null,
     val distanceToNextManeuverMeters: Double = 0.0,
     val isFinished: Boolean = false,
-    val offRouteConsecutiveCount: Int = 0
+    val offRouteConsecutiveCount: Int = 0,
+    // 경로상 위치 기준으로 아직 도달하지 않은 다음 분기점과 그곳까지의 경로상 거리 (화면 표시용)
+    val upcomingManeuverIndex: Int? = null,
+    val distanceToUpcomingManeuverMeters: Double = 0.0
 )
 
 /**
@@ -34,6 +37,10 @@ class RouteProgressEngine(
 
     private var currentManeuverIndex = 0
     private var offRouteConsecutiveCount = 0
+
+    // 직전 경로상 위치 (투영 점프 억제용)
+    private var lastAlongTrackMeters: Double? = null
+    private var lastSampleTimeMs: Long = 0L
 
     // 경로 지오메트리 점 목록
     private val pathPoints: List<LocationPoint> = if (route.fullGeometry.isNotEmpty()) {
@@ -92,9 +99,18 @@ class RouteProgressEngine(
             )
         }
 
-        // 전체 경로 선분 중 최단 투영점 탐색
+        // 전체 경로 선분 중 투영점 탐색.
+        // 경로가 지그재그로 꺾여 뒤쪽 구간이 현재 위치 바로 옆을 지나는 경우, 단순 최단거리만 쓰면
+        // 경로상 위치가 수십 m 건너뛴다 (10/02 현장: 1m 이동에 91m → 124m 점프, 횡단 완료 오판).
+        // 직전 위치에서 물리적으로 갈 수 없는 거리(15m + 3m/s × 경과시간)를 넘는 후보에는 초과 거리만큼 벌점을 준다.
+        val sampleTimeMs = sample.timestampEpochMs
+        val elapsedSec = if (lastSampleTimeMs > 0L) ((sampleTimeMs - lastSampleTimeMs) / 1000.0).coerceIn(0.0, 120.0) else 0.0
+        val allowedJump = MAX_JUMP_BASE_METERS + MAX_PLAUSIBLE_SPEED_MPS * elapsedSec
+        val prevAlong = lastAlongTrackMeters
+
         var minCrossTrack = Double.MAX_VALUE
         var bestAlongTrack = 0.0
+        var bestScore = Double.MAX_VALUE
 
         for (i in 0 until pathPoints.size - 1) {
             val p1 = pathPoints[i]
@@ -107,12 +123,20 @@ class RouteProgressEngine(
                 endLat = p2.lat,
                 endLon = p2.lon
             )
+            val along = cumulativeDistances[i] + proj.alongTrackDistanceMeters
+            val jumpPenalty = if (prevAlong != null) (kotlin.math.abs(along - prevAlong) - allowedJump).coerceAtLeast(0.0) else 0.0
+            val score = proj.crossTrackDistanceMeters + jumpPenalty
 
             if (proj.crossTrackDistanceMeters < minCrossTrack) {
                 minCrossTrack = proj.crossTrackDistanceMeters
-                bestAlongTrack = cumulativeDistances[i] + proj.alongTrackDistanceMeters
+            }
+            if (score < bestScore) {
+                bestScore = score
+                bestAlongTrack = along
             }
         }
+        lastAlongTrackMeters = bestAlongTrack
+        lastSampleTimeMs = sampleTimeMs
 
         // 이탈 여부 판단: GPS 정확도가 25m 이내로 유효한 상태에서 연속 임계값 초과 시에만 인정 (도심 난반사 보호)
         val isAccuracyReliable = sample.accuracyMeters <= 25.0f
@@ -151,7 +175,14 @@ class RouteProgressEngine(
             distToDestination
         }
 
+        // 화면 표시용: 경로상 위치보다 3m 이상 앞에 있는 첫 분기점 (이미 지난 분기점 문구가 남지 않도록)
+        val alongs = maneuverAlongDistances
+        val upcomingIdx = alongs.indices.firstOrNull { alongs[it] > bestAlongTrack + PASSED_TOLERANCE_METERS }
+        val distToUpcoming = upcomingIdx?.let { (alongs[it] - bestAlongTrack).coerceAtLeast(0.0) } ?: distToDestination
+
         return RouteProgressState(
+            upcomingManeuverIndex = upcomingIdx,
+            distanceToUpcomingManeuverMeters = distToUpcoming,
             currentManeuverIndex = currentManeuverIndex,
             distanceAlongRouteMeters = bestAlongTrack,
             remainingDistanceMeters = remainingDist,
@@ -222,5 +253,13 @@ class RouteProgressEngine(
     fun reset() {
         currentManeuverIndex = 0
         offRouteConsecutiveCount = 0
+        lastAlongTrackMeters = null
+        lastSampleTimeMs = 0L
+    }
+
+    private companion object {
+        const val MAX_JUMP_BASE_METERS = 15.0
+        const val MAX_PLAUSIBLE_SPEED_MPS = 3.0
+        const val PASSED_TOLERANCE_METERS = 3.0
     }
 }

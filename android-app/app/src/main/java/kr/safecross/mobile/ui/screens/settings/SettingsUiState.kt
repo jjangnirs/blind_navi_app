@@ -10,6 +10,8 @@ data class SettingsUiState(
     val speechRate: Float = 1.0f,
     val isAcousticSignalAlertEnabled: Boolean = true,
     val isVibrationEnabled: Boolean = true,
+    // ARCore VPS 정밀 방향 (카메라 영상 특징이 Google 서버로 전송됨, ADR-0037)
+    val isVpsHeadingEnabled: Boolean = true,
     val vibrationIntensity: VibrationIntensity = VibrationIntensity.MEDIUM,
     val showDisclaimerDialog: Boolean = false,
     val appVersion: String = "v0.1.0"

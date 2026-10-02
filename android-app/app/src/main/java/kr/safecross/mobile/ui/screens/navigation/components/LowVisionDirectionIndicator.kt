@@ -64,7 +64,8 @@ fun LowVisionDirectionIndicator(
     currentManeuver: Maneuver?,
     modifier: Modifier = Modifier,
     relativeDirectionDegrees: Float? = null,
-    isOffRoute: Boolean = false
+    isOffRoute: Boolean = false,
+    headingSourceLabel: String? = null
 ) {
     val clockText = relativeDirectionDegrees?.let { clockDirectionText(it) }
     val descriptionText = "저시력 방향 안내. ${action.label}, 남은 거리 ${distanceMeters}미터. " +
@@ -98,6 +99,18 @@ fun LowVisionDirectionIndicator(
                         fontWeight = FontWeight.ExtraBold,
                         color = HighContrastBlack,
                         fontSize = 13.sp
+                    )
+                )
+            }
+
+            // 방향 출처 (VPS 정밀 방향 / 나침반)
+            if (headingSourceLabel != null) {
+                Text(
+                    text = headingSourceLabel,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = HighContrastWhite
                     )
                 )
             }

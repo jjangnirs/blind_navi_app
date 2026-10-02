@@ -150,6 +150,17 @@ MVP에 포함한다.
     - 지도 전용 평활화 헤딩(시간상수 0.8초, 5° 이상), 경로 위 위치 맞춤, 재탐색 시 경로 레이어만 교체
 42. 횡단보도 카메라 신호 확인 자동 전환 (`CrossingAutoTriggerPolicy`, ADR-036):
     - 경로상 15m 이내 또는 30m 이내 2초 정지 시 횡단보도당 1회 자동 전환, GPS 정확도 > 25m이면 수동 전환 권유
+43. 횡단 완료 후 길안내 자동 복귀 및 안내 반복 억제 (`NavigationViewModel`, `CrossingAssistViewModel`, ADR-038):
+    - 건너편 끝 도착(GPS 2회 연속 + 녹색 확정 또는 보행) 시 "횡단보도를 건넜습니다. 길안내로 돌아갑니다." 후 지도 복귀
+    - 카메라 화면 이중 닫힘·길안내 재진입 초기화 수정, 확인불가 전환 4초 히스테리시스와 재안내 쿨다운
+44. ARCore Geospatial(VPS) 정밀 방향 (`GeospatialHeadingProvider`, ADR-037):
+    - VPS 방향 오차 ≤10°면 VPS 방향, 놓치면 보정 나침반, 설정에서 끌 수 있음 (카메라 영상 특징이 Google로 전송)
+    - VPS 측정 시험 앱 `android-app/vpsprobe` (위치·방향 오차 실시간 표시 및 CSV 기록)
+45. 경로상 위치 점프 억제와 다음 분기점 표시 (`RouteProgressEngine`, ADR-039):
+    - 지그재그 경로에서 옆 구간으로 건너뛰지 않음, 횡단 완료 최소 시간 조건
+    - 화살표 아래 동작·문구·거리를 아직 도달하지 않은 다음 분기점 기준으로 표시
+46. 좌/우 방향 진동 (`HapticFeedbackType.TURN_LEFT/TURN_RIGHT`, ADR-039):
+    - 왼쪽 = 짧은 진동(80 ms), 오른쪽 = 긴 진동(600 ms), 몸 방향 30° 이상 어긋나면 3초마다
 
 MVP에서 제외한다.
 
