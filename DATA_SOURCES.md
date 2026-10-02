@@ -462,3 +462,12 @@ pilot.to_parquet("data/staging/gwangju-crossings.parquet", index=False)
 - [ ] 광주 필터를 명칭과 행정경계로 교차확인했다.
 - [ ] 공간조인 모호 후보를 사람 검수 큐로 보냈다.
 - [ ] 앱 발행 버전과 rollback 버전을 만들었다.
+
+### ARCore Geospatial API (VPS) — 정밀 방향 (ADR-0037)
+
+- 제공: Google ARCore Geospatial API (VPS, 거리뷰 영상 기반 위치·방향 확인)
+- 인증: Google Cloud "ARCore API" 사용 설정 후 발급한 API 키 (`.env`의 `ARCORE_API_KEY`, 저장소에 기재 금지). 앱 제한(`kr.safecross.mobile`, `kr.safecross.vpsprobe` + SHA-1)과 API 제한(ARCore API만) 권장
+- 비용: Geospatial API 무료, 프로젝트당 분당 세션 1,000회·요청 100,000회 한도 (Map Tiles API는 별도·사용하지 않음)
+- 전송 데이터: 위치 확인 시 카메라 영상 특징이 Google 서버로 전송됨 (ADR-002 충돌, 설정 토글로 운영)
+- 광주 현장 확인(2026-10-02): VPS 지원됨, 위치 오차 0.6~0.9 m, 방향 오차 2.3~2.8° (시험 앱 `vpsprobe`, 정지·야간 측정)
+- 의존성: `com.google.ar:core:1.56.0`, `com.google.android.gms:play-services-location:21.3.0`

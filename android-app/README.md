@@ -269,6 +269,25 @@ cd android-app
 ### 37. 횡단보도 카메라 신호 확인 자동 전환 (`CrossingAutoTriggerPolicy`, ADR-036)
 - **경로상 15m 또는 30m 내 2초 정지** 시 횡단보도당 1회 자동 전환, `[CROSSING_AUTO]` 비행 기록
 
+### 38. 횡단 완료 후 길안내 자동 복귀 및 안내 반복 억제 (`NavigationViewModel`, `CrossingAssistViewModel`, ADR-038)
+- **자동 복귀**: 건너편 끝 도착(GPS 2회 연속 + 녹색 확정 또는 보행 + 최소 경과 시간) 시 음성 안내 후 지도 복귀, `[CROSSING_RETURN]` 기록
+- **이중 닫힘·재진입 초기화 수정**: 카메라 화면일 때만 닫기, `ensureRoute()`
+- **안내 반복 억제**: 확인불가 전환 4초 히스테리시스, 적색 8초·확인불가 10초 재안내 쿨다운
+
+### 39. ARCore Geospatial(VPS) 정밀 방향 (`GeospatialHeadingProvider`, `GeospatialHeadingMath`, ADR-037)
+- **방향 출처**: VPS(오차 ≤10°) → VPS 보정 나침반(60초·30 m) → 나침반, 표시기 상단과 `[HEADING]` 기록에 표시
+- **설정**: "VPS 정밀 방향" 토글 (카메라 영상 특징이 Google로 전송), `.env`의 `ARCORE_API_KEY` 필요
+
+### 40. 경로상 위치 점프 억제와 다음 분기점 표시 (`RouteProgressEngine`, ADR-039)
+- **점프 억제**: 이동 한도(15 m + 3 m/s × 경과 시간) 초과 후보 벌점
+- **표시**: 화살표 아래 동작·문구·거리를 아직 도달하지 않은 다음 분기점 기준으로 갱신
+
+### 41. 좌/우 방향 진동 (`HapticFeedbackType`, ADR-039)
+- **왼쪽 = 짧은 진동(80 ms), 오른쪽 = 긴 진동(600 ms)**: 회전 단계·사전 접근 안내, 몸 방향 30° 이상 어긋남(3초 간격)
+
+### 42. VPS 측정 시험 앱 (`vpsprobe` 모듈)
+- 별도 APK(`kr.safecross.vpsprobe`, 앱 이름 "VPS 측정"): VPS 지원 여부, 위치·방향 오차, GPS·나침반과의 차이 실시간 표시, 1초 CSV 기록(`Android/data/kr.safecross.vpsprobe/files/logs/`), "지점 표시" 태그
+
 ## TalkBack 수동 시험 절차
 1. **TalkBack 활성화**: Android 기기 설정 -> 접근성 -> TalkBack 켜기 (또는 볼륨 업+다운 키 3초 길게 누르기).
 2. **목적지 검색 시험**:
