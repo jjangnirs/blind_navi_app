@@ -288,6 +288,17 @@ cd android-app
 ### 42. VPS 측정 시험 앱 (`vpsprobe` 모듈)
 - 별도 APK(`kr.safecross.vpsprobe`, 앱 이름 "VPS 측정"): VPS 지원 여부, 위치·방향 오차, GPS·나침반과의 차이 실시간 표시, 1초 CSV 기록(`Android/data/kr.safecross.vpsprobe/files/logs/`), "지점 표시" 태그
 
+### 43. 지속 이탈 신속 재탐색, 보행 방향 전달 및 몸 회전 음성 안내 (`RouteProgressEngine`, `NavigationViewModel`, ADR-040)
+- **지속 이탈 재탐색**: GPS 정확도 양호 시 20 m 이상 10초 지속 시 신속 재탐색, 평행 보도(12 m) 무시
+- **보행 방향 TMAP 전달**: 현재 걷는 방향(`startHeadingDegrees`)을 넘겨 U턴 방지, 새 경로 첫 방향 3초 후 음성 안내
+- **몸 회전 음성 안내**: 몸 방향 45° 이상 어긋남 3초 지속 시 "왼쪽/오른쪽으로 N도 몸을 돌려 X시 방향을 향하세요" 음성 발화 및 10초 반복
+- **출발 직후 보호**: 경로 20 m 초과 이탈 시 횡단보도 자동 전환 방지, 카메라 열림 중 재탐색 유예 및 닫힘 즉시 재탐색
+
+### 44. 보행신호등 조준 가이드, 높이 필터 및 ARCore 카메라 파이프라인 (`CrossingAimCalculator`, `TwoTierHybridSignalEstimator`, `ArCoreCameraPipeManager`, ADR-040, ADR-041)
+- **조준 안내**: 건너편 신호등 방향·거리·나침반 보정값 기반 좌/우 회전 및 "휴대폰을 세우세요" 우선 안내
+- **높이 필터**: 카메라 화각·피치 기반 앙각 계산으로 1.8~4.5 m 외 불빛(차량 미등 1.0 m, 도로 위 차량 신호등 6.0~7.4 m) 기각
+- **ARCore 카메라 파이프라인**: OpenGL 배경 렌더러, `YUV_420_888` → `RGBA_8888` 실시간 변환, 쿼터니언 회전 기반 손떨림 추적, CameraX 무중단 폴백
+
 ## TalkBack 수동 시험 절차
 1. **TalkBack 활성화**: Android 기기 설정 -> 접근성 -> TalkBack 켜기 (또는 볼륨 업+다운 키 3초 길게 누르기).
 2. **목적지 검색 시험**:

@@ -27,7 +27,9 @@ data class CrossingAssistUiState(
     val lastDepthRatio: Float? = null,
     val lastDepthPeakRatio: Float? = null,
     val calibrationStatusText: String? = null,
-    val currentPitchDegrees: Float = 0f
+    val currentPitchDegrees: Float = 0f,
+    // 건너편 보행신호등 조준 안내 문구 (ADR-0040). 신호를 찾았거나 조준 정보가 없으면 null
+    val aimHint: String? = null
 )
 
 sealed interface CrossingAssistEffect {

@@ -220,7 +220,10 @@ fun CrossingAssistScreen(
                 ) {
                     AndroidView(
                         factory = { ctx ->
-                            PreviewView(ctx).apply {
+                            val arManager = viewModel.cameraPipeManager as? kr.safecross.mobile.camera.ArCoreCameraPipeManager
+                            // ARCore 세션 실패 시 null → 아래 PreviewView(CameraX 대체)로 진행 (ADR-0041)
+                            arManager?.createSurfaceView(ctx) { frame -> viewModel.processFrame(frame) }
+                                ?: PreviewView(ctx).apply {
                                 implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                                 viewModel.cameraPipeManager.bind(
                                     lifecycleOwner = lifecycleOwner,
@@ -313,6 +316,24 @@ fun CrossingAssistScreen(
                                 )
                             )
                         }
+                    }
+
+                    // 4. 건너편 보행신호등 조준 안내 (ADR-0040)
+                    uiState.aimHint?.let { hint ->
+                        Text(
+                            text = hint,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(10.dp)
+                                .background(Color(0xEE000000), RoundedCornerShape(8.dp))
+                                .border(2.dp, HighContrastYellow, RoundedCornerShape(8.dp))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = HighContrastYellow,
+                                fontSize = 18.sp
+                            )
+                        )
                     }
                 }
             }

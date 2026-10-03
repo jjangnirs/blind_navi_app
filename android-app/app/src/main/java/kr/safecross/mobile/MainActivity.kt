@@ -308,8 +308,8 @@ fun SafeCrossNavHost(
                     voiceAnnouncer = ttsHelper,
                     hapticFeedbackHelper = hapticHelper,
                     onOpenCrossingAssist = {
-                        // 카메라 신호 확인 화면이 카메라를 쓸 수 있도록 VPS(ARCore) 카메라를 먼저 놓아준다
-                        vpsHeadingProvider.pauseBlocking()
+                        // 카메라 신호 확인 화면이 카메라·ARCore 세션을 쓸 수 있도록 길안내 VPS 세션을 먼저 닫는다 (ADR-0041)
+                        vpsHeadingProvider.release()
                         navigationViewModel.onVpsHeading(null)
                         // 지금 건너려는 횡단보도를 감시 대상으로 등록 (건너편 도착 시 자동 복귀)
                         navigationViewModel.onCrossingAssistOpened()
@@ -350,7 +350,15 @@ fun SafeCrossNavHost(
             val crossingAssistViewModel: kr.safecross.mobile.ui.screens.crossingassist.CrossingAssistViewModel =
                 androidx.lifecycle.viewmodel.compose.viewModel {
                     kr.safecross.mobile.ui.screens.crossingassist.CrossingAssistViewModel(
-                        cameraPipeManager = kr.safecross.mobile.camera.ProductionCameraPipeManager(context),
+                        // ARCore 사용 가능하면 AR 카메라(흔들림 추적·VPS·깊이·장면 라벨), 아니면 CameraX (ADR-0041)
+                        cameraPipeManager = if (kr.safecross.mobile.camera.ArCoreCameraPipeManager.isAvailable(context)) {
+                            kr.safecross.mobile.camera.ArCoreCameraPipeManager(
+                                context.applicationContext,
+                                enableGeospatial = settingsState.isVpsHeadingEnabled
+                            )
+                        } else {
+                            kr.safecross.mobile.camera.ProductionCameraPipeManager(context)
+                        },
                         crosswalkEstimator = kr.safecross.mobile.perception.FakeCrosswalkEstimator(),
                         signalEstimator = kr.safecross.mobile.perception.TwoTierHybridSignalEstimator.createDefault(context),
                         signalAssociator = kr.safecross.mobile.perception.LockOnSignalAssociator(),
@@ -361,7 +369,8 @@ fun SafeCrossNavHost(
                         guidanceArbiter = kr.safecross.mobile.guidance.GuidanceArbiter(),
                         signalStatusProvider = kr.safecross.mobile.signal.CitsRealSignalStatusProvider(),
                         enableSignalPolling = true,
-                        analysisDispatcher = kotlinx.coroutines.Dispatchers.Default
+                        analysisDispatcher = kotlinx.coroutines.Dispatchers.Default,
+                        cameraVerticalFovDegrees = kr.safecross.mobile.camera.CameraFov.portraitVerticalFovDegrees(context)
                     )
                 }
 
@@ -373,12 +382,22 @@ fun SafeCrossNavHost(
                 )
             }
 
+            // 건너편 보행신호등 조준 정보(방향·거리·나침반 보정값)를 카메라 화면에 전달 (ADR-0040)
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                navigationViewModel.crossingAim.collect { crossingAssistViewModel.updateAim(it) }
+            }
+
             // 녹색 확정(횡단 시작)을 길안내 쪽 횡단 완료 판정에 알림
             val crossingUi by crossingAssistViewModel.uiState.collectAsState()
             androidx.compose.runtime.LaunchedEffect(crossingUi.decisionState) {
                 if (crossingUi.decisionState == kr.safecross.mobile.decision.CrossingAssistDecisionState.GREEN_ESTIMATE) {
                     navigationViewModel.onCrossingGreenConfirmed()
                 }
+            }
+
+            // 어떤 경로로든(완료·닫기·뒤로 가기) 카메라 화면이 사라지면 길안내 쪽 횡단 감시 상태를 정리
+            androidx.compose.runtime.DisposableEffect(Unit) {
+                onDispose { navigationViewModel.onCrossingAssistClosed() }
             }
 
             // 건너편 도착 시 음성 안내 후 이전 지도 길안내 화면으로 자동 복귀

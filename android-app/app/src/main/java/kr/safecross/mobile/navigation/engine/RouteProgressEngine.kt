@@ -19,6 +19,8 @@ data class RouteProgressState(
     val distanceToNextManeuverMeters: Double = 0.0,
     val isFinished: Boolean = false,
     val offRouteConsecutiveCount: Int = 0,
+    // 이탈 판정 근거: HARD(35 m 초과 연속) / SUSTAINED(20 m 초과 10초 지속), 이탈 아니면 null
+    val offRouteReason: String? = null,
     // 경로상 위치 기준으로 아직 도달하지 않은 다음 분기점과 그곳까지의 경로상 거리 (화면 표시용)
     val upcomingManeuverIndex: Int? = null,
     val distanceToUpcomingManeuverMeters: Double = 0.0
@@ -32,11 +34,17 @@ class RouteProgressEngine(
     private val offRouteThresholdMeters: Double = 35.0,
     private val maneuverAdvanceDistanceMeters: Double = 15.0,
     private val destinationArrivalDistanceMeters: Double = 10.0,
-    private val minConsecutiveOffRoute: Int = 2
+    private val minConsecutiveOffRoute: Int = 2,
+    // 지속 이탈: GPS가 정확(15 m 이내)할 때 max(20 m, 정확도×2)를 넘는 상태가 10초 이상 이어지면 이탈
+    // (10/03 현장: 정확도 3~9 m에서 경로와 23~27 m 떨어진 채 2분간 머물렀지만 35 m 기준에 못 미쳐 재탐색 안 됨)
+    private val sustainedOffRouteThresholdMeters: Double = 20.0,
+    private val sustainedOffRouteDurationMs: Long = 10_000L,
+    private val sustainedMaxAccuracyMeters: Float = 15.0f
 ) {
 
     private var currentManeuverIndex = 0
     private var offRouteConsecutiveCount = 0
+    private var sustainedOffSinceMs: Long? = null
 
     // 직전 경로상 위치 (투영 점프 억제용)
     private var lastAlongTrackMeters: Double? = null
@@ -146,7 +154,24 @@ class RouteProgressEngine(
         } else {
             offRouteConsecutiveCount = 0
         }
-        val isOffRoute = offRouteConsecutiveCount >= minConsecutiveOffRoute
+        val isHardOff = offRouteConsecutiveCount >= minConsecutiveOffRoute
+
+        // 지속 이탈 타이머: 조건을 만족하면 시작, 경로 15 m 이내로 확실히 돌아오면 해제
+        // (정확도가 나빠진 샘플은 타이머를 멈추지도 늘리지도 않고 유지)
+        val sustainedThreshold = maxOf(sustainedOffRouteThresholdMeters, sample.accuracyMeters * 2.0)
+        when {
+            sample.accuracyMeters <= sustainedMaxAccuracyMeters && minCrossTrack > sustainedThreshold ->
+                if (sustainedOffSinceMs == null) sustainedOffSinceMs = sampleTimeMs
+            minCrossTrack < sustainedOffRouteThresholdMeters - SUSTAINED_RELEASE_MARGIN_METERS ->
+                sustainedOffSinceMs = null
+        }
+        val isSustainedOff = sustainedOffSinceMs?.let { sampleTimeMs - it >= sustainedOffRouteDurationMs } == true
+        val isOffRoute = isHardOff || isSustainedOff
+        val offRouteReason = when {
+            isHardOff -> "HARD"
+            isSustainedOff -> "SUSTAINED"
+            else -> null
+        }
 
         // Maneuver 전진 판단: 다음 목표 Maneuver 지점(nextManeuver)에 도달 시 스텝 전진
         val maneuvers = route.maneuvers
@@ -192,7 +217,8 @@ class RouteProgressEngine(
             nextManeuver = nxtManeuver,
             distanceToNextManeuverMeters = distToNextM,
             isFinished = false,
-            offRouteConsecutiveCount = offRouteConsecutiveCount
+            offRouteConsecutiveCount = offRouteConsecutiveCount,
+            offRouteReason = offRouteReason
         )
     }
 
@@ -253,6 +279,7 @@ class RouteProgressEngine(
     fun reset() {
         currentManeuverIndex = 0
         offRouteConsecutiveCount = 0
+        sustainedOffSinceMs = null
         lastAlongTrackMeters = null
         lastSampleTimeMs = 0L
     }
@@ -261,5 +288,6 @@ class RouteProgressEngine(
         const val MAX_JUMP_BASE_METERS = 15.0
         const val MAX_PLAUSIBLE_SPEED_MPS = 3.0
         const val PASSED_TOLERANCE_METERS = 3.0
+        const val SUSTAINED_RELEASE_MARGIN_METERS = 5.0
     }
 }

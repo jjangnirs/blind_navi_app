@@ -60,8 +60,15 @@ class GeospatialHeadingProvider(private val context: Context) {
     private var cameraTexture = 0
     @Volatile private var running = false
 
+    private var startAttempts = 0
+
     /** 시작 또는 재개. 이미 실행 중이면 아무것도 하지 않는다. */
     fun start() {
+        startAttempts = 0
+        startInternal()
+    }
+
+    private fun startInternal() {
         if (running) return
         if (context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             _status.value = "VPS 꺼짐: 카메라 권한 없음"
@@ -88,7 +95,14 @@ class GeospatialHeadingProvider(private val context: Context) {
                 h.post(updateLoop)
             } catch (e: Exception) {
                 running = false
-                _status.value = "VPS 꺼짐: ${e.javaClass.simpleName}"
+                // 카메라 화면(ARCore/CameraX)이 아직 카메라를 놓지 않았을 수 있어 1초 간격으로 최대 5회 재시도 (ADR-0041)
+                if (startAttempts < MAX_START_RETRIES && handler === h) {
+                    startAttempts++
+                    _status.value = "VPS 재시도 $startAttempts: ${e.javaClass.simpleName}"
+                    h.postDelayed({ if (handler === h) startInternal() }, START_RETRY_DELAY_MS)
+                } else {
+                    _status.value = "VPS 꺼짐: ${e.javaClass.simpleName}"
+                }
             }
         }
     }
@@ -112,11 +126,15 @@ class GeospatialHeadingProvider(private val context: Context) {
         latch.await(1500, TimeUnit.MILLISECONDS)
     }
 
-    /** 완전 종료 (세션·EGL·스레드 해제) */
+    /** 완전 종료 (세션·EGL·스레드 해제). 다른 ARCore 세션이 곧 열릴 수 있으므로 닫힐 때까지 최대 1.5초 대기 */
     fun release() {
         pauseBlocking()
         val h = handler ?: return
         val t = thread
+        handler = null
+        thread = null
+        h.removeCallbacksAndMessages(null)
+        val latch = CountDownLatch(1)
         h.post {
             try {
                 session?.close()
@@ -125,9 +143,9 @@ class GeospatialHeadingProvider(private val context: Context) {
             session = null
             destroyEgl()
             t?.quitSafely()
+            latch.countDown()
         }
-        handler = null
-        thread = null
+        latch.await(1500, TimeUnit.MILLISECONDS)
     }
 
     private val updateLoop = object : Runnable {
@@ -224,5 +242,7 @@ class GeospatialHeadingProvider(private val context: Context) {
 
     private companion object {
         const val UPDATE_INTERVAL_MS = 100L
+        const val MAX_START_RETRIES = 5
+        const val START_RETRY_DELAY_MS = 1000L
     }
 }

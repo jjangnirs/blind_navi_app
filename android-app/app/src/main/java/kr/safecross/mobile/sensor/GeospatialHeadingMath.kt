@@ -14,6 +14,17 @@ object GeospatialHeadingMath {
         val isTopAxis: Boolean
     )
 
+    /** 카메라 정면(-Z) 방위각과 앙각(수평 0, 위 +) — 카메라 화면 조준용 (ADR-0041) */
+    fun cameraForward(qx: Float, qy: Float, qz: Float, qw: Float): Pair<Double, Double> {
+        val x = qx.toDouble(); val y = qy.toDouble(); val z = qz.toDouble(); val w = qw.toDouble()
+        val east = -2.0 * (x * z + w * y)
+        val up = -2.0 * (y * z - w * x)
+        val south = -(1.0 - 2.0 * (x * x + y * y))
+        val heading = (Math.toDegrees(atan2(east, -south)) + 360.0) % 360.0
+        val pitch = Math.toDegrees(atan2(up, hypot(east, south)))
+        return heading to pitch
+    }
+
     /**
      * 화면 방향 기준(display-oriented) 카메라 GeospatialPose의 East-Up-South 쿼터니언(x, y, z, w)으로
      * 보행 안내에 쓸 방위각을 구한다. 휴대폰 윗변(+Y)과 카메라 정면(-Z) 중 수평 성분이 큰 축을 사용하여
