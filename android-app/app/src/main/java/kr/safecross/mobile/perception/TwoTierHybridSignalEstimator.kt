@@ -30,6 +30,8 @@ class TwoTierHybridSignalEstimator(
 
     // 색 분류 모델의 마지막 검출 (모델이 몇 프레임 놓쳐도 같은 신호등 위치를 유지하기 위함)
     private var lastClassifiedTarget: SignalObservation? = null
+    // ARCore 카메라일 때 마지막 검출 신호등의 월드 시선 방향 (흔들림 추적용, ADR-0041)
+    private var lockWorldDirection: FloatArray? = null
 
     override suspend fun estimate(frame: FrameRef): List<SignalObservation> {
         // [Tier 1] 딥러닝 객체 검출 모델을 통한 보행신호기 위치(Bounding Box) 탐색
@@ -51,16 +53,34 @@ class TwoTierHybridSignalEstimator(
         val selected = selectLockedTarget(validCandidates, frame.timestampNanos)
         if (selected != null && selected.state != ObservedSignalState.UNKNOWN) {
             lastClassifiedTarget = selected
+            lockWorldDirection = frame.arContext?.worldDirection(selected.box.centerX, selected.box.centerY)
         }
 
         // 모델이 이번 프레임에서 신호등을 놓쳤지만 1.5초 이내에 같은 위치에서 검출했었다면,
         // 화면 전체(뷰파인더)로 넓히지 않고 직전 신호등 위치를 계속 분석한다.
         // (실측: 모델 미검출 프레임에 뷰파인더 폴백이 위쪽 차량 적색등을 잡아 보행 녹색 중 '적색' 오판)
         val held = lastClassifiedTarget
+        // ARCore 자세 추적이 있으면 손이 흔들려도 신호등 위치를 정확히 다시 계산할 수 있으므로 더 오래(3초) 유지
+        val reprojected = lockWorldDirection?.let { dir -> frame.arContext?.project(dir) }
+            ?.takeIf { (u, v) -> u in 0f..1f && v in 0f..1f }
+        val holdNanos = if (reprojected != null) AR_LOCK_HOLD_NANOS else LOCK_HOLD_NANOS
         val isHoldingLock = selected == null && held != null &&
-                (frame.timestampNanos - held.frameTimestampNanos) in 0L..LOCK_HOLD_NANOS
+                (frame.timestampNanos - held.frameTimestampNanos) in 0L..holdNanos
         val targetSignal = if (isHoldingLock) {
-            held!!.copy(frameTimestampNanos = frame.timestampNanos)
+            val heldBox = held!!.box
+            val box = if (reprojected != null) {
+                // 직전 박스 크기를 유지한 채 현재 자세로 다시 계산한 위치로 이동 (흔들림 추적)
+                val (u, v) = reprojected
+                NormalizedBox(
+                    left = (u - heldBox.width / 2f).coerceIn(0f, 1f),
+                    top = (v - heldBox.height / 2f).coerceIn(0f, 1f),
+                    right = (u + heldBox.width / 2f).coerceIn(0f, 1f),
+                    bottom = (v + heldBox.height / 2f).coerceIn(0f, 1f)
+                )
+            } else {
+                heldBox
+            }
+            held.copy(box = box, frameTimestampNanos = frame.timestampNanos)
         } else {
             selected
         }
@@ -194,7 +214,7 @@ class TwoTierHybridSignalEstimator(
 
         PerceptionFlightRecorder.record(
             "FUSION",
-            "Model=${model.state}(${"%.2f".format(model.score)})${if (isHoldingLock) "[HOLD]" else ""} Hsv=$colorState(${color?.let { "%.2f".format(it.score) } ?: "-"}) Px=R${evidence?.redPixels ?: "-"}/G${evidence?.greenPixels ?: "-"} -> $state Reason=$reason"
+            "Model=${model.state}(${"%.2f".format(model.score)})${if (isHoldingLock) "[HOLD]" else ""} Box=[${"%.2f".format(model.box.centerX)},${"%.2f".format(model.box.centerY)}] Hsv=$colorState(${color?.let { "%.2f".format(it.score) } ?: "-"}) Px=R${evidence?.redPixels ?: "-"}/G${evidence?.greenPixels ?: "-"} -> $state Reason=$reason"
         )
 
         return SignalObservation(
@@ -276,6 +296,7 @@ class TwoTierHybridSignalEstimator(
         private const val LOCK_TIMEOUT_NANOS = 700_000_000L
         private const val MIN_TRACKING_SIMILARITY = 0.15f
         private const val LOCK_HOLD_NANOS = 1_500_000_000L
+        private const val AR_LOCK_HOLD_NANOS = 3_000_000_000L
 
         // int8 양자화 모델의 클래스 점수는 0.50에서 포화한다(실측 최댓값 0.50). 0.30 이상이면 유의미한 검출.
         private const val MIN_MODEL_ONLY_RED_SCORE = 0.30f

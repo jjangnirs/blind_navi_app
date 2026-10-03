@@ -77,6 +77,8 @@ class NavigationViewModel(
         var completeCount: Int = 0
     )
     private var crossingWatch: CrossingWatch? = null
+    // 카메라 신호 확인 화면이 열려 있는지 (감시 대상 횡단보도를 못 찾았어도 true)
+    private var isCrossingAssistOpen = false
 
     // 마지막으로 setRoute()로 요청된 원본 경로 (화면 재진입 시 재설정 방지용)
     private var lastRequestedRoute: PedestrianRoute? = null
@@ -88,6 +90,10 @@ class NavigationViewModel(
      * 수집되지 않으므로, 카메라 화면 쪽에서 이 흐름을 받아 음성 안내 후 길안내 화면으로 복귀한다.
      */
     val crossingCompleted: kotlinx.coroutines.flow.SharedFlow<String> = _crossingCompleted
+
+    // 카메라 신호 확인 화면용 조준 정보 (건너편 보행신호등 방향·거리, 나침반 보정값) (ADR-0040)
+    private val _crossingAim = MutableStateFlow<kr.safecross.mobile.navigation.crossing.CrossingAim?>(null)
+    val crossingAim: StateFlow<kr.safecross.mobile.navigation.crossing.CrossingAim?> = _crossingAim.asStateFlow()
 
     private var locationJob: Job? = null
     private var poseJob: Job? = null
@@ -129,6 +135,13 @@ class NavigationViewModel(
     private var lastMapHeadingUiTimeMs = 0L
     private var lastPoseTimeMs = 0L
     private var lastTurnHapticMs = 0L
+    // 몸 방향이 크게 어긋난 채 지속된 시작 시각과 마지막 회전 음성 시각 (10/03 현장: 화면에만 표시되고 음성이 없어 1분 넘게 반대로 보행)
+    private var misalignedSinceMs: Long? = null
+    private var lastTurnSpeechMs = 0L
+    // 재탐색으로 경로가 바뀐 뒤 카메라 화면 감시 대상 횡단보도를 새 경로 기준으로 다시 잡아야 함
+    private var pendingCrossingWatchRebind = false
+    // 이번 이탈에 대해 '경로를 벗어났습니다' 안내를 했는지 (재탐색 성공 또는 경로 복귀 시 초기화)
+    private var offRouteAnnounced = false
 
     init {
         serviceStopJob = viewModelScope.launch {
@@ -386,6 +399,31 @@ class NavigationViewModel(
                 currentTimeMs
             )
         }
+
+        // 2-4. 몸 방향이 45° 이상 어긋난 상태가 3초 넘게 이어지면 회전 방향을 음성으로 안내 (10초마다 반복).
+        // 카메라 신호 확인 화면이 열려 있는 동안은 그 화면의 조준 안내가 담당하므로 말하지 않는다.
+        if (kotlin.math.abs(relative) >= TURN_SPEECH_MIN_DEG && !orientationPrompt.isAligned) {
+            val since = misalignedSinceMs ?: currentTimeMs.also { misalignedSinceMs = it }
+            if (!isCrossingAssistOpen &&
+                currentTimeMs - since >= TURN_SPEECH_DELAY_MS &&
+                currentTimeMs - lastTurnSpeechMs >= TURN_SPEECH_REPEAT_MS
+            ) {
+                lastTurnSpeechMs = currentTimeMs
+                val prefix = if (_uiState.value.isOffRoute) "경로에서 벗어나 있습니다. " else ""
+                enqueueGuidance(
+                    GuidanceMessage(
+                        id = "orientation_turn_${currentTimeMs}",
+                        text = prefix + orientationPrompt.message,
+                        priority = GuidancePriority.ROUTE,
+                        category = "orientation_turn",
+                        hapticType = if (relative < 0) HapticFeedbackType.TURN_LEFT else HapticFeedbackType.TURN_RIGHT
+                    ),
+                    currentTimeMs
+                )
+            }
+        } else {
+            misalignedSinceMs = null
+        }
     }
 
     /**
@@ -490,13 +528,18 @@ class NavigationViewModel(
             // 1-0. 현재 위치 기준 전방 경로 지점 방위각 (경로 복귀 방향 포함) 및 지도 표시 위치 산출
             updateGuidanceBearing(progressEngine, progress, sample)
 
-            val wasOffRoute = _uiState.value.isOffRoute
-            if (progress.isOffRoute) {
-                if (!wasOffRoute) {
+            // 카메라 신호 확인 화면이 열려 있으면(횡단보도에서 신호 대기 중) 재탐색을 미루고, 화면이 닫힌 뒤 바로 진행한다
+            // (10/03 현장: 실제 횡단보도에서 90초간 적색 대기 중 경로와 25 m 떨어져 있었음 — 대기 중 경로를 바꾸면 복귀 판정이 꼬임)
+            if (!progress.isOffRoute) offRouteAnnounced = false
+            if (progress.isOffRoute && isCrossingAssistOpen) {
+                // 재탐색 보류
+            } else if (progress.isOffRoute) {
+                if (!offRouteAnnounced) {
+                    offRouteAnnounced = true
                     val cteStr = String.format(Locale.US, "%.1f", progress.crossTrackErrorMeters)
                     NavigationFlightRecorder.recordRerouteTrigger(
                         reason = "OFF_ROUTE",
-                        detail = "CTE=${cteStr}m, cnt=${progress.offRouteConsecutiveCount}, acc=${sample.accuracyMeters}m"
+                        detail = "CTE=${cteStr}m, cnt=${progress.offRouteConsecutiveCount}, rule=${progress.offRouteReason}, acc=${sample.accuracyMeters}m"
                     )
                     viewModelScope.launch {
                         _effects.emit(NavigationEffect.ShowOffRouteAlert("경로를 벗어났습니다. 주변을 확인하세요."))
@@ -515,7 +558,7 @@ class NavigationViewModel(
                 recalculateRouteFromCurrentLocation(sample)
             } else {
                 // 초기 출발 위치와 실제 수신 GPS가 25m 이상 차이나는 경우 최초 1회에 한해 새 출발점 기준 경로로 변환 (보행 시작 후에는 반복 재탐색 차단)
-                if (!hasCalibratedInitialStart) {
+                if (!hasCalibratedInitialStart && !isCrossingAssistOpen) {
                     val currentRoute = _uiState.value.route
                     if (currentRoute != null && _uiState.value.distanceAlongRouteMeters < 5 && _uiState.value.currentManeuverIndex == 0) {
                         val startPoint = currentRoute.fullGeometry.firstOrNull() ?: currentRoute.maneuvers.firstOrNull()?.location
@@ -587,6 +630,7 @@ class NavigationViewModel(
             evaluateCrossingAutoTrigger(progress, sample, currentTimeMs)
 
             // 1-0-2. 카메라 신호 확인 중 횡단보도를 다 건넜으면 길안내 화면으로 복귀
+            if (pendingCrossingWatchRebind) rebindCrossingWatchAfterReroute(currentTimeMs)
             evaluateCrossingCompletion(progress, sample, currentTimeMs)
 
             // 1-1. 방향 분기점 도달/변경 시 즉시 음성 안내 (SR-F-070, 즉시 발화)
@@ -936,6 +980,8 @@ class NavigationViewModel(
 
         isRerouting = true
         lastRerouteTimeMs = now
+        // 지금 걷는 방향(GPS 진행 방위, 없으면 몸 방향)을 출발 방향으로 넘겨 불필요한 되돌아가기 경로를 줄인다
+        val startHeading = ((lastValidGpsBearing ?: _uiState.value.currentHeadingDegrees).toDouble() % 360.0 + 360.0).toInt() % 360
 
         viewModelScope.launch {
             val result = repo.getPedestrianRoute(
@@ -943,7 +989,8 @@ class NavigationViewModel(
                 destination = destPoint,
                 originName = "현재 위치",
                 destinationName = destName,
-                excludeStairs = currentRoute.excludeStairs
+                excludeStairs = currentRoute.excludeStairs,
+                startHeadingDegrees = startHeading
             )
             result.fold(
                 onSuccess = { newRoute ->
@@ -953,6 +1000,11 @@ class NavigationViewModel(
                     hasCalibratedInitialStart = true
                     smoothedGuidanceBearing = null
                     lastAlongTrackMeters = null
+                    // 새 경로의 첫 방향을 곧바로(3초 뒤) 음성으로 안내받을 수 있도록 회전 음성 간격 초기화
+                    lastTurnSpeechMs = 0L
+                    misalignedSinceMs = null
+                    if (isCrossingAssistOpen) pendingCrossingWatchRebind = true
+                    offRouteAnnounced = false
                     _uiState.update {
                         it.copy(
                             route = newRoute,
@@ -1073,6 +1125,7 @@ class NavigationViewModel(
         val policy = crossingAutoTrigger ?: return
         val decision = policy.evaluate(
             userAlongRouteMeters = progress.distanceAlongRouteMeters,
+            crossTrackMeters = progress.crossTrackErrorMeters,
             speedMps = sample.speedMps,
             accuracyMeters = sample.accuracyMeters,
             isOffRoute = progress.isOffRoute,
@@ -1127,15 +1180,40 @@ class NavigationViewModel(
      * 카메라 신호 확인 화면이 열릴 때 호출: 지금 건너려는 횡단보도(전방 40m 이내 ~ 10m 지난 지점)를 감시 대상으로 등록.
      */
     fun onCrossingAssistOpened(currentTimeMs: Long = System.currentTimeMillis()) {
+        isCrossingAssistOpen = true
+        pendingCrossingWatchRebind = false
         val along = lastAlongTrackMeters ?: return
         val span = routeCrosswalkSpans
             .filter { it.startAlong - along in -10.0..40.0 }
             .minByOrNull { kotlin.math.abs(it.startAlong - along) }
         crossingWatch = span?.let { CrossingWatch(it, currentTimeMs, startAlong = along) }
+        _uiState.value.currentLocation?.let { updateCrossingAim(it.lat, it.lon, currentTimeMs) }
         NavigationFlightRecorder.record(
             "CROSSING_RETURN",
             if (span != null) "WATCH #${span.maneuverIndex} start=${span.startAlong.toInt()}m end=${span.endAlong.toInt()}m along=${along.toInt()}m"
             else "NO_CROSSWALK_NEARBY along=${along.toInt()}m"
+        )
+    }
+
+    /**
+     * 카메라 화면이 열린 채 재탐색으로 경로가 바뀌면, 이전 경로 기준 감시 구간(경로상 거리)은 의미가 없으므로
+     * 새 경로에서 현재 위치 전방 40m ~ 10m 지난 횡단보도로 다시 잡는다 (10/03 현장: 이전 경로 구간으로 완료 판정).
+     */
+    private fun rebindCrossingWatchAfterReroute(currentTimeMs: Long) {
+        val along = lastAlongTrackMeters ?: return
+        pendingCrossingWatchRebind = false
+        val old = crossingWatch
+        val span = routeCrosswalkSpans
+            .filter { it.startAlong - along in -10.0..40.0 }
+            .minByOrNull { kotlin.math.abs(it.startAlong - along) }
+        crossingWatch = span?.let {
+            CrossingWatch(it, old?.startedAtMs ?: currentTimeMs, startAlong = along, isGreenConfirmed = old?.isGreenConfirmed == true)
+        }
+        if (crossingWatch == null) _crossingAim.value = null
+        NavigationFlightRecorder.record(
+            "CROSSING_RETURN",
+            if (span != null) "REBIND #${span.maneuverIndex} start=${span.startAlong.toInt()}m end=${span.endAlong.toInt()}m along=${along.toInt()}m"
+            else "REBIND_NONE along=${along.toInt()}m"
         )
     }
 
@@ -1146,7 +1224,37 @@ class NavigationViewModel(
 
     /** 사용자가 카메라 화면을 직접 닫았을 때 호출 */
     fun onCrossingAssistClosed() {
+        isCrossingAssistOpen = false
+        pendingCrossingWatchRebind = false
         crossingWatch = null
+        _crossingAim.value = null
+    }
+
+    /**
+     * 감시 중인 횡단보도의 건너편 끝(보행신호등 쪽)까지 방위각·거리를 갱신한다.
+     * VPS는 카메라 화면에서 멈추므로, 직전에 잰 나침반 보정값(5분·50 m 이내)을 함께 넘긴다.
+     */
+    private fun updateCrossingAim(lat: Double, lon: Double, currentTimeMs: Long) {
+        val watch = crossingWatch
+        val engine = routeProgressEngine
+        val farEnd = if (watch != null && engine != null) engine.pointAtDistance(watch.span.endAlong) else null
+        if (farEnd == null) {
+            _crossingAim.value = null
+            return
+        }
+        val bias = compassBiasDegrees?.takeIf {
+            val from = compassBiasLocation
+            val moved = if (from != null) calculateDistanceMeters(from, LocationPoint(lat, lon)) else 0.0
+            currentTimeMs - compassBiasMeasuredMs <= CROSSING_AIM_BIAS_MAX_AGE_MS && moved <= CROSSING_AIM_BIAS_MAX_DISTANCE_M
+        }
+        _crossingAim.value = kr.safecross.mobile.navigation.crossing.CrossingAim(
+            targetBearingDeg = kr.safecross.mobile.navigation.engine.GeoMath.initialBearingDegrees(lat, lon, farEnd.lat, farEnd.lon),
+            distanceMeters = calculateDistanceMeters(LocationPoint(lat, lon), farEnd),
+            compassBiasDeg = bias,
+            updatedAtMs = currentTimeMs,
+            farEndLat = farEnd.lat,
+            farEndLon = farEnd.lon
+        )
     }
 
     /**
@@ -1163,8 +1271,10 @@ class NavigationViewModel(
         if (currentTimeMs - watch.startedAtMs > CROSSING_WATCH_TIMEOUT_MS) {
             NavigationFlightRecorder.record("CROSSING_RETURN", "TIMEOUT #${watch.span.maneuverIndex}")
             crossingWatch = null
+            _crossingAim.value = null
             return
         }
+        updateCrossingAim(sample.lat, sample.lon, currentTimeMs)
 
         val reachedFarSide = progress.distanceAlongRouteMeters >= watch.span.endAlong - 3.0
         // 감시 시작 위치에서 건너편 끝까지 물리적으로 걸릴 최소 시간이 지나야 완료로 인정
@@ -1185,6 +1295,7 @@ class NavigationViewModel(
                         "green=${watch.isGreenConfirmed} spd=${sample.speedMps ?: -1f} acc=${sample.accuracyMeters}"
             )
             crossingWatch = null
+            _crossingAim.value = null
             _crossingCompleted.tryEmit("횡단보도를 건넜습니다. 길안내로 돌아갑니다.")
         }
     }
@@ -1219,6 +1330,9 @@ class NavigationViewModel(
         private const val VPS_MAX_AGE_MS = 1_500L
         private const val TURN_HAPTIC_MIN_DEG = 30.0
         private const val TURN_HAPTIC_INTERVAL_MS = 3_000L
+        private const val TURN_SPEECH_MIN_DEG = 45.0
+        private const val TURN_SPEECH_DELAY_MS = 3_000L
+        private const val TURN_SPEECH_REPEAT_MS = 10_000L
         private const val MAX_CROSSING_SPEED_MPS = 2.5
         private const val MIN_CROSSING_DURATION_MS = 5_000L
         private const val VPS_MAX_YAW_ACCURACY_DEG = 10.0
@@ -1228,6 +1342,8 @@ class NavigationViewModel(
         private const val MAP_HEADING_TAU_SEC = 0.8
         private const val ARROW_TAU_SEC = 0.3
         private const val DEFAULT_CROSSWALK_LENGTH_METERS = 20.0
+        private const val CROSSING_AIM_BIAS_MAX_AGE_MS = 5 * 60_000L
+        private const val CROSSING_AIM_BIAS_MAX_DISTANCE_M = 50.0
         private const val CROSSING_WATCH_TIMEOUT_MS = 5 * 60_000L
     }
 

@@ -16,7 +16,8 @@ class FakeRouteRepository(
         destination: LocationPoint,
         originName: String,
         destinationName: String,
-        excludeStairs: Boolean
+        excludeStairs: Boolean,
+        startHeadingDegrees: Int?
     ): Result<PedestrianRoute> {
         if (shouldFail) {
             return Result.failure(Exception("네트워크 연결 또는 외부 경로 공급자 장애가 발생했습니다."))

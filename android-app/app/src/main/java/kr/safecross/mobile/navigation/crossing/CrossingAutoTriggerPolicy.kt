@@ -44,7 +44,8 @@ class CrossingAutoTriggerPolicy(
     private val stopSpeedMps: Float = 0.3f,
     private val stopDurationMs: Long = 2_000L,
     private val maxAccuracyMeters: Float = 25.0f,
-    private val passedToleranceMeters: Double = 5.0
+    private val passedToleranceMeters: Double = 5.0,
+    private val maxCrossTrackMeters: Double = 20.0
 ) {
     private val handled = mutableSetOf<Int>()
     private val suggested = mutableSetOf<Int>()
@@ -55,12 +56,15 @@ class CrossingAutoTriggerPolicy(
         speedMps: Float?,
         accuracyMeters: Float,
         isOffRoute: Boolean,
-        nowMs: Long
+        nowMs: Long,
+        // 경로에서 떨어진 거리: 경로 시작점 등에서 투영이 0 m로 붙어 '남은 거리 0 m'로 오판되는 것을 막는다
+        // (10/03 현장: 출발점에서 31 m 떨어진 곳에서 안내 시작 즉시 카메라 화면 전환)
+        crossTrackMeters: Double = 0.0
     ): CrossingAutoTriggerDecision? {
         // 정지 지속 시간 추적 (속도 미제공 시 정지로 보지 않음)
         stoppedSinceMs = if (speedMps != null && speedMps < stopSpeedMps) (stoppedSinceMs ?: nowMs) else null
 
-        if (isOffRoute) return null
+        if (isOffRoute || crossTrackMeters > maxCrossTrackMeters) return null
 
         // 아직 처리하지 않았고 지나치지 않은 가장 가까운 전방 횡단보도
         val next = crosswalks

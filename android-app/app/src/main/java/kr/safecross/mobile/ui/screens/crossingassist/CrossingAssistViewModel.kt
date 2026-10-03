@@ -62,7 +62,9 @@ class CrossingAssistViewModel(
     val enableSignalPolling: Boolean = false,
     // 영상 분석(신호등/횡단보도 추정)을 실행할 디스패처. 실기기에서는 Dispatchers.Default를 주입해
     // 메인(UI) 스레드를 막지 않게 하고, null이면 호출 코루틴에서 그대로 실행한다(단위 테스트용).
-    private val analysisDispatcher: CoroutineDispatcher? = null
+    private val analysisDispatcher: CoroutineDispatcher? = null,
+    // 세로 화면 기준 카메라 세로 화각 (높이 추정용, ADR-0040)
+    private val cameraVerticalFovDegrees: Float = 74f
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CrossingAssistUiState())
@@ -107,6 +109,12 @@ class CrossingAssistViewModel(
     @Volatile
     private var isFrameInFlight = false
 
+    // 건너편 보행신호등 조준 정보 (길안내 쪽에서 GPS로 계산해 전달, ADR-0040)
+    @Volatile
+    private var crossingAim: kr.safecross.mobile.navigation.crossing.CrossingAim? = null
+    private var lastAimInstruction: kr.safecross.mobile.navigation.crossing.AimInstruction? = null
+    private var lastAimSpeechNanos = Long.MIN_VALUE / 2
+
     // 깊이 추정 진단용 스로틀 상태 (매 프레임 실행하지 않음)
     private var lastDepthEstimateAtMs: Long = 0L
     private val depthEstimateIntervalMs: Long = 700L
@@ -133,7 +141,8 @@ class CrossingAssistViewModel(
             poseTracker.tiltGuidance.collect { guidance ->
                 _uiState.value = _uiState.value.copy(tiltGuidance = guidance)
 
-                if (!guidance.isSuitable && isAnalyzing) {
+                // 조준 정보가 있으면 방향·각도를 함께 안내하는 조준 안내가 대신한다 (중복 발화 방지)
+                if (!guidance.isSuitable && isAnalyzing && crossingAim == null) {
                     val now = System.currentTimeMillis()
                     val canSpeak = (now - lastTiltSpeechTimeMs >= tiltSpeechCooldownMs) ||
                             (lastSpokenTiltGuidance != guidance && now - lastTiltSpeechTimeMs >= 3_000L)
@@ -253,12 +262,21 @@ class CrossingAssistViewModel(
                 // 3. 목표 신호 1:1 연결 (Lock-on)
                 val currentPose = poseTracker.currentPose.value
                 val isTiltOk = poseTracker.tiltGuidance.value.isSuitable
-                val association = signalAssociator.associate(
+                val rawAssociation = signalAssociator.associate(
                     crossing = activeCrossingContext,
                     devicePose = currentPose,
                     crosswalk = cwObs,
                     signals = sigObs
                 )
+                // 3-0. 조준 기준: ARCore VPS가 정밀하면 VPS 위치·방향·기울기, 아니면 나침반+보정값·GPS 거리 (ADR-0041)
+                val aimInput = resolveAimInput(frame.arContext, currentPose)
+                // 3-1. 높이 걸러내기: 보행신호등 높이(1.8~4.5 m)에 있을 수 없는 불빛은 UNKNOWN (ADR-0040)
+                val association = applySignalHeightFilter(rawAssociation, currentPose, aimInput)
+                // 3-2. 조준 안내: 건너편 보행신호등 방향·각도로 휴대폰을 맞추도록 음성·진동 안내
+                val aimResult = kr.safecross.mobile.navigation.crossing.CrossingAimCalculator.evaluate(
+                    aimInput.aim, aimInput.headingDeg, aimInput.pitchDeg
+                )
+                recordArShadow(frame.arContext, association, aimInput)
 
                 // 4. 안전 상태기계 판정 (C-ITS 실시간 공식 신호 융합)
                 val decision = decisionEngine.evaluate(
@@ -357,6 +375,8 @@ class CrossingAssistViewModel(
                         debugDiagnosticText = diagText
                     )
                 }
+
+                handleAimGuidance(aimResult, confirmedState, isInsideReticle, frameNanos)
 
                 // 5. 발화 안내: 확정 상태가 바뀔 때만, 화면 문구와 같은 내용으로 1회 발화
                 if (isNewlyConfirmed) {
@@ -474,6 +494,148 @@ class CrossingAssistViewModel(
         const val LOSE_SIGNAL_HOLD_NANOS = 4_000_000_000L
         const val RED_REANNOUNCE_NANOS = 8_000_000_000L
         const val UNKNOWN_REANNOUNCE_NANOS = 10_000_000_000L
+        const val AIM_MIN_GAP_NANOS = 1_500_000_000L
+        const val AIM_REPEAT_NANOS = 4_000_000_000L
+    }
+
+    /** 길안내 화면에서 계산한 건너편 보행신호등 조준 정보 갱신 (null이면 조준 안내·높이 걸러내기 비활성) */
+    fun updateAim(aim: kr.safecross.mobile.navigation.crossing.CrossingAim?) {
+        crossingAim = aim
+        if (aim == null) {
+            lastAimInstruction = null
+            _uiState.update { it.copy(aimHint = null) }
+        }
+    }
+
+    /**
+     * 검출된 신호 불빛의 실제 높이를 추정해 보행신호등 높이 범위 밖이면 UNKNOWN으로 낮춘다.
+     * 차량 미등·브레이크등(약 1 m)과 도로 위 차량 신호등(5 m 이상)을 거른다.
+     * 조준 정보(건너편까지 거리)가 있고 거리 5~60 m, 휴대폰 기울기가 적정할 때만 적용한다.
+     */
+    /** 조준 계산 입력 (출처: VPS 또는 나침반) */
+    private data class AimInput(
+        val aim: kr.safecross.mobile.navigation.crossing.CrossingAim?,
+        val headingDeg: Float?,
+        val pitchDeg: Float,
+        val source: String
+    )
+
+    /**
+     * ARCore VPS 자세가 정밀(방향 오차 ≤10°, 위치 오차 ≤10 m)하면 VPS 위치에서 건너편 끝까지 방위각·거리를
+     * 다시 계산하고 VPS 카메라 방향·기울기를 쓴다. 아니면 나침반(+보정값)·GPS 거리를 쓴다.
+     */
+    private fun resolveAimInput(
+        ar: kr.safecross.mobile.camera.ArFrameContext?,
+        pose: kr.safecross.mobile.perception.DevicePose
+    ): AimInput {
+        val aim = crossingAim
+        val geo = ar?.geo?.takeIf { it.isPrecise }
+        if (aim != null && geo != null && !aim.farEndLat.isNaN() && !aim.farEndLon.isNaN()) {
+            val math = kr.safecross.mobile.navigation.engine.GeoMath
+            val vpsAim = aim.copy(
+                targetBearingDeg = math.initialBearingDegrees(geo.latitude, geo.longitude, aim.farEndLat, aim.farEndLon),
+                distanceMeters = math.distanceMeters(geo.latitude, geo.longitude, aim.farEndLat, aim.farEndLon),
+                compassBiasDeg = null
+            )
+            return AimInput(vpsAim, geo.headingDeg.toFloat(), geo.pitchDeg.toFloat(), "VPS")
+        }
+        return AimInput(aim, pose.cameraHeadingDegrees, pose.pitchDegrees, if (aim?.compassBiasDeg != null) "COMPASS+BIAS" else "COMPASS")
+    }
+
+    /**
+     * ARCore 깊이·장면 라벨 섀도 기록 (판정에는 쓰지 않음, ADR-0041): 원거리 소형 신호등은 뒤 건물 라벨로
+     * 잡히기 쉬워 바로 판정에 쓰면 진짜 신호를 버릴 위험이 있으므로 현장 데이터를 먼저 모은다.
+     */
+    private fun recordArShadow(
+        ar: kr.safecross.mobile.camera.ArFrameContext?,
+        association: kr.safecross.mobile.perception.TargetSignalAssociation,
+        aimInput: AimInput
+    ) {
+        if (ar == null) return
+        val target = association.targetSignal?.takeIf { it.state != ObservedSignalState.UNKNOWN }
+        val geoText = ar.geo?.let { "vpsH=${"%.1f".format(it.horizontalAccuracyM)} vpsYaw=${"%.1f".format(it.yawAccuracyDeg)}" } ?: "vps=none"
+        if (target == null) {
+            PerceptionFlightRecorder.record("AR", "$geoText aim=${aimInput.source}")
+            return
+        }
+        val b = target.box
+        val depth = ar.depthMetersAt(b.centerX, b.centerY)
+        val semantic = ar.semanticHistogram(b.left, b.top, b.right, b.bottom)
+            .entries.sortedByDescending { it.value }.take(2)
+            .joinToString("/") { (label, frac) ->
+                "${kr.safecross.mobile.camera.ArFrameContext.SEMANTIC_LABEL_NAMES.getOrElse(label) { "L$label" }}${(frac * 100).toInt()}%"
+            }
+        PerceptionFlightRecorder.record(
+            "AR",
+            "sig=${target.state} box=[${"%.2f".format(b.centerX)},${"%.2f".format(b.centerY)}] depth=${depth?.let { "%.1f".format(it) } ?: "-"}m " +
+                    "sem=${semantic.ifEmpty { "-" }} $geoText aim=${aimInput.source} dist=${aimInput.aim?.distanceMeters?.let { "%.0f".format(it) } ?: "-"}"
+        )
+    }
+
+    private fun applySignalHeightFilter(
+        association: kr.safecross.mobile.perception.TargetSignalAssociation,
+        pose: kr.safecross.mobile.perception.DevicePose,
+        aimInput: AimInput
+    ): kr.safecross.mobile.perception.TargetSignalAssociation {
+        val aim = aimInput.aim ?: return association
+        val target = association.targetSignal ?: return association
+        if (target.state == ObservedSignalState.UNKNOWN) return association
+        if (aim.distanceMeters !in 5.0..60.0 || kotlin.math.abs(pose.rollDegrees) > 35f) return association
+
+        val calc = kr.safecross.mobile.navigation.crossing.CrossingAimCalculator
+        val elevation = calc.detectionElevationDeg(target.box.centerY, aimInput.pitchDeg, cameraVerticalFovDegrees)
+        if (calc.isPlausibleSignalElevation(elevation, aim.distanceMeters)) return association
+
+        val height = calc.estimatedHeightMeters(elevation, aim.distanceMeters)
+        PerceptionFlightRecorder.record(
+            "AIM",
+            "HEIGHT_REJECT state=${target.state} elev=${"%.1f".format(elevation)} est=${"%.1f".format(height)}m dist=${"%.0f".format(aim.distanceMeters)}m pitch=${"%.0f".format(aimInput.pitchDeg)} src=${aimInput.source}"
+        )
+        return association.copy(targetSignal = target.copy(state = ObservedSignalState.UNKNOWN, score = 0.25f))
+    }
+
+    /**
+     * 조준 안내: 신호를 아직 확정하지 못했고 조준선 밖일 때, 지시가 바뀌면 바로(최소 1.5초 간격),
+     * 같은 지시가 이어지면 4초마다 음성 + 진동(왼쪽 짧게 / 오른쪽 길게 / 각도 주의). 맞으면 확인 진동 1회.
+     */
+    private suspend fun handleAimGuidance(
+        aim: kr.safecross.mobile.navigation.crossing.AimResult,
+        confirmedState: CrossingAssistDecisionState,
+        isInsideReticle: Boolean,
+        frameNanos: Long
+    ) {
+        val instruction = aim.instruction
+        if (instruction == kr.safecross.mobile.navigation.crossing.AimInstruction.UNKNOWN) return
+        val signalFound = confirmedState == CrossingAssistDecisionState.RED_ESTIMATE ||
+                confirmedState == CrossingAssistDecisionState.GREEN_ESTIMATE || isInsideReticle
+
+        _uiState.update { it.copy(aimHint = if (signalFound) null else aim.message) }
+        if (signalFound) {
+            lastAimInstruction = instruction
+            return
+        }
+
+        val changed = instruction != lastAimInstruction
+        val elapsed = frameNanos - lastAimSpeechNanos
+        val isAligned = instruction == kr.safecross.mobile.navigation.crossing.AimInstruction.ALIGNED
+        val shouldSpeak = if (isAligned) changed && elapsed >= AIM_MIN_GAP_NANOS
+        else (changed && elapsed >= AIM_MIN_GAP_NANOS) || elapsed >= AIM_REPEAT_NANOS
+        lastAimInstruction = instruction
+        if (!shouldSpeak) return
+
+        lastAimSpeechNanos = frameNanos
+        val haptic = when (instruction) {
+            kr.safecross.mobile.navigation.crossing.AimInstruction.TURN_LEFT -> HapticFeedbackType.TURN_LEFT
+            kr.safecross.mobile.navigation.crossing.AimInstruction.TURN_RIGHT -> HapticFeedbackType.TURN_RIGHT
+            kr.safecross.mobile.navigation.crossing.AimInstruction.ALIGNED -> HapticFeedbackType.ORIENTATION_ALIGNED
+            else -> HapticFeedbackType.UNKNOWN_CAUTION
+        }
+        PerceptionFlightRecorder.record(
+            "AIM",
+            "$instruction h=${aim.horizontalErrorDeg?.let { "%.0f".format(it) }} v=${aim.verticalErrorDeg?.let { "%.0f".format(it) }} " +
+                    "dist=${crossingAim?.distanceMeters?.let { "%.0f".format(it) }} bias=${crossingAim?.compassBiasDeg?.let { "%.0f".format(it) } ?: "-"}"
+        )
+        _effects.emit(CrossingAssistEffect.SpeakGuidance(text = aim.message, hapticType = haptic, queueFlush = false))
     }
 
     private suspend fun <T> runAnalysis(block: suspend () -> T): T {

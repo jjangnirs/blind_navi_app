@@ -57,7 +57,8 @@ class TmapRouteRepository(
         destination: LocationPoint,
         originName: String,
         destinationName: String,
-        excludeStairs: Boolean
+        excludeStairs: Boolean,
+        startHeadingDegrees: Int?
     ): Result<PedestrianRoute> = withContext(Dispatchers.IO) {
         // 1차: 실시간 백엔드 프록시 호출 시도 (외부 공인 터널 연동)
         if (backendUrl.isNotBlank()) {
@@ -71,7 +72,7 @@ class TmapRouteRepository(
 
         // 2차: TMAP 클라우드 직접 호출
         try {
-            val route = fetchFromTmapApi(origin, destination, originName, destinationName, excludeStairs)
+            val route = fetchFromTmapApi(origin, destination, originName, destinationName, excludeStairs, startHeadingDegrees)
             Result.success(route)
         } catch (e: Exception) {
             // 3차: 전체 네트워크 오프라인 시 GPS 기반 보행 Fallback 경로 안전 제공
@@ -203,7 +204,8 @@ class TmapRouteRepository(
         destination: LocationPoint,
         originName: String,
         destinationName: String,
-        excludeStairs: Boolean
+        excludeStairs: Boolean,
+        startHeadingDegrees: Int? = null
     ): PedestrianRoute {
         val url = URL(baseUrl)
         val conn = url.openConnection() as HttpURLConnection
@@ -226,6 +228,8 @@ class TmapRouteRepository(
             put("reqCoordType", "WGS84GEO")
             put("resCoordType", "WGS84GEO")
             put("searchOption", if (excludeStairs) "30" else "0")
+            // 출발 방향(진행 방위각): 재탐색 시 지금 걷는 방향을 우선하는 경로
+            if (startHeadingDegrees != null) put("angle", startHeadingDegrees.coerceIn(0, 359))
         }
 
         OutputStreamWriter(conn.outputStream, "UTF-8").use { writer ->

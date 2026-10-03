@@ -58,6 +58,9 @@ class ProductionDevicePoseTracker(
     private var smoothedHeadingSin = 0.0
     private var hasInitializedHeading = false
     private var lastPoseEmitTimeMs = 0L
+    private var camHeadingCos = 1.0
+    private var camHeadingSin = 0.0
+    private var hasInitializedCameraHeading = false
     private val headingAlpha = 0.25 // 원형 저주파 통과 필터(EMA) 가중치 (손떨림 및 보행 진자 흡수)
 
     override fun startTracking() {
@@ -81,6 +84,7 @@ class ProductionDevicePoseTracker(
             sensorManager.unregisterListener(this)
             isTracking = false
             hasInitializedHeading = false
+            hasInitializedCameraHeading = false
         }
     }
 
@@ -111,6 +115,25 @@ class ProductionDevicePoseTracker(
                         smoothedHeading = ((Math.toDegrees(smoothedRad) + 360.0) % 360.0).toFloat()
                     }
 
+                    // 후면 카메라 시선 방위각 (ADR-0040): 월드 좌표계(동, 북, 위)에서 카메라 시선 = -R의 세 번째 열
+                    // 세워 든 자세에서는 getOrientation 방위각(윗변 기준)이 불안정하므로 별도로 계산한다.
+                    val camEast = -rotationMatrix[2].toDouble()
+                    val camNorth = -rotationMatrix[5].toDouble()
+                    val cameraHeading = if (kotlin.math.hypot(camEast, camNorth) > 0.2) {
+                        val rad = kotlin.math.atan2(camEast, camNorth)
+                        if (!hasInitializedCameraHeading) {
+                            camHeadingCos = kotlin.math.cos(rad)
+                            camHeadingSin = kotlin.math.sin(rad)
+                            hasInitializedCameraHeading = true
+                        } else {
+                            camHeadingCos = (1.0 - headingAlpha) * camHeadingCos + headingAlpha * kotlin.math.cos(rad)
+                            camHeadingSin = (1.0 - headingAlpha) * camHeadingSin + headingAlpha * kotlin.math.sin(rad)
+                        }
+                        ((Math.toDegrees(kotlin.math.atan2(camHeadingSin, camHeadingCos)) + 360.0) % 360.0).toFloat()
+                    } else {
+                        null // 카메라가 거의 수직으로 위/아래를 볼 때는 방위각이 정의되지 않음
+                    }
+
                     // 후면 카메라 시선 벡터 (기기 좌표계 (0, 0, -1)^T)의 월드 좌표계 z성분 (-R[8]):
                     // 카메라가 지평선을 바라보면 vz = 0, 하늘은 vz > 0, 바닥은 vz < 0.
                     val vz = -rotationMatrix[8].toDouble().coerceIn(-1.0, 1.0)
@@ -127,7 +150,12 @@ class ProductionDevicePoseTracker(
 
                     if (nowMs - lastPoseEmitTimeMs >= 80L || deltaHeading >= 12.0) {
                         lastPoseEmitTimeMs = nowMs
-                        val pose = DevicePose(pitchDegrees = pitch, rollDegrees = roll, headingDegrees = smoothedHeading)
+                        val pose = DevicePose(
+                            pitchDegrees = pitch,
+                            rollDegrees = roll,
+                            headingDegrees = smoothedHeading,
+                            cameraHeadingDegrees = cameraHeading
+                        )
                         _currentPose.value = pose
                         _tiltGuidance.value = evaluateGuidance(pitch, roll, _tiltGuidance.value)
                     }
@@ -143,8 +171,7 @@ class ProductionDevicePoseTracker(
                 val pitch = Math.toDegrees(atan2(-az.toDouble(), sqrt((ax * ax + ay * ay).toDouble()))).toFloat()
                 val roll = Math.toDegrees(atan2(ax.toDouble(), ay.toDouble())).toFloat()
 
-                val currentHeading = _currentPose.value.headingDegrees
-                val pose = DevicePose(pitchDegrees = pitch, rollDegrees = roll, headingDegrees = currentHeading)
+                val pose = _currentPose.value.copy(pitchDegrees = pitch, rollDegrees = roll)
                 _currentPose.value = pose
                 _tiltGuidance.value = evaluateGuidance(pitch, roll, _tiltGuidance.value)
             }
@@ -206,6 +233,12 @@ class FakeDevicePoseTracker(
 
     override fun stopTracking() {
         isTracking = false
+    }
+
+    /** 카메라 정면 방위각까지 지정 (조준 안내 테스트용) */
+    fun setPoseWithCameraHeading(pitch: Float, cameraHeading: Float, roll: Float = 0f, heading: Float = 0f) {
+        _currentPose.value = DevicePose(pitch, roll, heading, cameraHeadingDegrees = cameraHeading)
+        _tiltGuidance.value = ProductionDevicePoseTracker.evaluateGuidance(pitch, roll, _tiltGuidance.value)
     }
 
     fun setPose(pitch: Float, roll: Float, heading: Float = 0f) {

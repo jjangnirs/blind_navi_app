@@ -74,7 +74,9 @@ data class DevicePose(
     val pitchDegrees: Float,   // 상하 각도 (-90° 수직 하향 ~ +90° 수직 상향)
     val rollDegrees: Float,    // 좌우 회전 (-180° ~ +180°)
     val headingDegrees: Float, // 나침반 방위각 (0° ~ 360°)
-    val timestampNanos: Long = 0L // 단조 시각 타임스탬프 (0L이면 레거시/미제공 호환)
+    val timestampNanos: Long = 0L, // 단조 시각 타임스탬프 (0L이면 레거시/미제공 호환)
+    // 후면 카메라가 바라보는 방향의 방위각 (휴대폰을 세워 들었을 때 유효, ADR-0040). 미제공 시 null
+    val cameraHeadingDegrees: Float? = null
 )
 
 /**

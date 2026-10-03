@@ -15,7 +15,9 @@ class FrameRef internal constructor(
     val rotationDegrees: Int,
     val timestampNanos: Long,
     val sensorTimestampNanos: Long,
-    val rgbaBuffer: java.nio.ByteBuffer? = null
+    val rgbaBuffer: java.nio.ByteBuffer? = null,
+    // ARCore 카메라일 때의 공간 정보 (자세·VPS·깊이·장면 라벨, ADR-0041). CameraX면 null
+    val arContext: ArFrameContext? = null
 ) {
     override fun toString(): String {
         return "FrameRef(dim=${width}x${height}, rot=${rotationDegrees}, tsNanos=${timestampNanos})"
@@ -50,9 +52,10 @@ class FrameRef internal constructor(
             rotationDegrees: Int = 0,
             timestampNanos: Long = System.nanoTime(),
             sensorTimestampNanos: Long = System.nanoTime(),
-            rgbaBuffer: java.nio.ByteBuffer? = null
+            rgbaBuffer: java.nio.ByteBuffer? = null,
+            arContext: ArFrameContext? = null
         ): FrameRef {
-            return FrameRef(width, height, rotationDegrees, timestampNanos, sensorTimestampNanos, rgbaBuffer)
+            return FrameRef(width, height, rotationDegrees, timestampNanos, sensorTimestampNanos, rgbaBuffer, arContext)
         }
     }
 }
