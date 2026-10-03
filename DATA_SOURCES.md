@@ -471,3 +471,5 @@ pilot.to_parquet("data/staging/gwangju-crossings.parquet", index=False)
 - 전송 데이터: 위치 확인 시 카메라 영상 특징이 Google 서버로 전송됨 (ADR-002 충돌, 설정 토글로 운영)
 - 광주 현장 확인(2026-10-02): VPS 지원됨, 위치 오차 0.6~0.9 m, 방향 오차 2.3~2.8° (시험 앱 `vpsprobe`, 정지·야간 측정)
 - 의존성: `com.google.ar:core:1.56.0`, `com.google.android.gms:play-services-location:21.3.0`
+- 횡단보도 신호 조준 연동 (ADR-0040, ADR-0041): 횡단보도 맞은편 보행신호등 방향·거리 조준 및 자세(쿼터니언) 기반 손떨림 추적에 사용 (10/03 현장 5회 횡단 중 조준 계산의 90%를 VPS로 성공 수행).
+- ARCore 깊이 및 장면 라벨(Scene Semantics): 판정에는 사용하지 않으며, 연구/디버깅 목적의 섀도 기록(`[VISION]`)으로만 남김 (원거리 소형 신호등 위치가 "건물·나무"로 분류되는 한계 확인).

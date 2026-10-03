@@ -490,6 +490,22 @@ flowchart TD
 - E31-S3 `TURN_LEFT`(80 ms)/`TURN_RIGHT`(600 ms) 진동
 - E31-S4 260개 단위 테스트 통과, `app-debug-1003-v42.apk` (현장 재검증 필요)
 
+### Epic E32 — 지속 이탈 신속 재탐색, 보행 방향 전달 및 몸 회전 음성 안내 (ADR-040)
+
+- E32-S1 `RouteProgressEngine` 20 m 10초 지속 이탈(`SUSTAINED`) 신속 재탐색, 12 m 평행보도 무시
+- E32-S2 재탐색 시 `startHeadingDegrees` TMAP 전달 및 3초 뒤 첫 방향 안내
+- E32-S3 `NavigationViewModel` 몸 방향 45° 어긋남 3초/10초 반복 음성 안내 및 좌/우 진동
+- E32-S4 `CrossingAutoTriggerPolicy` 출발지 20 m 이탈 시 횡단보도 전환 차단, 신호 대기 중 재탐색 유예 및 감시 재바인딩
+- E32-S5 `OffRouteRerouteTest`(6건) 단위 테스트 통과 및 `app-debug-1003-v44.apk` 배포
+
+### Epic E33 — 보행신호등 조준 가이드, 높이 필터 및 ARCore 카메라 파이프라인 (ADR-040, ADR-041)
+
+- E33-S1 `CrossingAimCalculator` 건너편 신호등 조준 안내(좌/우/세우기) 및 VPS 나침반 보정값 적용
+- E33-S2 앙각·화각 기반 1.8~4.5 m 보행신호등 높이 필터 (차량 미등 1.0 m, 도로 신호등 6.0~7.4 m 기각)
+- E33-S3 `ArCoreCameraPipeManager` OpenGL 배경 렌더러, `YUV_420_888` → `RGBA_8888` 변환, CameraX 폴백
+- E33-S4 `ArFrameContext` 쿼터니언 회전 기반 손떨림 추적 및 VPS 횡단 조준
+- E33-S5 `CrossingAimTest`(5건), `ArCameraContextTest`(5건) 단위 테스트 통과 및 `app-debug-1003-v45.apk` 배포
+
 ## 10. 일일 개발 루틴
 
 신입 개발자는 매 작업일 다음 순서를 반복한다.

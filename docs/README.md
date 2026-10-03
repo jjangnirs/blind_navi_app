@@ -161,6 +161,14 @@ MVP에 포함한다.
     - 화살표 아래 동작·문구·거리를 아직 도달하지 않은 다음 분기점 기준으로 표시
 46. 좌/우 방향 진동 (`HapticFeedbackType.TURN_LEFT/TURN_RIGHT`, ADR-039):
     - 왼쪽 = 짧은 진동(80 ms), 오른쪽 = 긴 진동(600 ms), 몸 방향 30° 이상 어긋나면 3초마다
+47. 지속 이탈 신속 재탐색, 보행 방향 전달 및 몸 회전 음성 안내 (`RouteProgressEngine`, `NavigationViewModel`, ADR-040):
+    - GPS 정확도 양호 시 20m 이상 10초 지속 이탈 시 신속 재탐색, 평행 보도(12m) 무시
+    - 재탐색 시 현재 보행 방향(GPS 진행방위/몸방향)을 TMAP에 전달하여 U턴 경로 방지, 3초 뒤 첫 방향 안내
+    - 몸 방향 45° 이상 어긋남 시 3초 후 "왼쪽/오른쪽으로 N도 몸을 돌려 X시 방향을 향하세요" 음성 발화 및 10초 반복
+    - 출발지에서 20m 초과 이탈 시 횡단보도 카메라 화면 자동 전환 차단, 신호 대기 중 재탐색 유예
+48. 보행신호등 조준 안내, 높이 필터 및 ARCore 카메라 파이프라인 (`CrossingAimCalculator`, `TwoTierHybridSignalEstimator`, `ArCoreCameraPipeManager`, ADR-040, ADR-041):
+    - 건너편 신호등 조준 가이드(좌/우 회전, 휴대폰 세우기 음성), 앙각/화각 기반 1.8~4.5m 외 불빛(차량 신호등 6.0~7.4m) 기각
+    - ARCore OpenGL 배경 렌더러와 YUV→RGBA 실시간 변환, 쿼터니언 회전 기반 손떨림 추적 안정화, CameraX 무중단 폴백
 
 MVP에서 제외한다.
 
