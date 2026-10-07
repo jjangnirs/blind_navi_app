@@ -52,11 +52,13 @@ fun RealRouteMapView(
     tmapAppKey: String = BuildConfig.TMAP_APP_KEY,
     modifier: Modifier = Modifier
 ) {
-    // HTML은 최초 경로로 한 번만 만든다. 재탐색으로 경로가 바뀌면 페이지를 다시 로드하지 않고
+    // HTML은 최초 경로로 한 번만 만든다. 재탐색으로 경로(및 출발·도착 이름)가 바뀌면 페이지를 다시 로드하지 않고
     // replaceRoute()로 경로 레이어만 교체해 지도 시점(위치·줌·회전)이 튀지 않게 한다.
-    val routeDataJs = remember(route) { buildRouteDataJs(route) }
+    val routeDataJs = remember(route, originName, destinationName) {
+        buildRouteDataJs(route, originName, destinationName)
+    }
     val latestRouteDataJs = rememberUpdatedState(routeDataJs)
-    val htmlContent = remember(originName, destinationName) {
+    val htmlContent = remember {
         buildRouteMapHtml(
             route = route,
             originName = originName,
@@ -227,9 +229,9 @@ private const val ROUTE_TAG_KEY = 0x5AFEC055
 private fun routeCoords(route: PedestrianRoute): List<LocationPoint> =
     if (route.fullGeometry.isNotEmpty()) route.fullGeometry else route.maneuvers.map { it.location }
 
-/** replaceRoute(coords, crosswalks) 호출 인자 문자열 */
-private fun buildRouteDataJs(route: PedestrianRoute): String =
-    "${buildCoordsJson(route)}, ${buildCrosswalksJson(route)}"
+/** replaceRoute(coords, crosswalks, origin, dest) 호출 인자 문자열 */
+private fun buildRouteDataJs(route: PedestrianRoute, originName: String, destinationName: String): String =
+    "${buildCoordsJson(route)}, ${buildCrosswalksJson(route)}, ${JSONObject.quote(originName)}, ${JSONObject.quote(destinationName)}"
 
 /** 경로 좌표 목록을 JSON 배열로 변환 [[lat, lon], [lat, lon], ...] */
 private fun buildCoordsJson(route: PedestrianRoute): JSONArray {
@@ -757,9 +759,11 @@ private fun buildRouteMapHtmlDocument(
         }
 
         // 네이티브에서 재탐색된 경로를 전달받아 페이지 재로드 없이 교체 (지도 깜빡임/시점 초기화 방지)
-        function replaceRoute(newCoords, newCrosswalks) {
+        function replaceRoute(newCoords, newCrosswalks, newOrigin, newDest) {
             coords = newCoords;
             crosswalks = newCrosswalks;
+            if (typeof newOrigin === 'string') originText = newOrigin;
+            if (typeof newDest === 'string') destText = newDest;
             drawRouteLayers();
         }
 
