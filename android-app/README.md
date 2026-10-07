@@ -299,6 +299,10 @@ cd android-app
 - **높이 필터**: 카메라 화각·피치 기반 앙각 계산으로 1.8~4.5 m 외 불빛(차량 미등 1.0 m, 도로 위 차량 신호등 6.0~7.4 m) 기각
 - **ARCore 카메라 파이프라인**: OpenGL 배경 렌더러, `YUV_420_888` → `RGBA_8888` 실시간 변환, 쿼터니언 회전 기반 손떨림 추적, CameraX 무중단 폴백
 
+### 45. 재탐색 경로의 지도 안내선 반영 및 지도 재로드 방지 (`NavigationScreen`, `RealRouteMapView`, ADR-042)
+- **안내선 동기화**: 지도 카드와 "경로 진행 (n/N단계)"가 최초 경로 대신 현재 안내 경로(`uiState.route ?: route`)를 사용
+- **재로드 방지**: HTML은 최초 한 번만 생성하고, 경로·횡단보도·출발/도착 이름은 `replaceRoute(coords, crosswalks, origin, dest)`로 교체하여 지도 중심·줌·회전 유지
+
 ## TalkBack 수동 시험 절차
 1. **TalkBack 활성화**: Android 기기 설정 -> 접근성 -> TalkBack 켜기 (또는 볼륨 업+다운 키 3초 길게 누르기).
 2. **목적지 검색 시험**:

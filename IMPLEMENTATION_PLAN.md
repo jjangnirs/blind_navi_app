@@ -506,6 +506,12 @@ flowchart TD
 - E33-S4 `ArFrameContext` 쿼터니언 회전 기반 손떨림 추적 및 VPS 횡단 조준
 - E33-S5 `CrossingAimTest`(5건), `ArCameraContextTest`(5건) 단위 테스트 통과 및 `app-debug-1003-v45.apk` 배포
 
+### Epic E34 — 재탐색 경로의 지도 안내선 반영 및 지도 재로드 방지 (ADR-042)
+
+- E34-S1 `NavigationScreen` 지도 카드·단계 수에 `uiState.route ?: route` 사용
+- E34-S2 `RealRouteMapView` HTML 1회 생성, 출발/도착 이름을 `replaceRoute()`로 전달하여 WebView 재로드 제거
+- E34-S3 `assembleDebug` 통과 및 `app-debug-1008-v46.apk` 배포
+
 ## 10. 일일 개발 루틴
 
 신입 개발자는 매 작업일 다음 순서를 반복한다.

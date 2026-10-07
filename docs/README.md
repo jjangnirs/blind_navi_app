@@ -169,6 +169,9 @@ MVP에 포함한다.
 48. 보행신호등 조준 안내, 높이 필터 및 ARCore 카메라 파이프라인 (`CrossingAimCalculator`, `TwoTierHybridSignalEstimator`, `ArCoreCameraPipeManager`, ADR-040, ADR-041):
     - 건너편 신호등 조준 가이드(좌/우 회전, 휴대폰 세우기 음성), 앙각/화각 기반 1.8~4.5m 외 불빛(차량 신호등 6.0~7.4m) 기각
     - ARCore OpenGL 배경 렌더러와 YUV→RGBA 실시간 변환, 쿼터니언 회전 기반 손떨림 추적 안정화, CameraX 무중단 폴백
+49. 재탐색 경로의 지도 안내선 반영 및 지도 재로드 방지 (`NavigationScreen`, `RealRouteMapView`, ADR-042):
+    - 재탐색되면 지도 안내선과 단계 수를 현재 안내 경로(`uiState.route`)로 즉시 교체
+    - 페이지 재로드 없이 `replaceRoute()`로 경로 레이어만 교체하여 지도 중심·줌·회전 유지 (튐·회전 방지)
 
 MVP에서 제외한다.
 
