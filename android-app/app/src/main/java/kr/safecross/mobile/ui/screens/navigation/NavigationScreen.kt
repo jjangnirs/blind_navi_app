@@ -243,9 +243,11 @@ fun NavigationScreen(
             // 3-2. 맞게 가고 있는지 실시간으로 확인하는 정밀 세부 지도 카드 (진행방향 위로 연동)
             // 지도 회전은 나침반 흔들림을 강하게 평활화한 전용 헤딩을, 위치는 경로선에 맞춘 위치를 사용
             val currentHeading = uiState.mapHeadingDegrees
+            // 재탐색되면 ViewModel의 경로가 실제 안내 경로다. 최초 경로(route 인자)를 그리면 안내선이 어긋난다.
+            val activeRoute = uiState.route ?: route
 
             DetailedNavigationMapCard(
-                route = route,
+                route = activeRoute,
                 currentLocation = uiState.mapLocation ?: uiState.currentLocation,
                 currentManeuverIndex = uiState.currentManeuverIndex,
                 isOffRoute = uiState.isOffRoute,
@@ -262,13 +264,13 @@ fun NavigationScreen(
                     .border(2.dp, HighContrastYellow, RoundedCornerShape(16.dp))
                     .padding(16.dp)
                     .semantics(mergeDescendants = true) {
-                        contentDescription = "보행 상세. 현재 ${uiState.currentManeuverIndex + 1}단계 중 전체 ${route.maneuvers.size}단계. ${uiState.walkingMode.safetyGuidance}"
+                        contentDescription = "보행 상세. 현재 ${uiState.currentManeuverIndex + 1}단계 중 전체 ${activeRoute.maneuvers.size}단계. ${uiState.walkingMode.safetyGuidance}"
                     },
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "경로 진행 (${uiState.currentManeuverIndex + 1}/${route.maneuvers.size}단계)",
+                    text = "경로 진행 (${uiState.currentManeuverIndex + 1}/${activeRoute.maneuvers.size}단계)",
                     style = MaterialTheme.typography.titleMedium,
                     color = HighContrastYellow
                 )

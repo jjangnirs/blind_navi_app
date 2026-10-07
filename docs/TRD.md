@@ -223,6 +223,7 @@ fun isLocationUsable(location: LocationSample): Boolean =
   - 지도 회전은 나침반 원값이 아닌 전용 평활화 헤딩 `mapHeadingDegrees`(시간상수 0.8초, 5° 이상 변화 시 최대 0.3초당 1회)를 사용하고, JS 불감대 6°, CSS 회전 전환 0.8초를 적용한다 (현장 나침반 1초 변화량 p90 13°, p95 23°).
   - 경로 위(이탈 거리 ≤ 15m)에서는 내 위치를 경로선에 맞춘 `mapLocation`으로 표시한다(map-matching).
   - 지도 이동은 4m 이상 변화 시 0.9초 애니메이션으로만 수행한다.
+- **재탐색 경로의 지도 안내선 반영 (ADR-0042):** 지도 카드는 `uiState.route ?: route`(현재 안내 경로)를 그린다. `RealRouteMapView`의 HTML은 최초 한 번만 만들고, 재탐색 시 `replaceRoute(coords, crosswalks, origin, dest)`로 경로 레이어만 교체하여 지도 중심·줌·회전을 유지한다.
 - **경로상 위치 점프 억제 (ADR-0039):** 선분 투영 후보 점수 = 수직 거리 + max(0, |경로상 위치 변화| − (15 m + 3 m/s × 경과 시간)). 지그재그 경로에서 뒤쪽 구간이 옆을 지날 때 경로상 위치가 수십 m 건너뛰던 문제(10/02 현장 91 m → 124 m)를 막는다. 이탈 판정은 기존대로 최단 수직 거리를 쓴다.
 - **지속 이탈 신속 재탐색 (ADR-0040):** GPS 정확도 양호 시 20 m 이상(오차 클 경우 오차의 2배 이상) 벗어난 상태가 10초 지속되면 이탈 확정 및 재탐색. 평행 보도(12 m)는 정상 보행으로 간주. 재탐색 시 현재 보행 진행방향(`startHeadingDegrees`)을 TMAP에 넘겨 U턴 경로를 방지. 카메라 화면이 열려 있는 동안은 재탐색을 유예하고, 카메라 화면 내 횡단보도 감시 구간을 새 경로 기준으로 재바인딩.
 - **출발 직후 횡단보도 자동 전환 방지 (ADR-0040):** 경로 수직 거리(`crossTrackMeters`)가 20 m를 초과하면 전방 횡단보도 자동 전환 조건을 차단하여 출발 직후 오작동 방지.
@@ -1020,6 +1021,11 @@ TMAP 경로가 “시각장애인에게 안전한 경로”라는 의미는 아�
 
 - 결정: ARCore OpenGL 배경 렌더러와 YUV→RGBA 변환, 쿼터니언 월드 방향 투영 흔들림 추적, VPS 기반 횡단 조준 및 섀도 기록, 세션 전환 안전성 확보.
 - 상세: `docs/adr/0041_arcore_camera_pipeline_jitter_tracking_and_vps_aim.md`
+
+### ADR-042 — 재탐색 경로의 지도 안내선 반영 및 지도 재로드 방지
+
+- 결정: 지도 카드·단계 수는 현재 안내 경로(`uiState.route`) 사용, 지도 HTML 1회 생성 후 `replaceRoute()`로 경로·출발/도착 이름만 교체하여 지도 시점 유지.
+- 상세: `docs/adr/0042_map_route_line_follows_reroute_without_reload.md`
 
 ## 14. 기술 검증 PoC 순서
 
